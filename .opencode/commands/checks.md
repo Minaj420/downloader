@@ -1,6 +1,6 @@
 ---
-description: Projenin kalite kapılarını çalıştır
-agent: fast-worker
+description: Projenin kalite kapılarını salt-okunur checker ile çalıştır
+agent: checker
 subtask: true
 ---
 
@@ -11,6 +11,9 @@ AGENTS.md içindeki kalite kurallarını uygula.
 Bu görev yalnızca kontrolleri çalıştırmak içindir.
 Dosya değiştirme.
 
+Kontrollere başlamadan önce ve bittikten sonra `git status --short --branch` çalıştır;
+kaynak dosyalar değişmediğini doğrula.
+
 Backend için mevcutsa:
 - ruff check .
 - mypy app tests
@@ -19,7 +22,7 @@ Backend için mevcutsa:
 Frontend için mevcutsa:
 - npm run lint
 - npm run typecheck
-- npm test
+- npm test -- --run
 - npm run build
 
 Docker ile ilgili değişiklik varsa:

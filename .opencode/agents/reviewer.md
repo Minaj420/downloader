@@ -4,12 +4,21 @@ mode: subagent
 model: openai/gpt-5.6-sol
 permission:
   edit: deny
+  task: deny
   bash:
     "*": deny
-    "git status*": allow
-    "git diff*": allow
-    "git log*": allow
-    "git show*": allow
+    "git status": allow
+    "git status --short": allow
+    "git status --short --branch": allow
+    "git diff": allow
+    "git diff --stat": allow
+    "git diff --cached": allow
+    "git diff --cached --stat": allow
+    "git diff HEAD~1 HEAD": allow
+    "git diff HEAD~1 HEAD --check": allow
+    "git log --oneline": allow
+    "git log --oneline -1": allow
+    "git show": allow
 ---
 
 Türkçe cevap ver.
@@ -20,6 +29,9 @@ Dosya değiştirme.
 Patch uygulama.
 Dosya oluşturma veya silme.
 Git stage, commit, reset, checkout, restore, rebase veya push yapma.
+
+Yalnızca izin listesindeki salt-okunur Git komutlarını çalıştırabilirsin.
+Bash'in geri kalanı varsayılan olarak reddedilir; başka komut deneme.
 
 Önce:
 - AGENTS.md
