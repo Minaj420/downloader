@@ -1,5 +1,7 @@
 ---
 description: Projenin kalite kapılarını çalıştır
+agent: fast-worker
+subagent: true
 ---
 
 Türkçe cevap ver.
