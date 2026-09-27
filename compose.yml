@@ -1,0 +1,26 @@
+services:
+  downloader:
+    build: .
+    image: downloader:latest
+    container_name: downloader
+    restart: unless-stopped
+    ports:
+      # Bind address defaults to localhost so the service is not exposed publicly.
+      # For Tailscale/homelab access, override DOWNLOADER_BIND_ADDRESS (see README).
+      - "${DOWNLOADER_BIND_ADDRESS:-127.0.0.1}:${DOWNLOADER_PORT:-8080}:8080"
+    environment:
+      DOWNLOADER_STATE_DIR: /data/state
+      DOWNLOADER_STAGING_DIR: /data/staging
+      DOWNLOADER_LIBRARY_DIR: /data/library
+      # Optional Plex destinations (must be writable by the container):
+      # DOWNLOADER_PLEX_MUSIC_DIR: /media/plex-music
+      # DOWNLOADER_PLEX_VIDEO_DIR: /media/plex-videos
+      # DOWNLOADER_PLEX_MUSIC_DISPLAY_PATH: /srv/media/music
+      # DOWNLOADER_PLEX_VIDEO_DISPLAY_PATH: /srv/media/videos
+    volumes:
+      - ./data/state:/data/state
+      - ./data/staging:/data/staging
+      - ./data/library:/data/library
+      # Optional Plex library mounts:
+      # - /srv/media/music:/media/plex-music
+      # - /srv/media/videos:/media/plex-videos

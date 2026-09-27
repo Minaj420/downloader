@@ -1,0 +1,15 @@
+.git
+**/node_modules
+**/dist
+**/.venv
+**/.pytest_cache
+**/.ruff_cache
+**/.mypy_cache
+**/.vite
+**/coverage
+data
+*.db
+*.sqlite
+*.sqlite3
+.DS_Store
+*.log

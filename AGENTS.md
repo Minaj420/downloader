@@ -61,7 +61,7 @@ For Docker-related changes, verify that the image builds and the application sta
 - Do not rewrite history unless explicitly asked.
 
 ## Communication
-
+- Respond to the user in Turkish unless explicitly asked to use another language.
 When starting a task, briefly state:
 
 - what you found,
