@@ -1,12 +1,15 @@
 ---
 description: Projenin kalite kapılarını çalıştır
 agent: fast-worker
-subagent: true
+subtask: true
 ---
 
 Türkçe cevap ver.
 
 AGENTS.md içindeki kalite kurallarını uygula.
+
+Bu görev yalnızca kontrolleri çalıştırmak içindir.
+Dosya değiştirme.
 
 Backend için mevcutsa:
 - ruff check .
@@ -25,8 +28,19 @@ Docker ile ilgili değişiklik varsa:
 - /api/v1/health
 - SPA erişimi
 
-Dosya değiştirme.
-Commit veya push yapma.
+Docker ile ilgili değişiklik yoksa gereksiz yere image build etme.
+
+Hiçbir problemi gizleme.
 
 Sonuçları PASS / FAIL olarak özetle.
-Başarısız kontrollerin kısa nedenini belirt.
+
+Başarısız bir kontrol varsa:
+- hangi komutun başarısız olduğunu,
+- kısa hata nedenini,
+- bunun commit'i engelleyip engellemediğini
+
+belirt.
+
+Dosya değiştirme.
+Stage etme.
+Commit veya push yapma.

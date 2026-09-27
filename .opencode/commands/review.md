@@ -2,42 +2,30 @@
 description: Mevcut değişiklikleri bağımsız reviewer ile incele
 agent: reviewer
 model: openai/gpt-5.6-sol
-subagent: true
+subtask: true
 ---
 
 Türkçe cevap ver.
 
-Önce:
-- AGENTS.md
-- PRODUCT_SPEC.md
-- ARCHITECTURE.md
+Önce AGENTS.md, PRODUCT_SPEC.md ve ARCHITECTURE.md dosyalarını oku.
 
-dosyalarını oku.
-
-Ardından mevcut Git durumunu, tracked diff'leri ve ilgili untracked dosyaları incele.
+Mevcut Git durumunu ve ilgili değişiklikleri incele.
 
 $ARGUMENTS
 
-Şunlara odaklan:
+Review sırasında:
+- kod değiştirme,
+- dosya oluşturma veya silme,
+- patch uygulama,
+- stage etme,
+- commit etme,
+- push yapma.
 
-- correctness
-- regression riski
-- ürün spesifikasyonuna uyum
-- mimari ihlaller
-- gereksiz karmaşıklık
-- güvenlik sorunları
-- eksik veya zayıf testler
-- ilerideki milestone'ları zorlaştıracak kararlar
-
-Bulguları şu sırayla ver:
-
-- Critical
-- Important
-- Minor
+Bulguları Critical, Important ve Minor olarak sınıflandır.
 
 Her bulguda:
 - dosya veya alan,
-- neden problem olduğu,
+- problemin nedeni,
 - önerilen somut düzeltme
 
 belirt.
@@ -47,7 +35,3 @@ Sonunda:
 - commit'e hazır olup olmadığını,
 - tekrar çalıştırılması gereken kontrolleri
 özetle.
-
-Kod değiştirme.
-Dosya stage etme.
-Commit veya push yapma.
