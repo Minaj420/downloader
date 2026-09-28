@@ -22,6 +22,8 @@ permission:
     "docker compose build": allow
     "docker compose up -d": allow
     "docker compose ps": allow
+    "docker compose logs": allow
+    "docker compose logs *": allow
     "docker compose down": allow
     "curl -f http://127.0.0.1:8080/api/v1/health": allow
     "curl -f http://127.0.0.1:8080/": allow
@@ -64,9 +66,12 @@ Docker ile ilgili değişiklik varsa:
 - Stack çalışmıyorsa: `docker compose build`, `docker compose up -d`, `docker compose ps`,
   ardından `curl -f http://127.0.0.1:8080/api/v1/health` ve `curl -f http://127.0.0.1:8080/`
   (servis başlamadıysa aynı curl komutlarını tekrar dene); stack'i kendin başlattığın için
+  - `docker compose logs --no-color --tail 200 downloader` çalıştır: Alembic upgrade'in başarılı olduğunu ve mümkünse uygulanan migration revision bilgisini (örn. 0003_download_jobs_activity) startup loglarında doğrula; revision görünmüyorsa bildiğin kadarını raporla. `--follow` kullanma (uzun süreli bloklar).
   iş bitiminde `docker compose down` çalıştır.
 
 Docker ile ilgili değişiklik yoksa Docker komutlarını hiç çalıştırma ve gereksiz yere image build etme.
+
+Migration log doğrulaması yapılamazsa (log boşsa veya komut izin sistemi tarafından reddedilirse) bunu açık limitation olarak yaz; izin reddedilen bir komut için farklı varyasyon/yazım deneyerek retry yapma; mevcut failure sınıflandırması geçerlidir.
 
 Hiçbir problemi gizleme.
 

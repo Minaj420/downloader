@@ -1,4 +1,5 @@
 {
   "$schema": "https://opencode.ai/config.json",
+  "default_agent": "lead",
   "small_model": "zai-coding-plan/glm-5.3-flash"
 }

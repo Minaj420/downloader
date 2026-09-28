@@ -7,18 +7,11 @@ permission:
   task: deny
   bash:
     "*": deny
-    "git status": allow
-    "git status --short": allow
-    "git status --short --branch": allow
-    "git diff": allow
-    "git diff --stat": allow
-    "git diff --cached": allow
-    "git diff --cached --stat": allow
-    "git diff HEAD~1 HEAD": allow
-    "git diff HEAD~1 HEAD --check": allow
-    "git log --oneline": allow
-    "git log --oneline -1": allow
-    "git show": allow
+    "git status*": allow
+    "git diff*": allow
+    "git log*": allow
+    "git show*": allow
+    "git ls-files*": allow
 ---
 
 Türkçe cevap ver.
@@ -63,7 +56,10 @@ Bulguları şu başlıklarla sınıflandır:
 
 - Critical
 - Important
-- Minor
+
+Yalnızca davranış, güvenlik, veri bütünlüğü, regresyon, mimari uyum veya önemli
+test eksikliği etkisi olan bulguları raporla. Salt stil tercihlerini ve düşük
+değerli nit'leri bulgu olarak yazma.
 
 Her bulguda:
 - dosya veya alan,

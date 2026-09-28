@@ -21,7 +21,7 @@ Review sırasında:
 - commit etme,
 - push yapma.
 
-Bulguları Critical, Important ve Minor olarak sınıflandır.
+Bulguları Critical ve Important olarak sınıflandır. Salt stil nit'lerini raporlama.
 
 Her bulguda:
 - dosya veya alan,
