@@ -23,6 +23,13 @@ class Settings(BaseSettings):
     yt_dlp_binary: str = "yt-dlp"
     analysis_timeout_seconds: float = 90.0
 
+    ffmpeg_binary: str = "ffmpeg"
+    ffmpeg_timeout_seconds: float = 600.0
+    download_timeout_seconds: float = 3600.0
+    download_concurrency: int = 2
+    queue_poll_interval_seconds: float = 1.0
+    progress_min_interval_seconds: float = 0.25
+
     @property
     def database_url(self) -> str:
         return f"sqlite+aiosqlite:///{self.state_dir / 'downloader.db'}"

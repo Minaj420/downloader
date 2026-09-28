@@ -1,7 +1,8 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "../src/app/App";
 import type { AnalyzeRequest, NormalizedAnalysis } from "../src/api/analysis";
+import type { Job } from "../src/api/jobs";
 
 type FetchHandler = (url: string, init?: RequestInit) => Promise<Response>;
 
@@ -26,6 +27,39 @@ function deferred<T>() {
     resolve = res;
   });
   return { promise, resolve };
+}
+
+class FakeEventSource {
+  static current: FakeEventSource | null = null;
+
+  readonly url: string;
+  onerror: (() => void) | null = null;
+  private readonly listeners = new Map<string, EventListener[]>();
+
+  constructor(url: string | URL) {
+    this.url = String(url);
+    FakeEventSource.current = this;
+  }
+
+  addEventListener(type: string, listener: EventListener) {
+    const listeners = this.listeners.get(type) ?? [];
+    listeners.push(listener);
+    this.listeners.set(type, listeners);
+  }
+
+  emit(type: string, data: unknown) {
+    const event = new MessageEvent(type, { data: JSON.stringify(data) });
+    for (const listener of this.listeners.get(type) ?? []) {
+      listener(event);
+    }
+  }
+
+  close() {}
+}
+
+function stubEventSource() {
+  FakeEventSource.current = null;
+  vi.stubGlobal("EventSource", FakeEventSource);
 }
 
 function okHealthHandler(analysisResponse: () => Promise<Response>) {
@@ -120,6 +154,60 @@ const collectionResult: NormalizedAnalysis = {
   },
 };
 
+const queuedJob: Job = {
+  id: "job-1",
+  analysis_id: singleResult.analysis_id,
+  variant_id: singleResult.formats[0].variant_id,
+  status: "queued",
+  title: "Test Video",
+  source_url: singleResult.original_url,
+  destination: "app_library",
+  progress: {
+    percent: 0,
+    downloaded_bytes: null,
+    total_bytes: null,
+    speed_bytes_per_second: null,
+    eta_seconds: null,
+  },
+  final_path: null,
+  error: null,
+  created_at: "2026-09-28T12:00:00Z",
+  updated_at: "2026-09-28T12:00:00Z",
+  started_at: null,
+  completed_at: null,
+};
+
+function jobFlowHandler(cancelResponse?: Job) {
+  stubEventSource();
+  return stubFetch((url, init) => {
+    if (url === "/api/v1/health") {
+      return Promise.resolve(jsonResponse({ status: "ok", database: "ok" }));
+    }
+    if (url === "/api/v1/analysis") {
+      return Promise.resolve(jsonResponse(singleResult));
+    }
+    if (url === `/api/v1/jobs/${queuedJob.id}/cancel`) {
+      return Promise.resolve(jsonResponse(cancelResponse));
+    }
+    if (url === "/api/v1/jobs" && init?.method === "POST") {
+      return Promise.resolve(jsonResponse(queuedJob));
+    }
+    return Promise.reject(new Error(`Unexpected fetch: ${url} ${init?.method ?? "GET"}`));
+  });
+}
+
+async function analyzeSingleResult(user: ReturnType<typeof userEvent.setup>) {
+  await fillAndSubmit(user, singleResult.original_url);
+  await screen.findByText(singleResult.title ?? "Test Video");
+}
+
+async function createQueuedJob(user: ReturnType<typeof userEvent.setup>) {
+  await analyzeSingleResult(user);
+  await user.click(screen.getByRole("button", { name: "Download" }));
+  await screen.findByText("Queued");
+  await waitFor(() => expect(FakeEventSource.current).not.toBeNull());
+}
+
 async function renderNewDownload() {
   render(<App />);
   const user = userEvent.setup();
@@ -180,7 +268,7 @@ describe("NewDownloadPage", () => {
     expect(screen.getByText(/1080p/)).toBeInTheDocument();
     expect(screen.getByText(/~160 kbps/)).toBeInTheDocument();
     expect(screen.getByText(/90\.6 MiB/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Download" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Download" })).toBeEnabled();
   });
 
   it("shows a loading state while analyzing", async () => {
@@ -261,5 +349,107 @@ describe("NewDownloadPage", () => {
     const lastBody = JSON.parse(String(lastInit?.body)) as AnalyzeRequest;
     expect(lastBody.url).toBe("https://www.youtube.com/watch?v=abc123");
     expect(lastBody.platform_hint).toBe("youtube");
+  });
+
+  it("selects a variant and creates a job with the normalized variant id", async () => {
+    const fetchMock = jobFlowHandler();
+    const { user } = await renderNewDownload();
+
+    await analyzeSingleResult(user);
+    const videoVariant = screen.getByRole("radio", { name: /1080p/ });
+    const audioVariant = screen.getByRole("radio", { name: /opus/i });
+    expect(videoVariant).toBeChecked();
+
+    await user.click(audioVariant);
+    expect(audioVariant).toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Download" }));
+    expect(await screen.findByText("Queued")).toBeInTheDocument();
+
+    const jobCall = fetchMock.mock.calls.find(
+      ([url, init]) => url === "/api/v1/jobs" && init?.method === "POST",
+    );
+    expect(jobCall).toBeDefined();
+    expect(JSON.parse(String(jobCall?.[1]?.body))).toEqual({
+      analysis_id: singleResult.analysis_id,
+      variant_id: "audio-opus-160",
+      destination: "app_library",
+    });
+  });
+
+  it("updates active job progress from SSE", async () => {
+    jobFlowHandler();
+    const { user } = await renderNewDownload();
+    await createQueuedJob(user);
+
+    const downloadingJob: Job = {
+      ...queuedJob,
+      status: "downloading",
+      progress: {
+        percent: 42.4,
+        downloaded_bytes: 42_400_000,
+        total_bytes: 100_000_000,
+        speed_bytes_per_second: 2_000_000,
+        eta_seconds: 29,
+      },
+      started_at: "2026-09-28T12:00:01Z",
+      updated_at: "2026-09-28T12:00:02Z",
+    };
+    act(() => FakeEventSource.current?.emit("job.updated", downloadingJob));
+
+    expect(await screen.findByText("Downloading")).toBeInTheDocument();
+    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "42");
+    expect(screen.getByText("42%")).toBeInTheDocument();
+    expect(screen.getByText("ETA 0:29")).toBeInTheDocument();
+  });
+
+  it("shows a failed job received from SSE", async () => {
+    jobFlowHandler();
+    const { user } = await renderNewDownload();
+    await createQueuedJob(user);
+
+    const failedJob: Job = {
+      ...queuedJob,
+      status: "failed",
+      error: {
+        code: "download_failed",
+        message: "The media download failed.",
+        retryable: true,
+      },
+      updated_at: "2026-09-28T12:00:03Z",
+      completed_at: "2026-09-28T12:00:03Z",
+    };
+    act(() => FakeEventSource.current?.emit("job.failed", failedJob));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "The media download failed.",
+    );
+    expect(screen.getByText("Failed")).toBeInTheDocument();
+  });
+
+  it("cancels an active job through the job API", async () => {
+    const cancelledJob: Job = {
+      ...queuedJob,
+      status: "cancelled",
+      error: {
+        code: "cancelled",
+        message: "Download cancelled.",
+        retryable: false,
+      },
+      updated_at: "2026-09-28T12:00:03Z",
+      completed_at: "2026-09-28T12:00:03Z",
+    };
+    const fetchMock = jobFlowHandler(cancelledJob);
+    const { user } = await renderNewDownload();
+    await createQueuedJob(user);
+
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(await screen.findByText("Download cancelled.")).toBeInTheDocument();
+    expect(screen.getByText("Cancelled")).toBeInTheDocument();
+
+    const cancelCall = fetchMock.mock.calls.find(
+      ([url]) => url === `/api/v1/jobs/${queuedJob.id}/cancel`,
+    );
+    expect(cancelCall?.[1]?.method).toBe("POST");
+    expect(JSON.parse(String(cancelCall?.[1]?.body))).toEqual({});
   });
 });

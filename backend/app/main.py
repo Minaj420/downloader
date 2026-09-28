@@ -10,12 +10,42 @@ from fastapi.staticfiles import StaticFiles
 from app.api.v1 import api_router
 from app.config import Settings, get_settings
 from app.database import create_engine_and_sessionmaker, run_migrations
-from app.integrations.ytdlp import YtDlpAnalyzer
+from app.integrations.ffmpeg import FFmpegProcessor
+from app.integrations.ytdlp import YtDlpAnalyzer, YtDlpDownloader
 from app.services.analysis_service import AnalysisService, URLAnalyzer
+from app.services.event_bus import EventBus
+from app.services.job_runner import RunnerDeps
+from app.services.job_service import JobService
+from app.services.queue_manager import QueueManager
+from app.services.storage_service import StorageService
 
 
 def create_app(settings: Settings | None = None, analyzer: URLAnalyzer | None = None) -> FastAPI:
     resolved_settings = settings or get_settings()
+
+    engine, session_factory = create_engine_and_sessionmaker(resolved_settings.database_url)
+    storage = StorageService(resolved_settings.staging_dir, resolved_settings.library_dir)
+    bus = EventBus()
+    queue_manager = QueueManager(
+        session_factory=session_factory,
+        deps=RunnerDeps(
+            session_factory=session_factory,
+            downloader=YtDlpDownloader(
+                binary=resolved_settings.yt_dlp_binary,
+                timeout_seconds=resolved_settings.download_timeout_seconds,
+            ),
+            ffmpeg=FFmpegProcessor(
+                binary=resolved_settings.ffmpeg_binary,
+                timeout_seconds=resolved_settings.ffmpeg_timeout_seconds,
+            ),
+            storage=storage,
+            bus=bus,
+            progress_min_interval=resolved_settings.progress_min_interval_seconds,
+        ),
+        concurrency=resolved_settings.download_concurrency,
+        poll_interval_seconds=resolved_settings.queue_poll_interval_seconds,
+    )
+    job_service = JobService(session_factory, queue_manager, bus)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -25,15 +55,22 @@ def create_app(settings: Settings | None = None, analyzer: URLAnalyzer | None = 
             resolved_settings.library_dir,
         ):
             Path(directory).mkdir(parents=True, exist_ok=True)
+        storage.ensure_layout()
         run_migrations(resolved_settings.sync_database_url)
-        yield
-        await app.state.engine.dispose()
+        await queue_manager.start()
+        try:
+            yield
+        finally:
+            await queue_manager.stop()
+            await app.state.engine.dispose()
 
     app = FastAPI(title="Downloader", version="0.1.0", lifespan=lifespan)
 
-    engine, session_factory = create_engine_and_sessionmaker(resolved_settings.database_url)
     app.state.engine = engine
     app.state.sessionmaker = session_factory
+    app.state.event_bus = bus
+    app.state.queue_manager = queue_manager
+    app.state.job_service = job_service
 
     app.state.analysis_service = AnalysisService(
         analyzer=analyzer
@@ -48,6 +85,7 @@ def create_app(settings: Settings | None = None, analyzer: URLAnalyzer | None = 
     async def validation_error_handler(
         _request: Request, exc: RequestValidationError
     ) -> JSONResponse:
+        del exc
         return JSONResponse(
             status_code=422,
             content={

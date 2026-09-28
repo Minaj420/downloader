@@ -8,12 +8,25 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.domain.actors import LOCAL_ACTOR_ID
 from app.domain.analysis import AnalysisError, AnalysisErrorCode, NormalizedAnalysis
+from app.integrations.ytdlp import YtDlpError, YtDlpFailureKind
 from app.models.analysis import AnalysisSession
 from app.repositories import analyses
 from app.services.analysis_normalizer import build_normalized_analysis
 from app.utils.urls import validate_media_url
 
 ANALYSIS_SESSION_TTL = timedelta(hours=1)
+
+_YT_DLP_KIND_TO_ANALYSIS_CODE: dict[YtDlpFailureKind, AnalysisErrorCode] = {
+    YtDlpFailureKind.BINARY_MISSING: AnalysisErrorCode.INTERNAL_ERROR,
+    YtDlpFailureKind.UNSUPPORTED_URL: AnalysisErrorCode.UNSUPPORTED_URL,
+    YtDlpFailureKind.AUTHENTICATION_REQUIRED: AnalysisErrorCode.AUTHENTICATION_REQUIRED,
+    YtDlpFailureKind.GEO_RESTRICTED: AnalysisErrorCode.GEO_RESTRICTED,
+    YtDlpFailureKind.MEDIA_UNAVAILABLE: AnalysisErrorCode.MEDIA_UNAVAILABLE,
+    YtDlpFailureKind.NETWORK_ERROR: AnalysisErrorCode.NETWORK_ERROR,
+    YtDlpFailureKind.TIMEOUT: AnalysisErrorCode.TIMEOUT,
+    YtDlpFailureKind.MALFORMED_OUTPUT: AnalysisErrorCode.MALFORMED_EXTRACTOR_OUTPUT,
+    YtDlpFailureKind.EXTRACTOR_FAILED: AnalysisErrorCode.EXTRACTOR_FAILED,
+}
 
 
 class URLAnalyzer(Protocol):
@@ -63,6 +76,19 @@ class AnalysisService:
                 error=exc,
             )
             raise
+        except YtDlpError as exc:
+            error = AnalysisError(
+                _YT_DLP_KIND_TO_ANALYSIS_CODE[exc.kind], detail=exc.detail
+            )
+            error.analysis_id = analysis_id
+            await self._persist_failure(
+                analysis_id=analysis_id,
+                owner_id=owner_id,
+                source_url=validated_url,
+                platform_hint=platform_hint,
+                error=error,
+            )
+            raise error from exc
         except Exception as exc:
             error = AnalysisError(
                 AnalysisErrorCode.INTERNAL_ERROR, detail=repr(exc)

@@ -1,7 +1,9 @@
 from collections.abc import Generator
 from pathlib import Path
+from typing import Any
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.config import Settings
@@ -23,6 +25,15 @@ class FakeAnalyzer:
         if self.error is not None:
             raise self.error
         return self.result
+
+
+def build_application(
+    settings: Settings,
+    analyzer: FakeAnalyzer,
+    overrides: dict[str, Any] | None = None,
+) -> FastAPI:
+    resolved = settings.model_copy(update=overrides) if overrides else settings
+    return create_app(resolved, analyzer=analyzer)
 
 
 @pytest.fixture
@@ -47,4 +58,9 @@ def client(settings: Settings, analyzer: FakeAnalyzer) -> Generator[TestClient, 
         yield test_client
 
 
-__all__ = ["FakeAnalyzer", "playlist_payload", "single_video_payload"]
+__all__ = [
+    "FakeAnalyzer",
+    "build_application",
+    "playlist_payload",
+    "single_video_payload",
+]

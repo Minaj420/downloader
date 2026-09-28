@@ -4,6 +4,10 @@ import { platformLabel } from "./platforms";
 
 interface AnalysisResultProps {
   result: NormalizedAnalysis;
+  selectedVariantId: string | null;
+  isCreatingJob: boolean;
+  onSelectVariant: (variantId: string) => void;
+  onDownload: () => void;
   onUseDetectedPlatform: (platform: string) => void;
 }
 
@@ -44,7 +48,14 @@ function kindBadge(kind: NormalizedFormat["kind"]): string {
   return "audio";
 }
 
-export function AnalysisResult({ result, onUseDetectedPlatform }: AnalysisResultProps) {
+export function AnalysisResult({
+  result,
+  selectedVariantId,
+  isCreatingJob,
+  onSelectVariant,
+  onDownload,
+  onUseDetectedPlatform,
+}: AnalysisResultProps) {
   const duration = formatDuration(result.duration_seconds);
   const videoFormats = result.formats.filter((format) => format.kind !== "audio_only");
   const audioFormats = result.formats.filter((format) => format.kind === "audio_only");
@@ -114,8 +125,17 @@ export function AnalysisResult({ result, onUseDetectedPlatform }: AnalysisResult
           <ul>
             {videoFormats.map((format) => (
               <li key={format.variant_id} className="format-item">
-                <span className="badge badge-kind">{kindBadge(format.kind)}</span>
-                <span className="format-label">{videoLabel(format)}</span>
+                <label className="format-option">
+                  <input
+                    type="radio"
+                    name="variant"
+                    value={format.variant_id}
+                    checked={selectedVariantId === format.variant_id}
+                    onChange={() => onSelectVariant(format.variant_id)}
+                  />
+                  <span className="badge badge-kind">{kindBadge(format.kind)}</span>
+                  <span className="format-label">{videoLabel(format)}</span>
+                </label>
               </li>
             ))}
           </ul>
@@ -128,18 +148,50 @@ export function AnalysisResult({ result, onUseDetectedPlatform }: AnalysisResult
           <ul>
             {audioFormats.map((format) => (
               <li key={format.variant_id} className="format-item">
-                <span className="format-label">{audioLabel(format)}</span>
+                <label className="format-option">
+                  <input
+                    type="radio"
+                    name="variant"
+                    value={format.variant_id}
+                    checked={selectedVariantId === format.variant_id}
+                    onChange={() => onSelectVariant(format.variant_id)}
+                  />
+                  <span className="format-label">{audioLabel(format)}</span>
+                </label>
               </li>
             ))}
           </ul>
         </section>
       )}
 
+      <fieldset className="destination-group">
+        <legend>Save to</legend>
+        <label className="destination-option">
+          <input type="radio" name="destination" value="app_library" defaultChecked />
+          App Library
+        </label>
+        <label className="destination-option destination-disabled">
+          <input type="radio" name="destination" disabled />
+          Plex Music (coming later)
+        </label>
+        <label className="destination-option destination-disabled">
+          <input type="radio" name="destination" disabled />
+          Plex Videos (coming later)
+        </label>
+        <label className="destination-option destination-disabled">
+          <input type="radio" name="destination" disabled />
+          This device (coming later)
+        </label>
+      </fieldset>
+
       <footer className="result-actions">
-        <button type="button" disabled>
-          Download
+        <button
+          type="button"
+          disabled={selectedVariantId == null || isCreatingJob}
+          onClick={onDownload}
+        >
+          {isCreatingJob ? "Starting…" : "Download"}
         </button>
-        <p className="muted-note">Downloading arrives in an upcoming milestone.</p>
       </footer>
     </article>
   );

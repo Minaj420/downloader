@@ -5,5 +5,6 @@ autogenerate and migrations see the full schema.
 """
 
 from app.models.analysis import AnalysisSession
+from app.models.jobs import ActivityEvent, DownloadJob
 
-__all__ = ["AnalysisSession"]
+__all__ = ["ActivityEvent", "AnalysisSession", "DownloadJob"]

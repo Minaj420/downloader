@@ -305,3 +305,186 @@ button:disabled {
   font-size: 0.85rem;
   opacity: 0.7;
 }
+
+/* ---- Format selection & destination ---- */
+
+.format-option {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+}
+
+.format-option input[type="radio"] {
+  accent-color: #1f6feb;
+}
+
+.destination-group {
+  border: 1px solid rgba(128, 128, 128, 0.3);
+  border-radius: 10px;
+  padding: 0.75rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.destination-group legend {
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 0 0.35rem;
+}
+
+.destination-option {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.95rem;
+}
+
+.destination-option input[type="radio"] {
+  accent-color: #1f6feb;
+}
+
+.destination-disabled {
+  opacity: 0.55;
+}
+
+/* ---- Job progress ---- */
+
+.job-progress {
+  margin-top: 1.5rem;
+  padding: 1rem;
+  border: 1px solid rgba(128, 128, 128, 0.3);
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.job-progress-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.job-progress-header h2 {
+  margin: 0;
+  font-size: 1.05rem;
+  overflow-wrap: anywhere;
+}
+
+.badge-status-queued {
+  background: #6e7781;
+  color: #ffffff;
+}
+
+.badge-status-downloading,
+.badge-status-analyzing,
+.badge-status-post_processing,
+.badge-status-finalizing {
+  background: #1f6feb;
+  color: #ffffff;
+}
+
+.badge-status-completed {
+  background: #2ea043;
+  color: #ffffff;
+}
+
+.badge-status-failed {
+  background: #d1242f;
+  color: #ffffff;
+}
+
+.badge-status-cancelled {
+  background: #bf8700;
+  color: #ffffff;
+}
+
+.progress-bar {
+  height: 0.6rem;
+  border-radius: 999px;
+  background: rgba(128, 128, 128, 0.25);
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: #1f6feb;
+  transition: width 0.3s ease;
+}
+
+.job-progress-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.9rem;
+  margin: 0;
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.job-result {
+  margin: 0;
+  font-size: 0.95rem;
+  overflow-wrap: anywhere;
+}
+
+.job-error {
+  color: #d1242f;
+}
+
+/* ---- Activity panel ---- */
+
+.activity-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.activity-toggle {
+  align-self: flex-start;
+  padding: 0.3rem 0.7rem;
+  font-size: 0.9rem;
+  background: transparent;
+  border: 1px solid rgba(128, 128, 128, 0.45);
+  color: inherit;
+}
+
+.activity-list {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  border: 1px solid rgba(128, 128, 128, 0.3);
+  border-radius: 8px;
+  background: rgba(128, 128, 128, 0.06);
+  font-size: 0.85rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  max-height: 18rem;
+  overflow-y: auto;
+}
+
+.activity-item {
+  display: flex;
+  gap: 0.6rem;
+  align-items: baseline;
+}
+
+.activity-time {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.7;
+  white-space: nowrap;
+}
+
+.activity-message {
+  overflow-wrap: anywhere;
+}
+
+.activity-empty {
+  opacity: 0.7;
+}
