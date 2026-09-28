@@ -2,16 +2,19 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.v1 import api_router
 from app.config import Settings, get_settings
-from app.database import create_engine_and_sessionmaker
+from app.database import create_engine_and_sessionmaker, run_migrations
+from app.integrations.ytdlp import YtDlpAnalyzer
+from app.services.analysis_service import AnalysisService, URLAnalyzer
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None, analyzer: URLAnalyzer | None = None) -> FastAPI:
     resolved_settings = settings or get_settings()
 
     @asynccontextmanager
@@ -22,6 +25,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             resolved_settings.library_dir,
         ):
             Path(directory).mkdir(parents=True, exist_ok=True)
+        run_migrations(resolved_settings.sync_database_url)
         yield
         await app.state.engine.dispose()
 
@@ -30,6 +34,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     engine, session_factory = create_engine_and_sessionmaker(resolved_settings.database_url)
     app.state.engine = engine
     app.state.sessionmaker = session_factory
+
+    app.state.analysis_service = AnalysisService(
+        analyzer=analyzer
+        or YtDlpAnalyzer(
+            binary=resolved_settings.yt_dlp_binary,
+            timeout_seconds=resolved_settings.analysis_timeout_seconds,
+        ),
+        session_factory=session_factory,
+    )
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error_handler(
+        _request: Request, exc: RequestValidationError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=422,
+            content={
+                "error": {
+                    "code": "invalid_request",
+                    "message": "The request payload is invalid.",
+                    "retryable": False,
+                    "analysis_id": None,
+                }
+            },
+        )
 
     app.include_router(api_router, prefix="/api/v1")
 

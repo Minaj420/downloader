@@ -1,0 +1,146 @@
+import type { NormalizedAnalysis, NormalizedFormat } from "../../api/analysis";
+import { formatFileSize, formatDuration } from "./format";
+import { platformLabel } from "./platforms";
+
+interface AnalysisResultProps {
+  result: NormalizedAnalysis;
+  onUseDetectedPlatform: (platform: string) => void;
+}
+
+function sizeLabel(format: NormalizedFormat): string | null {
+  if (format.filesize_bytes != null) {
+    return formatFileSize(format.filesize_bytes);
+  }
+  const approx = formatFileSize(format.filesize_approx_bytes);
+  return approx ? `~${approx}` : null;
+}
+
+function videoLabel(format: NormalizedFormat): string {
+  const parts: string[] = [];
+  const resolution = format.resolution_label ?? (format.width && format.height ? `${format.width}x${format.height}` : null);
+  if (resolution) parts.push(resolution);
+  if (format.ext) parts.push(format.ext.toUpperCase());
+  const codecs = [format.video_codec, format.audio_codec].filter(Boolean).join("/");
+  if (codecs) parts.push(codecs);
+  if (format.fps) parts.push(`${Math.round(format.fps)} fps`);
+  const size = sizeLabel(format);
+  if (size) parts.push(size);
+  return parts.join(" · ");
+}
+
+function audioLabel(format: NormalizedFormat): string {
+  const parts: string[] = [];
+  if (format.ext) parts.push(format.ext.toUpperCase());
+  if (format.audio_codec) parts.push(format.audio_codec);
+  if (format.bitrate_kbps != null) parts.push(`~${Math.round(format.bitrate_kbps)} kbps`);
+  const size = sizeLabel(format);
+  if (size) parts.push(size);
+  return parts.join(" · ");
+}
+
+function kindBadge(kind: NormalizedFormat["kind"]): string {
+  if (kind === "muxed") return "video + audio";
+  if (kind === "video_only") return "video only";
+  return "audio";
+}
+
+export function AnalysisResult({ result, onUseDetectedPlatform }: AnalysisResultProps) {
+  const duration = formatDuration(result.duration_seconds);
+  const videoFormats = result.formats.filter((format) => format.kind !== "audio_only");
+  const audioFormats = result.formats.filter((format) => format.kind === "audio_only");
+
+  return (
+    <article className="analysis-result" aria-label="Analysis result">
+      {result.platform_mismatch && result.platform_hint && (
+        <div className="platform-mismatch" role="status">
+          <p>
+            Selected platform is <strong>{platformLabel(result.platform_hint)}</strong>, but this
+            URL was detected as <strong>{result.detected_platform_label}</strong>.
+          </p>
+          <button type="button" onClick={() => onUseDetectedPlatform(result.detected_platform)}>
+            Use {result.detected_platform_label}
+          </button>
+        </div>
+      )}
+
+      <header className="result-header">
+        {result.thumbnail_url && (
+          <img
+            className="result-thumb"
+            src={result.thumbnail_url}
+            alt=""
+            onError={(event) => {
+              event.currentTarget.style.display = "none";
+            }}
+          />
+        )}
+        <div className="result-heading">
+          <h2>{result.title ?? "Unknown title"}</h2>
+          <div className="result-meta">
+            <span className="badge badge-platform">{result.detected_platform_label}</span>
+            <span className="badge">
+              {result.content_type === "collection" ? "Playlist" : "Single item"}
+            </span>
+            {result.uploader && <span className="meta-item">{result.uploader}</span>}
+            {duration && <span className="meta-item">{duration}</span>}
+          </div>
+        </div>
+      </header>
+
+      {result.collection && (
+        <section className="collection-preview">
+          <h3>
+            {result.collection.total_items} items
+          </h3>
+          <ul>
+            {result.collection.preview_items.map((item) => (
+              <li key={item.source_id ?? item.position}>
+                <span className="item-position">
+                  {String(item.position ?? 0).padStart(2, "0")}
+                </span>
+                <span className="item-title">{item.title ?? "Untitled"}</span>
+              </li>
+            ))}
+          </ul>
+          {result.collection.truncated && (
+            <p className="muted-note">Only a preview is shown.</p>
+          )}
+        </section>
+      )}
+
+      {videoFormats.length > 0 && (
+        <section className="format-group">
+          <h3>Video formats</h3>
+          <ul>
+            {videoFormats.map((format) => (
+              <li key={format.variant_id} className="format-item">
+                <span className="badge badge-kind">{kindBadge(format.kind)}</span>
+                <span className="format-label">{videoLabel(format)}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {audioFormats.length > 0 && (
+        <section className="format-group">
+          <h3>Audio formats</h3>
+          <ul>
+            {audioFormats.map((format) => (
+              <li key={format.variant_id} className="format-item">
+                <span className="format-label">{audioLabel(format)}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      <footer className="result-actions">
+        <button type="button" disabled>
+          Download
+        </button>
+        <p className="muted-note">Downloading arrives in an upcoming milestone.</p>
+      </footer>
+    </article>
+  );
+}

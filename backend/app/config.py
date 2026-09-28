@@ -20,6 +20,9 @@ class Settings(BaseSettings):
 
     frontend_dist_dir: Path | None = None
 
+    yt_dlp_binary: str = "yt-dlp"
+    analysis_timeout_seconds: float = 90.0
+
     @property
     def database_url(self) -> str:
         return f"sqlite+aiosqlite:///{self.state_dir / 'downloader.db'}"

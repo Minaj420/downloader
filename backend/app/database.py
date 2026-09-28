@@ -1,5 +1,8 @@
+from pathlib import Path
 from typing import Any
 
+from alembic import command
+from alembic.config import Config
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -10,10 +13,23 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import DeclarativeBase
 
 BUSY_TIMEOUT_MS = 5000
+MIGRATIONS_DIR = Path(__file__).resolve().parent.parent / "migrations"
 
 
 class Base(DeclarativeBase):
     """Base class for all ORM models."""
+
+
+def run_migrations(sync_database_url: str) -> None:
+    """Apply pending Alembic migrations programmatically.
+
+    The Docker entrypoint also runs ``alembic upgrade head``; this keeps local
+    runs and tests on the real migration chain instead of ``create_all()``.
+    """
+    alembic_config = Config()
+    alembic_config.set_main_option("script_location", str(MIGRATIONS_DIR))
+    alembic_config.set_main_option("sqlalchemy.url", sync_database_url)
+    command.upgrade(alembic_config, "head")
 
 
 def create_engine_and_sessionmaker(
