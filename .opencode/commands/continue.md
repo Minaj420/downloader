@@ -31,7 +31,34 @@ reviewer, commit veya push çalıştırmamalıdır.
 
 Fast-worker sonucu dönünce Lead WORK_STATE'i salt-okunur doğrular. State update
 ve doğrulama tamamlanmadan bounded task checkpoint'i tamamlandı sayılmaz. State
-update başarısızsa yeni bounded task'a geçme; failure checkpoint verip dur.
+update başarısızsa yeni bounded task'a geçme veya completion ilan etme;
+`blocked`/`open` telemetry append'inden sonra failure checkpoint verip dur.
+
+Her terminal bounded-task checkpoint'inden önce Lead bu task için mekanik
+task-run append'ini fast-worker'a ayrı ve dar bir "evaluation telemetry
+bookkeeping" görevi olarak delege eder. Bu; `completed`, `failed`, `blocked`
+ve `open` sonuçlarını, state-update/doğrulama hatalarını ve fallback bulunamayan
+provider olaylarını kapsar. Append hedefi yalnızca
+`.opencode/evals/task-runs.jsonl`'dır ve bu dosyaya yazma yalnızca helper
+üzerinden yapılır: kayıt içeriğini Lead `.opencode/evals/SCHEMA.md` şemasına
+göre hazırlar; fast-worker hazır JSON object'i metrik uydurmadan
+`.opencode/evals/pending-task-run.json`'a yazar ve exact
+`node .opencode/evals/append-task-run.mjs --append` komutunu çalıştırır;
+serialization ve güvenli append helper'dadır. Provider olayları implementation
+attempt/failure sayılmaz. Başarılı implementation sırası: WORK_STATE mekanik
+update → Lead salt-okunur doğrulama → telemetry append → checkpoint. State
+update/doğrulama başarısızsa completion ilan edilmez; gerçeğe uygun
+`blocked`/`open` telemetry yazılıp durulur. Provider fallback yoksa provider
+olayı yazılır, task açık bırakılır ve WORK_STATE completed yapılmaz.
+
+Bookkeeping başarısızlığı acceptance, failure sonucu veya milestone state'ini
+değiştirmez; checkpoint'te görünür telemetry limitation olarak raporlanır.
+Bookkeeping implementation worker/attempt değildir. Milestone closure PASS
+sonrası Lead `evaluator` ile salt-okunur milestone değerlendirmesi yaptırır;
+rapor dosyası yazılacaksa yazımı açıkça fast-worker'a delege edilir (evaluator
+yazmaz). Evaluation, milestone state'ini ve commit-ready'yi değiştirmez.
+Model/routing değişikliği yalnız kullanıcının açık onayıyla yapılır;
+evaluator önerileri varsayılan olarak provisional'dır.
 
 Last verified gates geçmiş doğrulama kaydıdır; production source değişen her
 task önceki full gate sonuçlarını current working tree için stale yapar.

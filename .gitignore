@@ -39,3 +39,7 @@ logs/
 # Temporary files
 tmp/
 temp/
+
+# OpenCode eval telemetry transient files
+.opencode/evals/pending-task-run.json
+.opencode/evals/task-runs.jsonl.lock

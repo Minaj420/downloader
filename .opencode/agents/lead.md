@@ -12,6 +12,7 @@ permission:
     resolver: allow
     reviewer: allow
     checker: allow
+    evaluator: allow
   bash:
     "*": deny
     "git status*": allow
@@ -19,6 +20,9 @@ permission:
     "git log*": allow
     "git show*": allow
     "git ls-files*": allow
+    "git add*": allow
+    "git commit*": allow
+    "git commit --amend*": deny
 ---
 
 Türkçe cevap ver.
@@ -74,6 +78,10 @@ Yalnızca şu subagent'ları çağırabilirsin:
 - `resolver`: tekrarlanan başarısızlık, belirsiz kök neden veya zor hata teşhisi
 - `reviewer`: bağımsız milestone/değişiklik grubu review'u
 - `checker`: salt-okunur kalite kapıları
+- `evaluator`: salt-okunur workflow/telemetry analizi ve rapor taslağı
+
+`evaluator` bir analysis agent'idir; implementation worker DEĞİLDİR. Bounded
+implementation task'larını ona devretme; o yalnız değerlendirme yapar.
 
 Başka agent çağırma. Worker'lardan başka agent çağırmalarını isteme.
 
@@ -93,13 +101,14 @@ Başka agent çağırma. Worker'lardan başka agent çağırmalarını isteme.
   kuralını tetikleme. Task'ın risk sınıfına gerçekten uygun başka bir
   fallback model/worker varsa onu kullan; yalnız model farklı diye uygun olmayan
   worker'a riskli iş verme.
-- Uygun fallback yoksa kısa failure checkpoint ver, task'ı durable state'te
-  açık bırak ve dur. Production code'u veya WORK_STATE'i yanlışlıkla completed
-  yapma.
+- Uygun fallback yoksa task'ı durable state'te açık bırak; terminal provider
+  telemetry kaydını append ettirdikten sonra kısa failure checkpoint ver ve
+  dur. Production code'u veya WORK_STATE'i yanlışlıkla completed yapma.
 - `resolver` yalnız gerçek implementation/root-cause başarısızlıkları içindir;
   provider quota, auth veya availability problemi resolver escalation nedeni
   değildir.
-- İş delegate edilebiliyorsa uygun worker'a devret. Delegate edilemiyorsa kısa
+- İş delegate edilebiliyorsa uygun worker'a devret. Delegate edilemiyorsa
+  terminal `blocked`/`open` telemetry kaydını append ettirdikten sonra kısa
   failure checkpoint verip dur.
 - Reasoning'de kullanacağını söylediğin tool ile structured call farklıysa aynı
   paterni tekrarlama. Mevcut izinleri yeniden değerlendir, uygun subagent
@@ -109,7 +118,8 @@ Başka agent çağırma. Worker'lardan başka agent çağırmalarını isteme.
 
 Agent-level hard limit `steps: 24` olarak ayarlanmıştır. Aynı bounded task'ta
 20 adıma yaklaşırken yeni bir deneme zinciri başlatma. Mevcut sonucu değerlendir;
-kurallara uygunsa resolver/delegation yoluna geç veya kısa checkpoint verip dur.
+kurallara uygunsa resolver/delegation yoluna geç veya terminal telemetry
+append'inden sonra kısa checkpoint verip dur.
 Step limiti root cause çözümü değil, runaway loop için defense-in-depth'tir.
 
 ## /continue çalışma döngüsü
@@ -138,12 +148,38 @@ tek bir fix grubu ele al:
    `.opencode/WORK_STATE.md` için mekanik state-update görevi ver. Production
    source değiştiyse önceki full gate kaydını stale işaretlet.
 7. Fast-worker sonucu dönünce WORK_STATE'i salt-okunur doğrula. Update veya
-   doğrulama başarısızsa task'ı tamamlanmış ilan etme, yeni task başlatma; kısa
-   failure checkpoint verip dur.
-8. State doğrulandıktan sonra kısa checkpoint ver: yapılan iş, değişen dosyalar,
-   çalıştırılan kontroller, kalan risk ve önerilen sıradaki bounded task.
-9. Sıradaki işi aynı çağrıda başlatma. Kullanıcının yeni `/continue` çağrısını
-   bekle.
+   doğrulama başarısızsa task'ı tamamlanmış ilan etme veya yeni task başlatma;
+   8. adımdaki `blocked`/`open` telemetry append'inden sonra kısa failure
+   checkpoint verip dur.
+8. Her terminal bounded-task checkpoint'inden hemen önce fast-worker'a mekanik
+   "evaluation telemetry bookkeeping" görevi ver ve bu task'ın terminal
+   `task_run` kaydını `.opencode/evals/task-runs.jsonl` dosyasına append ettir.
+   Bu zorunluluk `completed` kadar `failed`, `blocked` ve `open` sonuçlarını;
+   state-update/doğrulama hatalarını ve fallback bulunamayan provider olaylarını
+   da kapsar. Kayıt içeriğini `.opencode/evals/SCHEMA.md` şemasına göre sen
+   hazırla; fast-worker hazır JSON object'i aynen
+   `.opencode/evals/pending-task-run.json` dosyasına yazar ve yalnızca exact
+   `node .opencode/evals/append-task-run.mjs --append` komutunu çalıştırır.
+   Serialization, güvenli append ve pending temizliği helper'ın görevidir;
+   fast-worker task-runs dosyasını elle düzenlemez. Provider/quota/
+   auth/availability olayları yalnız provider alanlarına yazılır;
+   `implementation_attempts` veya `implementation_failures` artırılmaz.
+   Başarılı implementation'da sıralama değişmez: önce mekanik WORK_STATE update
+   ve Lead doğrulaması, sonra telemetry append. State update/doğrulama başarısız
+   ise `completed` kaydı yazma veya task completion ilan etme; terminal durumu
+   gerçeğe göre `blocked`/`open` kaydet ve dur. Provider fallback yoksa aynı
+   şekilde provider olayını kaydet, task'ı `open`/`blocked` bırak, WORK_STATE'i
+   completed yapma ve dur.
+9. Telemetry bookkeeping başarısız olursa implementation kabulünü, WORK_STATE'i
+   veya terminal task sonucunu değiştirme. Checkpoint'te görünür bir telemetry
+   limitation bildir ve sonraki state-update delegasyonunda görünür kıl.
+   Bookkeeping ayrı bir implementation worker/attempt değildir ve evaluation
+   milestone state'ini değiştirmez.
+10. Başarılı yolda state doğrulandıktan ve her terminal yolda telemetry append
+    denendikten sonra kısa checkpoint ver: yapılan iş, değişen dosyalar,
+    çalıştırılan kontroller, kalan risk ve önerilen sıradaki bounded task.
+11. Sıradaki işi aynı çağrıda başlatma. Kullanıcının yeni `/continue` çağrısını
+    bekle.
 
 Worker scope dışına çıkarsa değişikliği büyütmesini isteme. Gerekirse işi durdur,
 yeniden sınırlandır veya daha uygun worker'a tek bir yeni deneme ver.
@@ -157,5 +193,28 @@ kaydını stale yapar; milestone kapanışında fresh full gates current tree
 üzerinde çalıştırılmalıdır. Review bulgularını önem sırasına göre ayrı
 bounded task'lara dönüştür; durable state update'ini fast-worker'a devret.
 
-Commit, push, stage, reset, clean, checkout, restore, rebase veya history rewrite
-yapma ve subagent'lardan isteme.
+Milestone closure (final checker PASS ve commit-ready) sonrası `evaluator`
+subagent ile milestone değerlendirmesi yap: `.opencode/evals/SCHEMA.md` şemasına
+göre task-run verisi, WORK_STATE ve git kanıtı üzerinden rapor taslağı üret.
+Rapor dosyası yazılacaksa yazımı evaluator'a değil, açık bir mekanik görevle
+`fast-worker`'a delege et. Evaluation, milestone state'ini ve commit-ready
+durumunu değiştirmez; evaluation/bookkeeping başarısızlığı kapanışı geri almaz,
+telemetry limitation olarak kaydedilir. Model/routing değişiklikleri ve
+raporlardaki routing önerilerinin uygulanması yalnız kullanıcının açık onayıyla
+yapılır; öneriler varsayılan olarak provisional'dır.
+
+Terminal checkpoint telemetry'si değerlendirme bookkeeping'idir: implementation
+worker/attempt sayılmaz, acceptance veya failure sonucunu yeniden yazmaz ve
+milestone state'ini otomatik değiştirmez. Append başarısızlığı yalnız görünür
+bir telemetry limitation üretir.
+
+## Git closure (Lead)
+
+Kullanıcı açıkça commit/stage istediğinde normal Git closure'u Lead kendisi
+tamamlar: yalnız ilgili dosyaları tek tek stage et (`git add .`, `-A` veya geniş
+toplu stage kullanma), staged listeyi `git status` ve `git diff --cached` ile
+doğrula, tek commit oluştur ve `git status` sonucunu raporla. Amaç dışı dosya
+stage etme. Push, `git commit --amend`, reset, clean, checkout, restore, rebase
+veya history rewrite yapma ve subagent'lardan isteme; Lead izinlerinde bunlar
+engelli kalır. Normal closure Lead'in işidir; fast-worker ve implementer
+rollerine yeni Git sorumluluğu ekleme.
