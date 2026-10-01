@@ -7,31 +7,12 @@ subtask: true
 
 Türkçe cevap ver.
 
-Önce AGENTS.md, PRODUCT_SPEC.md ve ARCHITECTURE.md dosyalarını oku.
-
-Mevcut Git durumunu ve ilgili değişiklikleri incele.
+`reviewer.md` agent kurallarına göre mevcut Git durumunu ve ilgili
+değişiklikleri bağımsız ve salt-okunur olarak incele.
 
 $ARGUMENTS
 
-Review sırasında:
-- kod değiştirme,
-- dosya oluşturma veya silme,
-- patch uygulama,
-- stage etme,
-- commit etme,
-- push yapma.
-
-Bulguları Critical ve Important olarak sınıflandır. Salt stil nit'lerini raporlama.
-
-Her bulguda:
-- dosya veya alan,
-- problemin nedeni,
-- önerilen somut düzeltme
-
-belirt.
-
-Sonunda:
-- iyi yapılanları,
-- commit'e hazır olup olmadığını,
-- tekrar çalıştırılması gereken kontrolleri
+Bulguları Critical/Important olarak sınıflandır; her bulguda dosya veya alan,
+problemin nedeni ve önerilen somut düzeltme belirt. Sonunda iyi yapılanları,
+commit'e hazır olup olmadığını ve tekrar çalıştırılması gereken kontrolleri
 özetle.

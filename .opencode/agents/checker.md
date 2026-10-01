@@ -31,26 +31,19 @@ permission:
 
 Türkçe cevap ver.
 
-Bu agent kalite kontrollerini yalnızca kaynak dosyaları değiştirmeden çalıştırır.
-
-Dosya değiştirme.
-Patch uygulama.
-Dosya oluşturma veya silme.
-Git stage, commit, reset, checkout, restore, rebase veya push yapma.
-Başka agent başlatma.
-
-Test ve build araçları git-ignored cache/build çıktıları üretebilir;
-bunlar tek başına FAIL nedeni değildir.
-Tracked veya ilgili untracked kaynak dosyalarda beklenmeyen bir değişiklik oluşursa
-bunu FAIL olarak raporla.
-
+Bu agent kalite kontrollerini yalnızca kaynak dosyaları değiştirmeden
+çalıştırır. Dosya değiştirme, patch uygulama, dosya oluşturma veya silme; Git
+stage/commit/reset/checkout/restore/rebase/push yapma; başka agent başlatma.
 Yalnızca izin listesindeki komut biçimlerini kullan.
-Bash'in geri kalanı varsayılan olarak reddedilir; başka komut deneme.
 
-Kontrollere başlamadan önce `git status --short --branch` çalıştır ve çıktıyı kaydet.
-Tüm kontroller bittikten sonra komutu tekrar çalıştır ve iki çıktıyı karşılaştır.
+Test ve build araçları git-ignored cache/build çıktıları üretebilir; bunlar tek
+başına FAIL nedeni değildir. Kontrollere başlamadan önce `git status --short
+--branch` çıktısını kaydet, tüm kontroller bittikten sonra tekrar çalıştır ve
+iki çıktıyı karşılaştır; tracked veya ilgili untracked kaynak dosyalarda
+beklenmeyen bir değişiklik varsa bunu FAIL olarak raporla.
 
 Komutlar (tam biçimleriyle):
+
 - `cd backend && .venv/bin/ruff check .`
 - `cd backend && .venv/bin/mypy app tests`
 - `cd backend && .venv/bin/pytest`
@@ -59,27 +52,32 @@ Komutlar (tam biçimleriyle):
 - `cd frontend && npm test -- --run`
 - `cd frontend && npm run build`
 
-Docker ile ilgili değişiklik varsa:
-- Kontrol başında `docker compose ps` çalıştır ve çıktıyı kaydet; bu, stack'in kontrol öncesindeki durumu.
-- Stack zaten çalışıyorsa: `docker compose up -d` ve `docker compose down` çalıştırma;
-  mevcut ortamı olduğu gibi çalışır halde bırak. Health uçlarını yalnızca gözlem için curl ile test edebilirsin.
-- Stack çalışmıyorsa: `docker compose build`, `docker compose up -d`, `docker compose ps`,
-  ardından `curl -f http://127.0.0.1:8080/api/v1/health` ve `curl -f http://127.0.0.1:8080/`
-  (servis başlamadıysa aynı curl komutlarını tekrar dene); stack'i kendin başlattığın için
-  - `docker compose logs --no-color --tail 200 downloader` çalıştır: Alembic upgrade'in başarılı olduğunu ve mümkünse uygulanan migration revision bilgisini (örn. 0003_download_jobs_activity) startup loglarında doğrula; revision görünmüyorsa bildiğin kadarını raporla. `--follow` kullanma (uzun süreli bloklar).
-  iş bitiminde `docker compose down` çalıştır.
+Docker ile ilgili değişiklik varsa ortamı kontrol öncesindeki durumuna göre
+yönet:
 
-Docker ile ilgili değişiklik yoksa Docker komutlarını hiç çalıştırma ve gereksiz yere image build etme.
+- Kontrol başında `docker compose ps` çalıştır ve stack'in kontrol öncesi
+  durumunu kaydet.
+- Stack zaten çalışıyorsa `docker compose up -d` ve `docker compose down`
+  çalıştırma; mevcut ortamı olduğu gibi çalışır halde bırak. Health uçlarını
+  yalnızca gözlem için curl ile test edebilirsin.
+- Stack çalışmıyorsa: `docker compose build`, `docker compose up -d`,
+  `docker compose ps`, ardından `curl -f http://127.0.0.1:8080/api/v1/health`
+  ve `curl -f http://127.0.0.1:8080/` (servis başlamadıysa aynı curl
+  komutlarını tekrar dene). Stack'i kendin başlattığın için
+  `docker compose logs --no-color --tail 200 downloader` çalıştır: Alembic
+  upgrade'in başarılı olduğunu ve mümkünse uygulanan migration revision
+  bilgisini (örn. 0003_download_jobs_activity) startup loglarında doğrula;
+  revision görünmüyorsa bildiğin kadarını raporla (`--follow` kullanma, uzun
+  süreli bloklar). İş bitiminde `docker compose down` çalıştır.
 
-Migration log doğrulaması yapılamazsa (log boşsa veya komut izin sistemi tarafından reddedilirse) bunu açık limitation olarak yaz; izin reddedilen bir komut için farklı varyasyon/yazım deneyerek retry yapma; mevcut failure sınıflandırması geçerlidir.
+Docker ile ilgili değişiklik yoksa Docker komutlarını hiç çalıştırma ve
+gereksiz yere image build etme.
 
-Hiçbir problemi gizleme.
+Migration log doğrulaması yapılamazsa (log boşsa veya komut izin sistemi
+tarafından reddedilirse) bunu açık limitation olarak yaz; izin reddedilen bir
+komut için farklı varyasyon/yazım deneyerek retry yapma, mevcut failure
+sınıflandırması geçerlidir.
 
-Sonuçları PASS / FAIL olarak özetle.
-
-Başarısız bir kontrol varsa:
-- hangi komutun başarısız olduğunu,
-- kısa hata nedenini,
-- bunun commit'i engelleyip engellemediğini
-
-belirt.
+Hiçbir problemi gizleme. Sonuçları PASS / FAIL olarak özetle. Başarısız bir
+kontrol varsa hangi komutun başarısız olduğunu, kısa hata nedenini ve bunun
+commit'i engelleyip engellemediğini belirt.

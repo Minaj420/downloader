@@ -7,7 +7,7 @@ Session inference, eski checkpoint özetleri veya hafızadaki state bu dosyayla
 dosyayı güncellemekle yükümlüdür.
 
 Son güncelleme: 2026-10-02
-Güncelleme nedeni: WF-EVAL-APPEND-1 runtime acceptance tamamlandı ve CLOSED: exact `--self-test` PASS (exit 0), `--verify` PASS (16 kayıt), WF-EVAL-1 task_run kaydı (`wf-eval-1`) safe append ile eklendi (17 kayıt) ve append sonrası `--verify` tekrar PASS (17 kayıt, unique id). Production source değişmedi; M2 product gates FRESH kalıyor. Remaining Critical/Important boş; commit-ready EVET.
+Güncelleme nedeni: WF-SIMPLIFY-1 tamamlandı ve accepted: AGENTS.md, 7 agent promptu ve 4 command wrapper'ında küçük/kontrollü natural-language-first sadeleştirme (12 dosyada 330 insertions, 656 deletions, net ~%31 azalma). Roller, model routing, mode/steps ve permission frontmatter değişmedi; production source değişmedi. Independent reviewer ACCEPTANCE PASS; Critical/Important yok. M2 product gates FRESH kalıyor. Remaining Critical/Important boş; commit-ready EVET.
 
 ## Active Milestone
 
@@ -33,12 +33,13 @@ M2 kapatıldı (2026-09-29) — tüm Critical/Important bulgular kapalı, milest
 - I10 — stale-snapshot cancel full-suite flaky fix: kök neden ürün bug'ı DEĞİL — request_cancel subprocess kapanışını beklerken runner cancellation penceresi içinde statüyü cancelled commit edebiliyor; cancel endpoint'inin son authoritative DB okuması meşru olarak downloading VEYA cancelled dönebiliyor; stale queued snapshot'ın aktif işi ezmesi koşullu güncelleme nedeniyle zaten imkânsız. Teşhis kanıtı: fix öncesi solo 5 koşuda 1 fail (aynı assertion). Fix (test-only): response assertion `in {"downloading", "cancelled"}` (asla queued olamaz); final cancelled/error code/staging assertions korundu. Kanıt: fix sonrası solo 3/3 PASS + tam backend suite 192 passed + ruff/mypy PASS
 - WF-EVAL-1 — [workflow maddesi — production milestone finding değildir] generic `.opencode/evals` JSONL+Markdown telemetry schema v1.2, salt-okunur evaluator ve `/evaluate`, her terminal bounded-task checkpoint capture, append-only correction/supersession effective dataset, M2 retrospective baseline. Production/backend/frontend değişmedi. Independent workflow reviewer final ACCEPTANCE PASS; Critical/Important yok. Statik/git doğrulamaları PASS; runtime OpenCode/JSON parser mevcut izinlerde çalıştırılamadı (limitation).
 - WF-EVAL-APPEND-1 — CLOSED (2026-10-02) — safe deterministic JSONL append helper runtime acceptance tamamlandı: `--self-test` PASS (strict v1.2 valid+invalid fixtures, prefix korunumu, tek-fd append, duplicate/newline/symlink/invalid-UTF-8 reddi, mevcut lock'ta fail-closed), `--verify` PASS (16 kayıt), WF-EVAL-1 retrospektif task_run kaydı `wf-eval-1` safe append ile task-runs.jsonl'a eklendi (17 kayıt), append sonrası `--verify` PASS (17 kayıt, unique id). Statik reviewer ACCEPTANCE PASS (2026-09-30) ile birlikte task tamamlandı; production source değişmedi. Önceki permission-denied durumu `wf-eval-append-1-runtime-acceptance-2026-10-01-blocked` telemetry kaydında duruyor; kök neden checker rolünde Node izni olmamasıydı (hot-reload değil); runtime acceptance fast-worker'ın exact Node komut izinleriyle tamamlandı.
+- WF-SIMPLIFY-1 — [workflow maddesi — production milestone finding değildir] AGENTS.md, 7 agent promptu ve 4 command wrapper'ında küçük/kontrollü natural-language-first sadeleştirme. Roller, model routing, mode/steps ve permission frontmatter değişmedi. Product/backend/frontend, opencode.json, telemetry schema/helper/task-runs/evaluator semantiği değişmedi. Per-task telemetry, durable state sırası, provider/permission/orchestration vs implementation ayrımı, independent reviewer/final checker, destructive Git ve Definition of Done sınırları korundu. Command dosyaları ince wrapper oldu; ilgili authoritative kurallar agent promptlarında tek yerde kaldı. Independent reviewer ACCEPTANCE PASS; Critical/Important yok. Kontroller: git diff --check PASS; changed-scope doğrulaması yalnız beklenen 12 prompt/config dosyası PASS; frontmatter model/mode/steps/permission/agent/subtask diff yok PASS; dört command dosyasında $ARGUMENTS PASS; telemetry helper --verify PASS (20 valid unique records). Product full suite çalıştırılmadı (production değişikliği yok). Diff: 12 dosyada 330 insertions, 656 deletions, net ~%31 satır azalması.
 
 ## Remaining Bounded Tasks / Findings
 
-Boş — M2 ve workflow task'ları (WF-EVAL-1, WF-EVAL-APPEND-1) için açık Critical/Important finding veya bekleyen bounded task yok.
+Boş — M2 ve workflow task'ları (WF-EVAL-1, WF-EVAL-APPEND-1, WF-SIMPLIFY-1) için açık Critical/Important finding veya bekleyen bounded task yok.
 
-M2 için kaydedilmiş Critical/Important finding kalmadı (I10 kapatıldı); WF-EVAL-1 workflow task'ı için de açık Critical/Important finding yok. Residual low-risk gözlemler (blocker değil, backlog adayı): job_service cancel 404 code 'analysis_not_found' ileride 'job_not_found' olabilir; queue_manager _cancel_events uzun ömürlü kullanımda temizlenmeli; çok-kullanıcılı gelecekte SSE replay owner-scoped olmalı; checker docker compose logs izni şimdi mevcut (checker.md güncellendi), sonraki closure koşusunda migration 0003 log düzeyinde doğrulanabilir.
+M2 için kaydedilmiş Critical/Important finding kalmadı (I10 kapatıldı); WF-EVAL-1, WF-EVAL-APPEND-1 ve WF-SIMPLIFY-1 workflow task'ları için de açık Critical/Important finding yok. Residual low-risk gözlemler (blocker değil, backlog adayı): job_service cancel 404 code 'analysis_not_found' ileride 'job_not_found' olabilir; queue_manager _cancel_events uzun ömürlü kullanımda temizlenmeli; çok-kullanıcılı gelecekte SSE replay owner-scoped olmalı; checker docker compose logs izni şimdi mevcut (checker.md güncellendi), sonraki closure koşusunda migration 0003 log düzeyinde doğrulanabilir.
 
 ## Last Verified Quality Gates (2026-09-29)
 
@@ -52,6 +53,8 @@ Not (2026-09-29, WF-EVAL-1 workflow task): Production source değişmediği içi
 Not (2026-09-30, WF-EVAL-APPEND-1 workflow task): Production source değişmedi; M2 product gates FRESH geçerliliğini korur.
 
 Not (2026-10-02, WF-EVAL-APPEND-1 runtime acceptance): Production source değişmedi; M2 product gates FRESH geçerliliğini korur. Runtime telemetry helper doğrulamaları: `--self-test` PASS, `--verify` PASS (append öncesi 16, sonrası 17 kayıt).
+
+Not (2026-10-02, WF-SIMPLIFY-1): Production source değişmediği için yukarıdaki M2 closure full gates FRESH geçerliliğini korur; product full suite çalıştırılmadı (gerekmedi). Yalnız statik prompt kontrolleri koştu: git diff --check PASS; changed-scope doğrulaması (yalnız beklenen 12 prompt/config dosyası) PASS; frontmatter model/mode/steps/permission/agent/subtask diff yok PASS; dört command dosyasında $ARGUMENTS PASS; telemetry helper --verify PASS (20 valid unique records).
 
 Önceki kayıt (2026-09-28, historical — M2 geliştirme öncesi tam koşu):
 
@@ -73,15 +76,15 @@ Gate geçerlilik kuralları:
 
 ## Next Bounded Task
 
-Yok. M2 kapalı; WF-EVAL-1 ve WF-EVAL-APPEND-1 workflow task'ları tamamlandı. M3 yalnızca kullanıcının açık yeni talebiyle planning/implementation olarak başlayabilir. Telemetri altyapısında somut bir append hatası görülmedikçe yeni hardening/refactor/özellik yapılmayacak. Backlog adayı residual low-risk gözlemler Remaining bölümündeki notlarda duruyor.
+Yok. M2 kapalı; WF-EVAL-1, WF-EVAL-APPEND-1 ve WF-SIMPLIFY-1 workflow task'ları tamamlandı. M3 yalnızca kullanıcının açık yeni talebiyle planning/implementation olarak başlayabilir. Telemetri altyapısında somut bir append hatası görülmedikçe yeni hardening/refactor/özellik yapılmayacak. Backlog adayı residual low-risk gözlemler Remaining bölümündeki notlarda duruyor.
 
 ## Commit-Ready Durumu
 
-Commit-ready: EVET (2026-10-02) — WF-EVAL-APPEND-1 runtime acceptance tamamlandı.
+Commit-ready: EVET (2026-10-02) — WF-SIMPLIFY-1 tamamlandı ve accepted.
 
-1. Remaining Critical/Important findings: BOŞ ✓ — M2 findings boş; WF-EVAL-1 ve WF-EVAL-APPEND-1 workflow task'ları için açık Critical/Important yok
-2. Review: KAPALI ✓ — M2 milestone review/checker kapalı (retry 2, I9 doğrulandı; I10 checker flake'i resolver ile kapatıldı); WF-EVAL-1 bağımsız reviewer ACCEPTANCE PASS; WF-EVAL-APPEND-1 independent static reviewer ACCEPTANCE PASS (2026-09-30) + runtime acceptance PASS (2026-10-02)
-3. Current working tree production gates: FRESH ✓ — production source değişmedi (yalnız workflow/config dosyaları); M2 closure full quality gates (2026-09-29) geçerliliğini korur
+1. Remaining Critical/Important findings: BOŞ ✓ — M2 findings boş; WF-EVAL-1, WF-EVAL-APPEND-1 ve WF-SIMPLIFY-1 workflow task'ları için açık Critical/Important yok
+2. Review: KAPALI ✓ — M2 milestone review/checker kapalı (retry 2, I9 doğrulandı; I10 checker flake'i resolver ile kapatıldı); WF-EVAL-1 bağımsız reviewer ACCEPTANCE PASS; WF-EVAL-APPEND-1 independent static reviewer ACCEPTANCE PASS (2026-09-30) + runtime acceptance PASS (2026-10-02); WF-SIMPLIFY-1 independent reviewer ACCEPTANCE PASS (2026-10-02, Critical/Important yok)
+3. Current working tree production gates: FRESH ✓ — production source değişmedi (WF-SIMPLIFY-1 yalnız 12 prompt/config dosyasını değiştirdi); M2 closure full quality gates (2026-09-29) geçerliliğini korur
 
 Not (2026-10-02, Git closure attempt): Kullanıcı commit talep etti; working tree incelendi (yalnız workflow/telemetry değişiklikleri: .gitignore, .opencode/WORK_STATE.md, .opencode/agents/fast-worker.md, .opencode/agents/lead.md, .opencode/agents/evaluator.md, .opencode/commands/continue.md, .opencode/commands/evaluate.md, .opencode/evals/SCHEMA.md, .opencode/evals/append-task-run.mjs, .opencode/evals/reports/M2.md, .opencode/evals/task-runs.jsonl; production/backend/frontend değişikliği yok), `git diff --check` temiz, hedefli stage listesi belirlendi. Ancak Lead session bash izinleri salt-okunur git komutlarıyla sınırlı ve tüm worker agent'ları (fast-worker, implementer) izin ve prompt kuralları gereği stage/commit'ten men; stage+commit kullanıcı tarafından çalıştırılmalı veya izin config güncellemesi sonrası tekrar denenmeli. Önerilen commit mesajı: 'chore: add agent workflow performance evaluation'.
 

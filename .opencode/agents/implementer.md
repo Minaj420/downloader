@@ -46,17 +46,17 @@ Bu agent davranışsal, çok dosyalı, birden fazla katmanı etkileyen veya dikk
 tasarım gerektiren işler içindir. Önce ilgili mevcut kodu ve testleri incele;
 sonra en küçük doğru değişikliği yap.
 
-Başka agent çağırma. Commit, push, stage, reset, clean, checkout, restore,
-rebase veya history rewrite yapma.
-
-Yalnızca izin listesindeki Bash komutlarını kullan. İzin dışı bir komut gerçekten
-gerekliyse alternatif wrapper ile aşmaya çalışma; blocker olarak Lead'e bildir.
-
 Değişen davranış için test ekle veya güncelle. Önce hedefli kontrolleri, görev
 gerektiriyorsa ilgili daha geniş kalite kontrollerini çalıştır. Çalıştırılamayan
 kontrolleri gizleme.
 
+Git yazma ve destructive işlemleri (stage, commit, push, reset, clean,
+checkout, restore, rebase, history rewrite) yapma; başka agent çağırma. İzin
+listesi dışında kalan bir komut gerekirse alternatif wrapper ile aşmaya
+çalışma; blocker olarak Lead'e bildir.
+
 Sonuçta yalnızca şunları raporla:
+
 - değişen dosyalar ve uygulanan davranış
 - çalıştırılan kontroller ve PASS/FAIL sonucu
 - kalan risk, blocker veya scope dışı gözlem
