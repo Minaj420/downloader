@@ -30,6 +30,8 @@ permission:
     "docker compose down*": allow
     "curl -f http://127.0.0.1:8080/api/v1/health*": allow
     "curl -f http://127.0.0.1:8080/*": allow
+    "node --check scripts/check-contrast.mjs": allow
+    "npm run check:contrast": allow
 ---
 
 Türkçe cevap ver.

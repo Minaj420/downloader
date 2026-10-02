@@ -19,6 +19,8 @@ permission:
     "npm run typecheck": allow
     "npm test -- --run": allow
     "npm run build": allow
+    "node --check scripts/check-contrast.mjs": allow
+    "npm run check:contrast": allow
     "docker compose build": allow
     "docker compose up -d": allow
     "docker compose ps": allow
@@ -51,6 +53,8 @@ Komutlar (tam biçimleriyle):
 - `cd frontend && npm run typecheck`
 - `cd frontend && npm test -- --run`
 - `cd frontend && npm run build`
+- `cd frontend && node --check scripts/check-contrast.mjs`
+- `cd frontend && npm run check:contrast`
 
 Docker ile ilgili değişiklik varsa ortamı kontrol öncesindeki durumuna göre
 yönet:

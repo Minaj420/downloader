@@ -33,6 +33,8 @@ permission:
     "node .opencode/evals/append-task-run.mjs --append": allow
     "node .opencode/evals/append-task-run.mjs --verify": allow
     "node .opencode/evals/append-task-run.mjs --self-test": allow
+    "node --check scripts/check-contrast.mjs": allow
+    "npm run check:contrast": allow
 ---
 
 Türkçe cevap ver.

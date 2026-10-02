@@ -24,6 +24,8 @@ permission:
     "git add*": allow
     "git commit*": allow
     "git commit --amend*": deny
+    "node --check scripts/check-contrast.mjs": allow
+    "npm run check:contrast": allow
 ---
 
 Türkçe cevap ver.
