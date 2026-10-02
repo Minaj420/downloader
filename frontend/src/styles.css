@@ -1,7 +1,95 @@
+/* ------------------------------------------------------------------ */
+/* Design tokens (docs/design/UI_DIRECTION.md §2)                      */
+/* ------------------------------------------------------------------ */
+
 :root {
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  /* shell + surfaces */
+  --color-ink-950: #0d2032;
+  --color-ink-800: #17344d;
+  --color-surface: #f7fbfe;
+  --color-surface-raised: #ffffff;
+  --color-surface-tint: #e8f3fa;
+  --color-border: #9bb8cc;
+  --color-border-strong: #55758d;
+
+  /* semantic */
+  --color-accent: #f66a0a;
+  --color-accent-hover: #d95300;
+  --color-info: #1769aa;
+  --color-success: #237a57;
+  --color-warning: #9a5b00;
+  --color-danger: #b42318;
+
+  /* non-text accent for focus outline, radio accent and progress fill;
+     >=3:1 against surface, raised, tint, ink shell and the progress track
+     (UI_DIRECTION §2 Contrast Contract). Decorative/primary accent usage
+     keeps --color-accent. */
+  --color-accent-ui: #d95300;
+  --color-progress-track: #17344d;
+
+  /* derived text tokens (components never hard-code colours) */
+  --color-text: #1c2530;
+  --color-text-muted: #55758d;
+  --color-on-status: #ffffff;
+  --color-header-text: #f2f8fc;
+  --color-header-text-muted: #a9c1d3;
+
+  /* theme-aware status surfaces/text, WCAG AA in both themes */
+  --color-status-neutral: #55758d; /* + --color-on-status text: 4.86:1 */
+  --color-danger-text: #b42318;    /* on --color-surface: 6.31:1 */
+
+  /* geometry + type */
+  --font-body: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-display: system-ui, -apple-system, "Arial Narrow", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --radius-control: 4px;
+  --radius-panel: 6px;
+  --border-default: 1px solid var(--color-border);
+  --focus-ring: 0 0 0 3px rgba(246, 106, 10, 0.35);
+
+  font-family: var(--font-body);
   color-scheme: light dark;
 }
+
+/* Dark mapping: token swap only; component CSS stays unchanged. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-surface: #0f1a24;
+    --color-surface-raised: #16232f;
+    --color-surface-tint: #1b2c3a;
+    --color-border: #34506a;
+    --color-border-strong: #7492ab;
+    --color-text: #e6eef5;
+    --color-text-muted: #9fb6c7;
+    --color-header-text-muted: #8fabbf;
+    --color-status-neutral: #4a6379; /* + --color-on-status text: 6.27:1 */
+    --color-danger-text: #f2705e;    /* on --color-surface: 6.08:1 */
+    --color-accent-ui: #f66a0a;
+    --color-progress-track: #24405c;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Global focus visibility (UI_DIRECTION §6)                           */
+/* ------------------------------------------------------------------ */
+
+/* Outline uses --color-accent-ui: the non-text accent token that keeps
+   >=3:1 against the meaningful surfaces the indicator appears on. */
+:focus-visible {
+  outline: 2px solid var(--color-accent-ui);
+  outline-offset: 2px;
+  box-shadow: var(--focus-ring);
+}
+
+/* ------------------------------------------------------------------ */
+/* Base                                                                */
+/* ------------------------------------------------------------------ */
 
 * {
   box-sizing: border-box;
@@ -9,16 +97,15 @@
 
 body {
   margin: 0;
-  background: #f6f7f9;
-  color: #1c1e21;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 1rem;
+  line-height: 1.5;
 }
 
-@media (prefers-color-scheme: dark) {
-  body {
-    background: #14161a;
-    color: #e8eaed;
-  }
-}
+/* ------------------------------------------------------------------ */
+/* App shell                                                           */
+/* ------------------------------------------------------------------ */
 
 .app {
   min-height: 100vh;
@@ -30,38 +117,65 @@ body {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.5rem 1.5rem;
-  padding: 0.75rem 1rem;
-  background: #1f6feb;
-  color: #ffffff;
+  gap: var(--space-2) var(--space-8);
+  padding: 0.7rem 1.25rem;
+  background: var(--color-ink-950);
+  color: var(--color-header-text);
+  border-bottom: 2px solid var(--color-accent);
 }
 
 .brand {
-  font-weight: 700;
-  font-size: 1.05rem;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.brand-mark {
+  width: 0.8rem;
+  height: 0.8rem;
+  background: var(--color-accent);
+  clip-path: polygon(0 0, 100% 0, 100% 62%, 62% 100%, 0 100%);
+}
+
+.brand-name {
+  font-family: var(--font-display);
+  font-size: 1.1rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
 }
 
 .app-nav {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.25rem;
+  gap: var(--space-1);
 }
 
 .app-nav a {
-  color: #ffffff;
+  display: inline-flex;
+  align-items: center;
+  padding: 0.45rem 0.7rem;
+  border-bottom: 2px solid transparent;
+  border-radius: var(--radius-control) var(--radius-control) 0 0;
+  color: var(--color-header-text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  font-weight: 500;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
   text-decoration: none;
-  padding: 0.35rem 0.6rem;
-  border-radius: 6px;
-  font-size: 0.95rem;
 }
 
 .app-nav a:hover {
-  background: rgba(255, 255, 255, 0.15);
+  color: var(--color-header-text);
+  background: color-mix(in srgb, var(--color-header-text) 12%, transparent);
 }
 
 .app-nav a.active {
-  background: rgba(255, 255, 255, 0.25);
-  font-weight: 600;
+  color: var(--color-accent);
+  font-weight: 700;
+  border-bottom-color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 14%, transparent);
 }
 
 .backend-status {
@@ -69,51 +183,126 @@ body {
   display: flex;
   align-items: center;
   gap: 0.4rem;
-  font-size: 0.85rem;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  letter-spacing: 0.03em;
 }
 
 .status-dot {
   width: 0.55rem;
   height: 0.55rem;
   border-radius: 50%;
-  background: #9aa0a6;
+  background: var(--color-border-strong);
 }
 
 .status-dot.online {
-  background: #2ea043;
+  background: var(--color-success);
 }
 
 .status-dot.offline {
-  background: #d1242f;
+  background: var(--color-danger);
 }
 
 .app-main {
   flex: 1;
   width: 100%;
-  max-width: 60rem;
+  max-width: 72rem;
   margin: 0 auto;
-  padding: 1.25rem 1rem 3rem;
+  padding: var(--space-6) 1.25rem 3rem;
 }
 
 .app-main h1 {
+  font-family: var(--font-display);
   font-size: 1.4rem;
-  margin: 0 0 0.5rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin: 0 0 var(--space-2);
+}
+
+.app-main h2,
+.app-main h3 {
+  font-family: var(--font-display);
 }
 
 .placeholder {
-  opacity: 0.75;
+  color: var(--color-text-muted);
 }
 
-/* ---- New Download ---- */
+/* ------------------------------------------------------------------ */
+/* New Download                                                        */
+/* ------------------------------------------------------------------ */
 
+/* Add Media panel (UI_DIRECTION §4): hairline border, raised surface,
+   minimal shadow, distinct header strip with the orange `01` plate carrying
+   the single clip-corner motif (same language as the brand mark). */
 .analyze-form {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
-  padding: 1rem;
-  border: 1px solid rgba(128, 128, 128, 0.3);
-  border-radius: 10px;
-  background: rgba(128, 128, 128, 0.06);
+  border: var(--border-default);
+  border-radius: var(--radius-panel);
+  background: var(--color-surface-raised);
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--color-ink-950) 10%, transparent);
+  overflow: hidden;
+}
+
+.analyze-form-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-surface-tint);
+  border-bottom: var(--border-default);
+}
+
+.analyze-form-heading {
+  min-width: 0;
+}
+
+.analyze-form-header h2 {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.analyze-form-subtitle {
+  margin: var(--space-1) 0 0;
+  font-size: 0.875rem;
+  /* --color-text-muted is 4.31:1 on the tinted header strip (fails AA for
+     normal text); --color-text is >=12:1 in both themes. */
+  color: var(--color-text);
+}
+
+.analyze-form-step {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.4rem;
+  padding: 0.35rem 0.4rem;
+  background: var(--color-accent);
+  color: var(--color-ink-950);
+  font-family: var(--font-mono);
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  clip-path: polygon(0 0, 100% 0, 100% 62%, 62% 100%, 0 100%);
+}
+
+/* Desktop: one compact workflow row — platform narrow, URL flexible,
+   Analyze action auto-sized. min-width: 0 stops long URL input overflow. */
+.analyze-form-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 14rem) minmax(0, 1fr) auto;
+  gap: var(--space-3);
+  align-items: end;
+  padding: var(--space-4);
+}
+
+.analyze-form-controls > * {
+  min-width: 0;
 }
 
 .field {
@@ -123,37 +312,49 @@ body {
 }
 
 .field label {
-  font-size: 0.85rem;
+  font-size: 0.875rem;
   font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
 }
 
 .field input,
 .field select {
   padding: 0.55rem 0.65rem;
-  border-radius: 8px;
-  border: 1px solid rgba(128, 128, 128, 0.45);
-  background: transparent;
-  color: inherit;
+  border-radius: var(--radius-control);
+  /* Steel border: --color-border-strong gives >=3:1 non-text contrast
+     against --color-surface-raised in both themes (UI_DIRECTION §5). */
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-surface-raised);
+  color: var(--color-text);
+  font-family: inherit;
   font-size: 1rem;
+}
+
+/* Placeholder is real text: keep the muted token with full opacity; the
+   checkable pair is text-muted/surface-raised (UI_DIRECTION §2). */
+.field input::placeholder {
+  color: var(--color-text-muted);
+  opacity: 1;
 }
 
 .form-actions {
   display: flex;
-  gap: 0.5rem;
+  gap: var(--space-2);
 }
 
+/* Shared button base: geometry, disabled state. Default look is neutral;
+   visual variants below (UI_DIRECTION §5). Focus ring is global. */
 button {
   padding: 0.5rem 0.9rem;
-  border-radius: 8px;
-  border: 1px solid transparent;
-  background: #1f6feb;
-  color: #ffffff;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-surface-tint);
+  color: var(--color-text);
+  font-family: inherit;
   font-size: 0.95rem;
+  font-weight: 600;
   cursor: pointer;
-}
-
-button:hover:not(:disabled) {
-  filter: brightness(1.1);
 }
 
 button:disabled {
@@ -161,16 +362,68 @@ button:disabled {
   cursor: not-allowed;
 }
 
+/* primary — the one main action per view (Analyze, Download).
+   Hover inverts to ink fill with accent text: 5.49:1 AA. Border uses the
+   non-text accent token: the outer boundary stays >=3:1 against the real
+   parent surfaces (Download on page surface, Analyze on raised panel;
+   contract pairs accent-ui/surface, accent-ui/surface-raised). */
+.button-primary {
+  border-color: var(--color-accent-ui);
+  background: var(--color-accent);
+  color: var(--color-ink-950);
+  font-weight: 700;
+}
+
+.button-primary:hover:not(:disabled) {
+  border-color: var(--color-accent-ui);
+  background: var(--color-ink-950);
+  color: var(--color-accent);
+}
+
+/* secondary — cool-blue tinted fill for supporting actions */
+.button-secondary {
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-tint);
+  color: var(--color-text);
+}
+
+.button-secondary:hover:not(:disabled) {
+  border-color: var(--color-text-muted);
+  background: color-mix(in srgb, var(--color-border) 25%, var(--color-surface-tint));
+}
+
+/* quiet — ghost fill for toggles (Activity disclosure) */
+.button-quiet {
+  border-color: var(--color-border-strong);
+  background: transparent;
+  color: inherit;
+}
+
+.button-quiet:hover:not(:disabled) {
+  background: var(--color-surface-tint);
+}
+
+/* danger — conservative red outline for destructive flows (Cancel) */
+.button-danger {
+  border-color: var(--color-danger-text);
+  background: transparent;
+  color: var(--color-danger-text);
+}
+
+.button-danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-danger-text) 10%, var(--color-surface-raised));
+}
+
 .error-banner {
-  margin-top: 1rem;
-  padding: 0.75rem 1rem;
-  border-radius: 10px;
-  border: 1px solid #d1242f;
-  background: rgba(209, 36, 47, 0.1);
+  margin-top: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-panel);
+  border: 1px solid var(--color-danger);
+  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.75rem;
+  gap: var(--space-3);
 }
 
 .error-banner p {
@@ -178,15 +431,15 @@ button:disabled {
 }
 
 .platform-mismatch {
-  margin-bottom: 1rem;
-  padding: 0.75rem 1rem;
-  border-radius: 10px;
-  border: 1px solid #d4a72c;
-  background: rgba(212, 167, 44, 0.12);
+  margin-bottom: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-panel);
+  border: 1px solid var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.75rem;
+  gap: var(--space-3);
 }
 
 .platform-mismatch p {
@@ -194,7 +447,7 @@ button:disabled {
 }
 
 .analysis-result {
-  margin-top: 1.5rem;
+  margin-top: var(--space-6);
   display: flex;
   flex-direction: column;
   gap: 1.25rem;
@@ -202,14 +455,15 @@ button:disabled {
 
 .result-header {
   display: flex;
-  gap: 1rem;
+  gap: var(--space-4);
   align-items: flex-start;
 }
 
 .result-thumb {
   width: 10rem;
   max-width: 40%;
-  border-radius: 8px;
+  border-radius: var(--radius-control);
+  border: var(--border-default);
 }
 
 .result-heading {
@@ -217,7 +471,7 @@ button:disabled {
 }
 
 .result-heading h2 {
-  margin: 0 0 0.5rem;
+  margin: 0 0 var(--space-2);
   font-size: 1.15rem;
   overflow-wrap: anywhere;
 }
@@ -226,22 +480,24 @@ button:disabled {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.5rem;
-  font-size: 0.9rem;
+  gap: var(--space-2);
+  font-size: 0.875rem;
 }
 
 .badge {
   display: inline-block;
   padding: 0.15rem 0.55rem;
-  border-radius: 999px;
-  background: rgba(128, 128, 128, 0.2);
+  border-radius: var(--radius-control);
+  border: var(--border-default);
+  background: var(--color-surface-tint);
   font-size: 0.8rem;
   white-space: nowrap;
 }
 
 .badge-platform {
-  background: #1f6feb;
-  color: #ffffff;
+  border-color: transparent;
+  background: var(--color-info);
+  color: var(--color-on-status);
 }
 
 .meta-item {
@@ -251,7 +507,7 @@ button:disabled {
 .collection-preview ul,
 .format-group ul {
   list-style: none;
-  margin: 0.5rem 0 0;
+  margin: var(--space-2) 0 0;
   padding: 0;
   display: flex;
   flex-direction: column;
@@ -268,27 +524,29 @@ button:disabled {
   display: flex;
   gap: 0.6rem;
   padding: 0.3rem 0.5rem;
-  border-radius: 6px;
-  background: rgba(128, 128, 128, 0.08);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-tint);
 }
 
 .item-position {
   font-variant-numeric: tabular-nums;
-  opacity: 0.7;
+  /* --color-text-muted is 4.31:1 on the tinted row (below AA for normal
+     text); --color-text is >=12:1 in both themes. */
+  color: var(--color-text);
 }
 
 .format-item {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-2);
   padding: 0.4rem 0.6rem;
-  border-radius: 8px;
-  background: rgba(128, 128, 128, 0.08);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-tint);
 }
 
 .badge-kind {
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   text-transform: uppercase;
   letter-spacing: 0.03em;
 }
@@ -297,69 +555,77 @@ button:disabled {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.75rem;
+  gap: var(--space-3);
 }
 
 .muted-note {
   margin: 0.25rem 0 0;
-  font-size: 0.85rem;
-  opacity: 0.7;
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
 }
 
-/* ---- Format selection & destination ---- */
+/* ------------------------------------------------------------------ */
+/* Format selection & destination                                      */
+/* ------------------------------------------------------------------ */
 
 .format-option {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-2);
   cursor: pointer;
 }
 
 .format-option input[type="radio"] {
-  accent-color: #1f6feb;
+  accent-color: var(--color-accent-ui);
 }
 
 .destination-group {
-  border: 1px solid rgba(128, 128, 128, 0.3);
-  border-radius: 10px;
-  padding: 0.75rem 1rem;
+  border: var(--border-default);
+  border-radius: var(--radius-panel);
+  background: var(--color-surface-raised);
+  padding: var(--space-3) var(--space-4);
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
 }
 
 .destination-group legend {
-  font-size: 0.85rem;
+  font-size: 0.875rem;
   font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
   padding: 0 0.35rem;
 }
 
 .destination-option {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-2);
   font-size: 0.95rem;
 }
 
 .destination-option input[type="radio"] {
-  accent-color: #1f6feb;
+  accent-color: var(--color-accent-ui);
 }
 
 .destination-disabled {
   opacity: 0.55;
 }
 
-/* ---- Job progress ---- */
+/* ------------------------------------------------------------------ */
+/* Job progress                                                        */
+/* ------------------------------------------------------------------ */
 
 .job-progress {
-  margin-top: 1.5rem;
-  padding: 1rem;
-  border: 1px solid rgba(128, 128, 128, 0.3);
-  border-radius: 10px;
+  margin-top: var(--space-6);
+  padding: var(--space-4);
+  border: var(--border-default);
+  border-radius: var(--radius-panel);
+  background: var(--color-surface-raised);
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: var(--space-3);
 }
 
 .job-progress-header {
@@ -376,44 +642,55 @@ button:disabled {
 }
 
 .badge-status-queued {
-  background: #6e7781;
-  color: #ffffff;
+  border-color: transparent;
+  background: var(--color-status-neutral);
+  color: var(--color-on-status);
 }
 
 .badge-status-downloading,
 .badge-status-analyzing,
 .badge-status-post_processing,
 .badge-status-finalizing {
-  background: #1f6feb;
-  color: #ffffff;
+  border-color: transparent;
+  background: var(--color-info);
+  color: var(--color-on-status);
 }
 
 .badge-status-completed {
-  background: #2ea043;
-  color: #ffffff;
+  border-color: transparent;
+  background: var(--color-success);
+  color: var(--color-on-status);
 }
 
 .badge-status-failed {
-  background: #d1242f;
-  color: #ffffff;
+  border-color: transparent;
+  background: var(--color-danger);
+  color: var(--color-on-status);
 }
 
 .badge-status-cancelled {
-  background: #bf8700;
-  color: #ffffff;
+  border-color: transparent;
+  background: var(--color-warning);
+  color: var(--color-on-status);
 }
 
 .progress-bar {
   height: 0.6rem;
-  border-radius: 999px;
-  background: rgba(128, 128, 128, 0.25);
+  border-radius: var(--radius-control);
+  /* Strong outer boundary separates the track from the raised panel
+     (contract pair border-strong/surface-raised); the progress state
+     itself is the fill/track pair accent-ui/progress-track, >=3:1 in
+     both themes. The progress outer boundary is NOT covered by the
+     decorative hairline exemption. */
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-progress-track);
   overflow: hidden;
 }
 
 .progress-fill {
   height: 100%;
-  border-radius: 999px;
-  background: #1f6feb;
+  border-radius: var(--radius-control);
+  background: var(--color-accent-ui);
   transition: width 0.3s ease;
 }
 
@@ -422,7 +699,8 @@ button:disabled {
   flex-wrap: wrap;
   gap: 0.9rem;
   margin: 0;
-  font-size: 0.9rem;
+  font-family: var(--font-mono);
+  font-size: 0.875rem;
   font-variant-numeric: tabular-nums;
 }
 
@@ -433,38 +711,38 @@ button:disabled {
 }
 
 .job-error {
-  color: #d1242f;
+  color: var(--color-danger-text);
 }
 
-/* ---- Activity panel ---- */
+/* ------------------------------------------------------------------ */
+/* Activity panel                                                      */
+/* ------------------------------------------------------------------ */
 
 .activity-panel {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: var(--space-2);
 }
 
 .activity-toggle {
   align-self: flex-start;
   padding: 0.3rem 0.7rem;
-  font-size: 0.9rem;
-  background: transparent;
-  border: 1px solid rgba(128, 128, 128, 0.45);
-  color: inherit;
+  font-size: 0.875rem;
 }
 
 .activity-list {
   margin: 0;
-  padding: 0.5rem 0.75rem;
+  padding: var(--space-2) var(--space-3);
   list-style: none;
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
-  border: 1px solid rgba(128, 128, 128, 0.3);
-  border-radius: 8px;
-  background: rgba(128, 128, 128, 0.06);
-  font-size: 0.85rem;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  border: var(--border-default);
+  border-radius: var(--radius-panel);
+  background: var(--color-surface-raised);
+  font-size: 0.875rem;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
   max-height: 18rem;
   overflow-y: auto;
 }
@@ -477,7 +755,7 @@ button:disabled {
 
 .activity-time {
   font-variant-numeric: tabular-nums;
-  opacity: 0.7;
+  color: var(--color-text-muted);
   white-space: nowrap;
 }
 
@@ -486,5 +764,77 @@ button:disabled {
 }
 
 .activity-empty {
-  opacity: 0.7;
+  color: var(--color-text-muted);
+}
+
+/* ------------------------------------------------------------------ */
+/* Reduced motion (UI_DIRECTION §6)                                    */
+/* ------------------------------------------------------------------ */
+
+@media (prefers-reduced-motion: reduce) {
+  .progress-fill {
+    transition: none;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Responsive (UI_DIRECTION §6, PRODUCT_SPEC §34)                      */
+/* ------------------------------------------------------------------ */
+
+@media (max-width: 48rem) {
+  .app-header {
+    gap: 0.4rem 1rem;
+    padding: 0.6rem 0.85rem;
+  }
+
+  .app-main {
+    padding: var(--space-4) 0.85rem 2.5rem;
+  }
+
+  /* 16px+ inputs avoid mobile focus zoom */
+  .field input,
+  .field select {
+    font-size: 16px;
+  }
+
+  /* Add Media workflow row collapses to one column with full-width
+     controls (PRODUCT_SPEC §34: phone is a first-class target). */
+  .analyze-form-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .analyze-form-controls .form-actions .button-primary {
+    width: 100%;
+  }
+
+  .result-thumb {
+    width: 7rem;
+  }
+}
+
+@media (pointer: coarse) {
+  .app-nav a {
+    min-height: 44px;
+  }
+
+  button,
+  .activity-toggle {
+    min-height: 44px;
+  }
+
+  .format-option,
+  .destination-option {
+    min-height: 44px;
+  }
+
+  /* fill the row so the whole line is the clickable label target */
+  .format-option {
+    flex: 1 1 auto;
+  }
+
+  .field input,
+  .field select {
+    font-size: 16px;
+    min-height: 44px;
+  }
 }
