@@ -275,7 +275,11 @@ body {
   color: var(--color-text);
 }
 
-.analyze-form-step {
+/* Same plate language for both panel families (UI_DIRECTION §4): the
+   numbered plates are decorative aria-hidden markers, the orange accent is
+   the existing checked pair accent/ink-950. */
+.analyze-form-step,
+.result-panel-step {
   flex: none;
   display: inline-flex;
   align-items: center;
@@ -446,6 +450,54 @@ button:disabled {
   margin: 0;
 }
 
+/* Analysis result panels (UI_DIRECTION §4): same grammar as the Add Media
+   panel — raised surface, hairline border, minimal shadow, tinted header
+   strip. `02 Media Preview` and `03 Format & Destination` continue the
+   sequential New Download flow. */
+.result-panel {
+  border: var(--border-default);
+  border-radius: var(--radius-panel);
+  background: var(--color-surface-raised);
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--color-ink-950) 10%, transparent);
+  overflow: hidden;
+}
+
+.result-panel-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-surface-tint);
+  border-bottom: var(--border-default);
+}
+
+.result-panel-title {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.result-panel-heading {
+  min-width: 0;
+}
+
+.result-panel-subtitle {
+  margin: var(--space-1) 0 0;
+  font-size: 0.875rem;
+  /* Same pair as the Add Media subtitle: --color-text on the tinted strip
+     (>=12:1 in both themes); --color-text-muted would fall below AA there. */
+  color: var(--color-text);
+}
+
+.result-panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-4);
+}
+
 .analysis-result {
   margin-top: var(--space-6);
   display: flex;
@@ -470,7 +522,9 @@ button:disabled {
   min-width: 0;
 }
 
-.result-heading h2 {
+/* The media title sits inside the Media Preview panel under the panel
+   heading, so it is an h3 in the document outline. */
+.result-heading h3 {
   margin: 0 0 var(--space-2);
   font-size: 1.15rem;
   overflow-wrap: anywhere;

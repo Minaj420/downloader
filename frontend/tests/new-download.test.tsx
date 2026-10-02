@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "../src/app/App";
 import type { AnalyzeRequest, NormalizedAnalysis } from "../src/api/analysis";
@@ -246,6 +246,15 @@ describe("NewDownloadPage", () => {
     expect(await screen.findByText("Backend online")).toBeInTheDocument();
   });
 
+  it("names the form with its Add Media panel heading", async () => {
+    okHealthHandler(() => Promise.resolve(jsonResponse(singleResult)));
+    await renderNewDownload();
+
+    expect(screen.getByRole("heading", { name: "Add Media" })).toBeInTheDocument();
+    // The form is programmatically bound to the heading via its accessible name.
+    expect(screen.getByRole("form", { name: "Add Media" })).toBeInTheDocument();
+  });
+
   it("sends the analyze request with auto platform and renders the result", async () => {
     const fetchMock = okHealthHandler(() => Promise.resolve(jsonResponse(singleResult)));
     const { user } = await renderNewDownload();
@@ -269,6 +278,49 @@ describe("NewDownloadPage", () => {
     expect(screen.getByText(/~160 kbps/)).toBeInTheDocument();
     expect(screen.getByText(/90\.6 MiB/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Download" })).toBeEnabled();
+  });
+
+  it("organizes the result into a Media Preview and a Format & Destination panel", async () => {
+    okHealthHandler(() => Promise.resolve(jsonResponse(singleResult)));
+    const { user } = await renderNewDownload();
+
+    await fillAndSubmit(user, singleResult.original_url);
+    await screen.findByText("Test Video");
+
+    // Sequential plates continue the Add Media panel (01) and stay decorative.
+    expect(screen.getByText("02")).toHaveAttribute("aria-hidden", "true");
+    expect(screen.getByText("03")).toHaveAttribute("aria-hidden", "true");
+
+    const preview = screen.getByRole("region", { name: "Media Preview" });
+    expect(
+      within(preview).getByRole("heading", { name: "Test Video", level: 3 }),
+    ).toBeInTheDocument();
+    expect(
+      within(preview).getByText("YouTube", { selector: ".badge-platform" }),
+    ).toBeInTheDocument();
+    expect(within(preview).getByText("Single item")).toBeInTheDocument();
+    expect(within(preview).getByText("Test Channel")).toBeInTheDocument();
+    // Media Preview only describes the media; no selection controls or
+    // download action live there.
+    expect(within(preview).queryByRole("radio")).not.toBeInTheDocument();
+    expect(within(preview).queryByRole("button")).not.toBeInTheDocument();
+
+    const selection = screen.getByRole("region", { name: "Format & Destination" });
+    expect(
+      within(selection).getByRole("heading", { name: "Video formats" }),
+    ).toBeInTheDocument();
+    expect(
+      within(selection).getByRole("heading", { name: "Audio formats" }),
+    ).toBeInTheDocument();
+    expect(within(selection).getByRole("group", { name: "Save to" })).toBeInTheDocument();
+
+    // Preserved selection semantics: first format selected by default,
+    // App Library is the only selectable destination, Download is enabled.
+    expect(within(selection).getByRole("radio", { name: /1080p/ })).toBeChecked();
+    expect(within(selection).getByRole("radio", { name: "App Library" })).toBeChecked();
+    expect(within(selection).getByRole("radio", { name: "Plex Music (coming later)" })).toBeDisabled();
+    const download = within(selection).getByRole("button", { name: "Download" });
+    expect(download).toBeEnabled();
   });
 
   it("shows a loading state while analyzing", async () => {
@@ -322,6 +374,18 @@ describe("NewDownloadPage", () => {
     expect(screen.getByText("Track One")).toBeInTheDocument();
     expect(screen.getByText("Track Two")).toBeInTheDocument();
     expect(screen.getByText("Only a preview is shown.")).toBeInTheDocument();
+
+    // The collection preview stays read-only: items are plain list rows in
+    // the Media Preview panel, never selectable variants.
+    const preview = screen.getByRole("region", { name: "Media Preview" });
+    const itemList = within(preview).getByRole("list");
+    expect(within(itemList).getAllByRole("listitem")).toHaveLength(2);
+    expect(within(itemList).queryByRole("radio")).not.toBeInTheDocument();
+    expect(within(itemList).queryByRole("checkbox")).not.toBeInTheDocument();
+
+    // With no source-derived formats there is no selectable variant, so the
+    // download action stays disabled (existing behaviour).
+    expect(screen.getByRole("button", { name: "Download" })).toBeDisabled();
   });
 
   it("offers switching to the detected platform on mismatch", async () => {
