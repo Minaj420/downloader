@@ -16,7 +16,10 @@ export function App() {
       <BrowserRouter>
         <div className="app">
           <header className="app-header">
-            <span className="brand">Downloader</span>
+            <div className="brand">
+              <span className="brand-mark" aria-hidden="true" />
+              <span className="brand-name">Downloader</span>
+            </div>
             <nav className="app-nav" aria-label="Primary">
               <NavLink to="/" end>
                 New Download

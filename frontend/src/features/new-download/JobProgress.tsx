@@ -79,7 +79,7 @@ export function JobProgress({
             {speed && <span>{speed}</span>}
             {eta && <span>ETA {eta}</span>}
           </p>
-          <button type="button" onClick={onCancel} disabled={isCancelling}>
+          <button type="button" className="button-danger" onClick={onCancel} disabled={isCancelling}>
             {isCancelling ? "Cancelling…" : "Cancel"}
           </button>
         </>

@@ -22,7 +22,7 @@ export function ActivityPanel({ events, loadStatus, onRefresh }: ActivityPanelPr
     <section className="activity-panel" aria-label="Job activity">
       <button
         type="button"
-        className="activity-toggle"
+        className="button-quiet activity-toggle"
         aria-expanded={expanded}
         aria-controls="activity-list"
         onClick={() => setExpanded((value) => !value)}
@@ -37,7 +37,7 @@ export function ActivityPanel({ events, loadStatus, onRefresh }: ActivityPanelPr
           {loadStatus === "error" && (
             <li className="activity-empty">
               Could not load activity.{" "}
-              <button type="button" onClick={onRefresh}>
+              <button type="button" className="button-secondary" onClick={onRefresh}>
                 Retry
               </button>
             </li>

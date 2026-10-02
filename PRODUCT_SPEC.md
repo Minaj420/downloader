@@ -461,6 +461,10 @@ Where metadata can be determined reliably, files should contain embedded metadat
 
 Users should be able to inspect or correct important album metadata before the download when automatic metadata is uncertain.
 
+When an automatic album artwork match is medium or low confidence, the UI should present candidate covers for review and explicit selection.
+
+An ambiguous artwork candidate must not be silently embedded as if authoritative; explicit user selection is required to confirm artwork before embedding.
+
 Downloader must avoid confidently inventing metadata from ambiguous titles.
 
 ---

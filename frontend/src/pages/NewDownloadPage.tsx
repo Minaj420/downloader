@@ -206,7 +206,7 @@ export function NewDownloadPage() {
         <div className="error-banner" role="alert">
           <p>{analyzeError.message}</p>
           {analyzeRetryable && (
-            <button type="button" onClick={handleSubmit}>
+            <button type="button" className="button-secondary" onClick={handleSubmit}>
               Retry
             </button>
           )}

@@ -27,6 +27,18 @@ describe("App shell", () => {
     expect(await screen.findByText("Backend online")).toBeInTheDocument();
   });
 
+  it("marks the active navigation link with aria-current", async () => {
+    stubHealthOk();
+    render(<App />);
+
+    expect(screen.getByRole("link", { name: "New Download" })).toHaveAttribute("aria-current", "page");
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("link", { name: "Settings" }));
+    expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("link", { name: "New Download" })).not.toHaveAttribute("aria-current");
+  });
+
   it("navigates between pages", async () => {
     stubHealthOk();
     render(<App />);

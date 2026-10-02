@@ -1181,6 +1181,10 @@ from arbitrary video titles and treat it as guaranteed truth.
 
 When metadata is uncertain, the UI may allow editing before starting the download.
 
+Album artwork follows the same confidence treatment: medium- or low-confidence automatic artwork matches should be presented as candidates for user review and selection before embedding.
+
+An ambiguous artwork candidate must not be silently embedded as if authoritative; explicit user selection makes it user-confirmed artwork.
+
 This is especially important for Plex Music destinations.
 
 ---
@@ -1886,6 +1890,7 @@ Recommended order:
 - artist/album paths
 - embedded metadata
 - artwork
+- artwork candidate review/selection for medium/low-confidence matches
 - metadata review/editing
 - playlist video naming
 
