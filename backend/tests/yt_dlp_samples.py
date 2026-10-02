@@ -100,6 +100,49 @@ def single_video_payload() -> dict[str, Any]:
     }
 
 
+def muxed_and_video_only_payload() -> dict[str, Any]:
+    """Same-resolution muxed + higher-bitrate video-only, no audio-only.
+
+    With no source audio companion, the muxed stream must represent the
+    resolution so the default Best Available selection downloads a playable
+    file by direct download instead of silent video-only output.
+    """
+    return {
+        "id": "silent1",
+        "_type": "video",
+        "extractor": "generic",
+        "extractor_key": "Generic",
+        "webpage_url": "https://example.com/watch/silent1",
+        "title": "Muxed Source Video",
+        "uploader": "Example",
+        "duration": 60.0,
+        "formats": [
+            {
+                "format_id": "62",
+                "ext": "mp4",
+                "vcodec": "avc1.64001F",
+                "acodec": "mp4a.40.2",
+                "width": 1280,
+                "height": 720,
+                "fps": 30,
+                "tbr": 1500.0,
+                "filesize": 11_000_000,
+            },
+            {
+                "format_id": "666",
+                "ext": "webm",
+                "vcodec": "vp09.00.10.08",
+                "acodec": "none",
+                "width": 1280,
+                "height": 720,
+                "fps": 30,
+                "tbr": 3000.0,
+                "filesize": 22_000_000,
+            },
+        ],
+    }
+
+
 def playlist_payload() -> dict[str, Any]:
     return {
         "id": "set1",

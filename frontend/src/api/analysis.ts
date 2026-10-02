@@ -7,6 +7,8 @@ export type AnalysisContentType = "single" | "collection";
 export interface NormalizedFormat {
   variant_id: string;
   format_id: string;
+  /** Application-level display label for the primary choices list (video). */
+  label: string | null;
   kind: FormatKind;
   ext: string | null;
   resolution_label: string | null;

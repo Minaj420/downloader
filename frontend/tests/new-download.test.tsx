@@ -87,8 +87,9 @@ const singleResult: NormalizedAnalysis = {
   content_type: "single",
   formats: [
     {
-      variant_id: "video-1080-video_only-h264-mp4",
+      variant_id: "video-best",
       format_id: "137",
+      label: "Best Available (1080p)",
       kind: "video_only",
       ext: "mp4",
       resolution_label: "1080p",
@@ -102,8 +103,41 @@ const singleResult: NormalizedAnalysis = {
       filesize_approx_bytes: null,
     },
     {
+      variant_id: "video-1080",
+      format_id: "137",
+      label: "1080p",
+      kind: "video_only",
+      ext: "mp4",
+      resolution_label: "1080p",
+      width: 1920,
+      height: 1080,
+      fps: 30,
+      video_codec: "h264",
+      audio_codec: null,
+      bitrate_kbps: null,
+      filesize_bytes: 95_000_000,
+      filesize_approx_bytes: null,
+    },
+    {
+      variant_id: "video-720",
+      format_id: "22",
+      label: "720p",
+      kind: "muxed",
+      ext: "mp4",
+      resolution_label: "720p",
+      width: 1280,
+      height: 720,
+      fps: 25,
+      video_codec: "h264",
+      audio_codec: "aac",
+      bitrate_kbps: null,
+      filesize_bytes: 30_000_000,
+      filesize_approx_bytes: null,
+    },
+    {
       variant_id: "audio-opus-160",
       format_id: "251",
+      label: null,
       kind: "audio_only",
       ext: "webm",
       resolution_label: null,
@@ -274,9 +308,9 @@ describe("NewDownloadPage", () => {
     expect(screen.getByText("YouTube", { selector: ".badge-platform" })).toBeInTheDocument();
     expect(screen.getByText("Test Channel")).toBeInTheDocument();
     expect(screen.getByText("3:25")).toBeInTheDocument();
-    expect(screen.getByText(/1080p/)).toBeInTheDocument();
+    expect(screen.getByText(/Best Available \(1080p\)/)).toBeInTheDocument();
     expect(screen.getByText(/~160 kbps/)).toBeInTheDocument();
-    expect(screen.getByText(/90\.6 MiB/)).toBeInTheDocument();
+    expect(screen.getAllByText(/90\.6 MiB/).length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: "Download" })).toBeEnabled();
   });
 
@@ -316,7 +350,7 @@ describe("NewDownloadPage", () => {
 
     // Preserved selection semantics: first format selected by default,
     // App Library is the only selectable destination, Download is enabled.
-    expect(within(selection).getByRole("radio", { name: /1080p/ })).toBeChecked();
+    expect(within(selection).getByRole("radio", { name: /Best Available/ })).toBeChecked();
     expect(within(selection).getByRole("radio", { name: "App Library" })).toBeChecked();
     expect(within(selection).getByRole("radio", { name: "Plex Music (coming later)" })).toBeDisabled();
     const download = within(selection).getByRole("button", { name: "Download" });
@@ -415,15 +449,65 @@ describe("NewDownloadPage", () => {
     expect(lastBody.platform_hint).toBe("youtube");
   });
 
+  it("shows concise application-level video choices without stream details", async () => {
+    okHealthHandler(() => Promise.resolve(jsonResponse(singleResult)));
+    const { user } = await renderNewDownload();
+
+    await fillAndSubmit(user, singleResult.original_url);
+    await screen.findByText("Test Video");
+
+    const selection = screen.getByRole("region", { name: "Format & Destination" });
+    const videoGroup = within(selection).getAllByRole("radio").slice(0, 3);
+    // Best Available first, then one option per real source resolution,
+    // highest to lowest; sizes may stay visible.
+    expect(videoGroup.map((radio) => radio.closest("label")?.textContent)).toEqual([
+      "Best Available (1080p) · 90.6 MiB",
+      "1080p · 90.6 MiB",
+      "720p · 28.6 MiB",
+    ]);
+    // Low-level stream details never reach the primary video list.
+    for (const radio of videoGroup) {
+      const text = radio.closest("label")?.textContent ?? "";
+      expect(text).not.toMatch(/video only|video \+ audio/);
+      expect(text).not.toMatch(/\b(h264|vp9|av1)\b/i);
+      expect(text).not.toMatch(/\b(MP4|WEBM|MKV)\b/);
+      expect(text).not.toMatch(/fps/);
+    }
+    expect(within(selection).queryByText("video only")).not.toBeInTheDocument();
+  });
+
   it("selects a variant and creates a job with the normalized variant id", async () => {
     const fetchMock = jobFlowHandler();
     const { user } = await renderNewDownload();
 
     await analyzeSingleResult(user);
-    const videoVariant = screen.getByRole("radio", { name: /1080p/ });
-    const audioVariant = screen.getByRole("radio", { name: /opus/i });
-    expect(videoVariant).toBeChecked();
+    const bestVariant = screen.getByRole("radio", { name: /Best Available/ });
+    const resolutionVariant = screen.getByRole("radio", { name: /^720p/ });
+    // The first offered format (Best Available) is the default selection.
+    expect(bestVariant).toBeChecked();
 
+    await user.click(resolutionVariant);
+    expect(resolutionVariant).toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Download" }));
+    expect(await screen.findByText("Queued")).toBeInTheDocument();
+
+    const jobCall = fetchMock.mock.calls.find(
+      ([url, init]) => url === "/api/v1/jobs" && init?.method === "POST",
+    );
+    expect(jobCall).toBeDefined();
+    expect(JSON.parse(String(jobCall?.[1]?.body))).toEqual({
+      analysis_id: singleResult.analysis_id,
+      variant_id: "video-720",
+      destination: "app_library",
+    });
+  });
+
+  it("creates a job with the audio variant id after selecting it", async () => {
+    const fetchMock = jobFlowHandler();
+    const { user } = await renderNewDownload();
+
+    await analyzeSingleResult(user);
+    const audioVariant = screen.getByRole("radio", { name: /opus/i });
     await user.click(audioVariant);
     expect(audioVariant).toBeChecked();
     await user.click(screen.getByRole("button", { name: "Download" }));

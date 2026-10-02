@@ -20,16 +20,12 @@ function sizeLabel(format: NormalizedFormat): string | null {
 }
 
 function videoLabel(format: NormalizedFormat): string {
-  const parts: string[] = [];
-  const resolution = format.resolution_label ?? (format.width && format.height ? `${format.width}x${format.height}` : null);
-  if (resolution) parts.push(resolution);
-  if (format.ext) parts.push(format.ext.toUpperCase());
-  const codecs = [format.video_codec, format.audio_codec].filter(Boolean).join("/");
-  if (codecs) parts.push(codecs);
-  if (format.fps) parts.push(`${Math.round(format.fps)} fps`);
+  // Application-level choice label from the backend analysis (e.g.
+  // "Best Available (1080p)", "720p"); low-level codec/container/fps and
+  // kind details stay out of the primary video list (PRODUCT_SPEC §9).
+  const name = format.label ?? format.resolution_label ?? "Video";
   const size = sizeLabel(format);
-  if (size) parts.push(size);
-  return parts.join(" · ");
+  return size ? `${name} · ${size}` : name;
 }
 
 function audioLabel(format: NormalizedFormat): string {
@@ -40,12 +36,6 @@ function audioLabel(format: NormalizedFormat): string {
   const size = sizeLabel(format);
   if (size) parts.push(size);
   return parts.join(" · ");
-}
-
-function kindBadge(kind: NormalizedFormat["kind"]): string {
-  if (kind === "muxed") return "video + audio";
-  if (kind === "video_only") return "video only";
-  return "audio";
 }
 
 export function AnalysisResult({
@@ -168,7 +158,6 @@ export function AnalysisResult({
                         checked={selectedVariantId === format.variant_id}
                         onChange={() => onSelectVariant(format.variant_id)}
                       />
-                      <span className="badge badge-kind">{kindBadge(format.kind)}</span>
                       <span className="format-label">{videoLabel(format)}</span>
                     </label>
                   </li>

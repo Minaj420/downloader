@@ -1,5 +1,67 @@
+import re
+from typing import Any
+
 from app.services.analysis_normalizer import build_normalized_analysis, normalize_formats
 from tests.yt_dlp_samples import playlist_payload, single_video_payload
+
+_VARIANT_ID_MAX_LENGTH = 128  # API/DB limit for variant ids
+
+
+def assert_label_variant_id(variant_id: str) -> tuple[str, str]:
+    """Validate the label-namespace id and return its (slug, digest) parts."""
+    assert variant_id.startswith("video-label-")
+    slug, digest = variant_id[len("video-label-") :].rsplit("-", 1)
+    assert re.fullmatch(r"[0-9a-f]{64}", digest)
+    assert re.fullmatch(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?|res", slug)
+    assert len(variant_id) <= _VARIANT_ID_MAX_LENGTH
+    return slug, digest
+
+
+def assert_collision_audio_id(variant_id: str) -> tuple[str, str]:
+    """Validate a fixed-namespace audio collision id; return (ext, codec) slugs."""
+    assert variant_id.startswith("audio-alt-")
+    slugs, digest = variant_id[len("audio-alt-") :].rsplit("-", 1)
+    ext_slug, codec_slug = slugs.split("-", 1)
+    assert re.fullmatch(r"[0-9a-f]{64}", digest)
+    assert re.fullmatch(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?|res", ext_slug)
+    assert re.fullmatch(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?|res", codec_slug)
+    assert len(variant_id) <= _VARIANT_ID_MAX_LENGTH
+    return ext_slug, codec_slug
+
+
+def audio_collision_raw() -> list[dict[str, Any]]:
+    """Opus/160 in two containers plus an unambiguous aac control and an
+    equal-score duplicate of the WebM identity."""
+    return [
+        {
+            "format_id": "251",
+            "ext": "webm",
+            "vcodec": "none",
+            "acodec": "opus",
+            "abr": 160.0,
+        },
+        {
+            "format_id": "251-dup",
+            "ext": "webm",
+            "vcodec": "none",
+            "acodec": "opus",
+            "abr": 160.0,
+        },
+        {
+            "format_id": "620",
+            "ext": "ogg",
+            "vcodec": "none",
+            "acodec": "opus",
+            "abr": 160.0,
+        },
+        {
+            "format_id": "140",
+            "ext": "m4a",
+            "vcodec": "none",
+            "acodec": "mp4a.40.2",
+            "abr": 128.0,
+        },
+    ]
 
 
 def test_variant_ids_are_stable_and_unique() -> None:
@@ -7,15 +69,666 @@ def test_variant_ids_are_stable_and_unique() -> None:
 
     ids = [f.variant_id for f in formats]
     assert len(ids) == len(set(ids))
-    by_id = {f.variant_id: f for f in formats}
+    # Best Available first, then one option per real source resolution,
+    # highest to lowest, then the source-derived audio choices.
+    assert ids == [
+        "video-best",
+        "video-1080",
+        "video-720",
+        "video-360",
+        "audio-opus-160",
+        "audio-aac-128",
+        "audio-opus-96",
+        "audio-aac-m4a",
+    ]
 
-    assert by_id["video-1080-video_only-h264-mp4"].format_id == "137"
-    assert by_id["video-1080-video_only-vp9-webm"].format_id == "248"
-    assert by_id["video-720-muxed-h264-mp4"].format_id == "22"
+    by_id = {f.variant_id: f for f in formats}
+    assert by_id["video-best"].format_id == "137"
+    assert by_id["video-1080"].format_id == "137"
+    assert by_id["video-720"].format_id == "22"
+    assert by_id["video-360"].format_id == "18"
     assert by_id["audio-opus-160"].format_id == "251"
     assert by_id["audio-aac-128"].format_id == "140"
     assert by_id["audio-opus-96"].bitrate_kbps == 96.0
     assert by_id["audio-aac-m4a"].bitrate_kbps is None
+
+
+def test_video_choices_are_best_plus_one_per_source_resolution() -> None:
+    formats = [
+        f for f in normalize_formats(single_video_payload()["formats"]) if f.height
+    ]
+
+    assert [f.variant_id for f in formats] == [
+        "video-best",
+        "video-1080",
+        "video-720",
+        "video-360",
+    ]
+    heights = [f.height for f in formats[1:] if f.height is not None]
+    assert heights == sorted(heights, reverse=True)
+    # Every offered resolution is a real source resolution; nothing absent
+    # from the source (e.g. 1440p/2160p) is invented.
+    assert set(heights) == {1080, 720, 360}
+
+
+def test_duplicate_codec_container_streams_collapse_per_resolution() -> None:
+    # 1080p offers h264/mp4 (tbr 4000) and vp9/webm (tbr 2800); both are
+    # video-only. They must collapse to a single deterministic choice that
+    # keeps the higher-bitrate real stream.
+    formats = normalize_formats(single_video_payload()["formats"])
+
+    matching = [
+        f for f in formats if f.kind != "audio_only" and f.height == 1080
+    ]
+    # Exactly Best Available plus the single 1080p choice — the h264 and
+    # vp9 streams at 1080p collapsed into one option.
+    assert [f.variant_id for f in matching] == ["video-best", "video-1080"]
+    representative = matching[1]
+    assert representative.format_id == "137"
+    assert representative.kind == "video_only"
+    assert representative.video_codec == "h264"
+    assert representative.ext == "mp4"
+    assert representative.fps == 30.0
+    assert representative.filesize_bytes == 95_000_000
+
+
+def test_best_available_maps_to_best_real_source_format() -> None:
+    formats = normalize_formats(single_video_payload()["formats"])
+
+    best = formats[0]
+    assert best.variant_id == "video-best"
+    assert best.label == "Best Available (1080p)"
+    assert best.format_id == "137"
+    assert best.kind == "video_only"
+    assert best.video_codec == "h264"
+    assert best.audio_codec is None
+
+
+def test_video_variant_labels_are_concise_resolution_choices() -> None:
+    by_id = {
+        f.variant_id: f for f in normalize_formats(single_video_payload()["formats"])
+    }
+
+    assert by_id["video-1080"].label == "1080p"
+    assert by_id["video-720"].label == "720p"
+    assert by_id["video-360"].label == "360p"
+    # Audio keeps its existing source-derived listing (no backend label).
+    assert by_id["audio-opus-160"].label is None
+
+
+def test_video_collapse_is_deterministic_across_source_order() -> None:
+    raw = single_video_payload()["formats"]
+
+    forward = {f.variant_id: f.format_id for f in normalize_formats(raw)}
+    backward = {
+        f.variant_id: f.format_id for f in normalize_formats(list(reversed(raw)))
+    }
+
+    assert forward == backward
+
+
+def test_equal_score_streams_pick_stable_representative() -> None:
+    raw: list[dict[str, Any]] = [
+        {
+            "format_id": "b-format",
+            "ext": "webm",
+            "vcodec": "vp09.00.10.08",
+            "acodec": "none",
+            "height": 720,
+            "tbr": 2000.0,
+        },
+        {
+            "format_id": "a-format",
+            "ext": "mp4",
+            "vcodec": "avc1.64001F",
+            "acodec": "none",
+            "height": 720,
+            "tbr": 2000.0,
+        },
+    ]
+
+    formats = normalize_formats(raw)
+
+    assert [f.variant_id for f in formats] == ["video-best", "video-720"]
+    assert formats[1].format_id == "a-format"
+
+
+def test_resolution_string_only_sources_stay_distinct_and_ordered() -> None:
+    """Distinct real resolutions given only as labels stay distinct choices."""
+    raw: list[dict[str, Any]] = [
+        {
+            "format_id": "lbl-720",
+            "ext": "mp4",
+            "vcodec": "avc1.64001F",
+            "acodec": "none",
+            "resolution": "1280x720",
+            "tbr": 1200.0,
+        },
+        {
+            "format_id": "lbl-1080",
+            "ext": "webm",
+            "vcodec": "vp09.00.10.08",
+            "acodec": "none",
+            "resolution": "1920x1080",
+            "tbr": 2800.0,
+        },
+        {
+            "format_id": "lbl-480",
+            "ext": "mp4",
+            "vcodec": "avc1.4d401f",
+            "acodec": "none",
+            "resolution": "480p",
+            "tbr": 800.0,
+        },
+    ]
+
+    formats = normalize_formats(raw)
+
+    assert [f.variant_id for f in formats] == [
+        "video-best",
+        "video-1080",
+        "video-720",
+        "video-480",
+    ]
+    by_id = {f.variant_id: f for f in formats}
+    assert by_id["video-best"].label == "Best Available (1080p)"
+    assert by_id["video-1080"].format_id == "lbl-1080"
+    assert by_id["video-1080"].height == 1080
+    assert by_id["video-1080"].width == 1920
+    assert by_id["video-1080"].label == "1080p"
+    assert by_id["video-720"].label == "720p"
+    assert by_id["video-480"].label == "480p"
+
+
+def test_resolution_string_collapses_with_numeric_same_resolution() -> None:
+    """Standard equivalence merge: explicit height 1080, ``1920x1080``, and
+    ``1080p`` all describe the same real resolution."""
+    raw: list[dict[str, Any]] = [
+        {
+            "format_id": "num-1080",
+            "ext": "mp4",
+            "vcodec": "avc1.640028",
+            "acodec": "none",
+            "height": 1080,
+            "width": 1920,
+            "tbr": 4000.0,
+        },
+        {
+            "format_id": "wxh-1080",
+            "ext": "webm",
+            "vcodec": "vp09.00.10.08",
+            "acodec": "none",
+            "resolution": "1920x1080",
+            "tbr": 2800.0,
+        },
+        {
+            "format_id": "p-1080",
+            "ext": "webm",
+            "vcodec": "av01.0.08M.08",
+            "acodec": "none",
+            "resolution": "1080p",
+            "tbr": 2600.0,
+        },
+    ]
+
+    formats = normalize_formats(raw)
+
+    assert [f.variant_id for f in formats] == ["video-best", "video-1080"]
+    assert [f.format_id for f in formats] == ["num-1080", "num-1080"]
+
+
+def test_unparseable_resolution_labels_stay_distinct_and_deterministic() -> None:
+    raw: list[dict[str, Any]] = [
+        {
+            "format_id": "v-variable",
+            "ext": "mp4",
+            "vcodec": "avc1.64001F",
+            "acodec": "none",
+            "resolution": "Variable",
+            "tbr": 1000.0,
+        },
+        {
+            "format_id": "v-custom",
+            "ext": "webm",
+            "vcodec": "vp09.00.10.08",
+            "acodec": "none",
+            "resolution": "custom-x",
+            "tbr": 900.0,
+        },
+        {
+            "format_id": "v-360",
+            "ext": "mp4",
+            "vcodec": "avc1.4d401f",
+            "acodec": "none",
+            "height": 360,
+            "tbr": 500.0,
+        },
+    ]
+
+    formats = normalize_formats(raw)
+
+    # Numeric resolutions first, then distinct exact-label buckets in
+    # deterministic order; label ids live in their own digest namespace.
+    assert [f.variant_id for f in formats[:2]] == ["video-best", "video-360"]
+    # Exact ordering is code-point deterministic: "Variable" < "custom-x".
+    variable_id = formats[2].variant_id
+    custom_id = formats[3].variant_id
+    assert assert_label_variant_id(variable_id)[0] == "variable"
+    assert assert_label_variant_id(custom_id)[0] == "custom-x"
+    assert custom_id != variable_id
+    assert formats[2].label == "Variable"
+    assert formats[3].label == "custom-x"
+
+    reordered = normalize_formats(list(reversed(raw)))
+    assert [f.variant_id for f in reordered] == [
+        f.variant_id for f in formats
+    ]
+    assert {f.variant_id: f.format_id for f in reordered} == {
+        f.variant_id: f.format_id for f in formats
+    }
+
+
+def test_source_label_best_never_collides_with_reserved_best_variant() -> None:
+    raw: list[dict[str, Any]] = [
+        {
+            "format_id": "lbl-best",
+            "ext": "webm",
+            "vcodec": "vp09.00.10.08",
+            "acodec": "none",
+            "resolution": "best",
+            "tbr": 900.0,
+        },
+        {
+            "format_id": "num-720",
+            "ext": "mp4",
+            "vcodec": "avc1.64001F",
+            "acodec": "none",
+            "height": 720,
+            "tbr": 1200.0,
+        },
+    ]
+
+    formats = normalize_formats(raw)
+
+    ids = [f.variant_id for f in formats]
+    # Exactly one reserved synthetic video-best, mapped to the best real
+    # numeric quality; the source-labelled stream keeps its own namespace.
+    assert ids.count("video-best") == 1
+    assert ids[:2] == ["video-best", "video-720"]
+    label_id = ids[2]
+    assert assert_label_variant_id(label_id)[0] == "best"
+    assert label_id != "video-best"
+    by_id = {f.variant_id: f for f in formats}
+    assert by_id["video-best"].format_id == "num-720"
+    assert by_id[label_id].format_id == "lbl-best"
+    assert by_id[label_id].label == "best"
+
+
+def test_cosmetic_slug_collision_keeps_distinct_identities() -> None:
+    """``A/B`` and ``A-B`` share a cosmetic slug but never an id or mapping."""
+    raw: list[dict[str, Any]] = [
+        {
+            "format_id": "slash-form",
+            "ext": "mp4",
+            "vcodec": "avc1.64001F",
+            "acodec": "none",
+            "resolution": "A/B",
+            "tbr": 300.0,
+        },
+        {
+            "format_id": "dash-form",
+            "ext": "webm",
+            "vcodec": "vp09.00.10.08",
+            "acodec": "none",
+            "resolution": "A-B",
+            "tbr": 200.0,
+        },
+    ]
+
+    formats = normalize_formats(raw)
+
+    ids = [f.variant_id for f in formats]
+    assert len(ids) == len(set(ids))
+    label_formats = formats[1:]
+    for entry_format in label_formats:
+        slug, _ = assert_label_variant_id(entry_format.variant_id)
+        assert slug == "a-b"
+    assert label_formats[0].variant_id != label_formats[1].variant_id
+    assert {f.format_id for f in label_formats} == {"slash-form", "dash-form"}
+    # Exact source labels preserved, deterministic exact-order sorting.
+    assert [f.label for f in label_formats] == ["A-B", "A/B"]
+
+
+def test_width_only_resolution_stays_distinct_from_height() -> None:
+    """Width-only evidence must never merge with, or imply, a height."""
+    raw: list[dict[str, Any]] = [
+        {
+            "format_id": "w-1080",
+            "ext": "webm",
+            "vcodec": "vp09.00.10.08",
+            "acodec": "none",
+            "width": 1080,
+            "tbr": 2500.0,
+        },
+        {
+            "format_id": "h-1080",
+            "ext": "mp4",
+            "vcodec": "avc1.640028",
+            "acodec": "none",
+            "height": 1080,
+            "tbr": 4000.0,
+        },
+        {
+            "format_id": "aud-128",
+            "ext": "m4a",
+            "vcodec": "none",
+            "acodec": "mp4a.40.2",
+            "abr": 128.0,
+        },
+    ]
+
+    formats = normalize_formats(raw)
+
+    # Height buckets first (best quality), then the width-only bucket,
+    # each with disjoint id namespaces and truthful labels.
+    assert [f.variant_id for f in formats[:3]] == [
+        "video-best",
+        "video-1080",
+        "video-width-1080",
+    ]
+    by_id = {f.variant_id: f for f in formats}
+    assert by_id["video-1080"].format_id == "h-1080"
+    assert by_id["video-1080"].label == "1080p"
+    assert by_id["video-width-1080"].format_id == "w-1080"
+    assert by_id["video-width-1080"].height is None
+    assert by_id["video-width-1080"].label == "1080px wide"
+    assert by_id["video-best"].format_id == "h-1080"
+    assert by_id["video-best"].label == "Best Available (1080p)"
+    assert by_id["audio-aac-128"].format_id == "aud-128"
+
+
+def test_meaningless_resolution_labels_collapse_to_unknown() -> None:
+    raw: list[dict[str, Any]] = [
+        {
+            "format_id": "u1",
+            "ext": "mp4",
+            "vcodec": "avc1.64001F",
+            "acodec": "none",
+            "resolution": "unknown",
+            "tbr": 100.0,
+        },
+        {
+            "format_id": "u2",
+            "ext": "webm",
+            "vcodec": "vp09.00.10.08",
+            "acodec": "none",
+            "tbr": 200.0,
+        },
+    ]
+
+    formats = normalize_formats(raw)
+
+    assert [f.variant_id for f in formats] == ["video-best", "video-unknown"]
+    assert formats[1].format_id == "u2"
+    assert formats[1].label == "Unknown"
+    assert formats[0].label == "Best Available"
+
+
+def test_unknown_and_exact_label_identities_stay_distinct() -> None:
+    raw: list[dict[str, Any]] = [
+        {
+            "format_id": "no-evidence",
+            "ext": "mp4",
+            "vcodec": "avc1.64001F",
+            "acodec": "none",
+            "tbr": 100.0,
+        },
+        {
+            "format_id": "exact",
+            "ext": "webm",
+            "vcodec": "vp09.00.10.08",
+            "acodec": "none",
+            "resolution": "Variable",
+            "tbr": 200.0,
+        },
+    ]
+
+    formats = normalize_formats(raw)
+
+    # Exact labels sort before the unknown sentinel; ids stay disjoint.
+    assert [f.variant_id for f in formats] == [
+        "video-best",
+        formats[1].variant_id,
+        "video-unknown",
+    ]
+    assert assert_label_variant_id(formats[1].variant_id)[0] == "variable"
+    assert formats[1].format_id == "exact"
+    assert formats[1].label == "Variable"
+    assert formats[2].format_id == "no-evidence"
+    assert formats[2].label == "Unknown"
+
+
+def test_full_variant_tuples_stable_across_input_order() -> None:
+    """(variant_id, format_id, label) is fully stable across source order."""
+    raw: list[dict[str, Any]] = [
+        {
+            "format_id": "h-1080",
+            "ext": "mp4",
+            "vcodec": "avc1.640028",
+            "acodec": "none",
+            "height": 1080,
+            "tbr": 4000.0,
+        },
+        {
+            "format_id": "m-360",
+            "ext": "mp4",
+            "vcodec": "avc1.4d401f",
+            "acodec": "mp4a.40.2",
+            "height": 360,
+            "tbr": 500.0,
+        },
+        {
+            "format_id": "w-640",
+            "ext": "webm",
+            "vcodec": "vp09.00.10.08",
+            "acodec": "none",
+            "width": 640,
+            "tbr": 800.0,
+        },
+        {
+            "format_id": "lbl-slash",
+            "ext": "mp4",
+            "vcodec": "avc1.64001F",
+            "acodec": "none",
+            "resolution": "A/B",
+            "tbr": 300.0,
+        },
+        {
+            "format_id": "lbl-var",
+            "ext": "webm",
+            "vcodec": "vp09.00.10.08",
+            "acodec": "none",
+            "resolution": "variable",
+            "tbr": 250.0,
+        },
+        {
+            "format_id": "no-ev",
+            "ext": "mp4",
+            "vcodec": "avc1.4d401f",
+            "acodec": "none",
+            "tbr": 200.0,
+        },
+        {
+            "format_id": "aud-opus",
+            "ext": "webm",
+            "vcodec": "none",
+            "acodec": "opus",
+            "abr": 160.0,
+        },
+    ]
+
+    def tuples(payload: list[dict[str, Any]]) -> list[tuple[str, str, str | None]]:
+        return [
+            (f.variant_id, f.format_id, f.label) for f in normalize_formats(payload)
+        ]
+
+    forward = tuples(raw)
+    backward = tuples(list(reversed(raw)))
+
+    assert forward == backward
+    ids = [variant_id for variant_id, _, _ in forward]
+    assert len(ids) == len(set(ids))
+    assert all(len(variant_id) <= _VARIANT_ID_MAX_LENGTH for variant_id in ids)
+    # Typed-identity ordering: heights high→low, width-only, exact labels
+    # in exact order, unknown last, then the audio choices.
+    assert ids == [
+        "video-best",
+        "video-1080",
+        "video-360",
+        "video-width-640",
+        forward[4][0],
+        forward[5][0],
+        "video-unknown",
+        "audio-opus-160",
+    ]
+    assert assert_label_variant_id(forward[4][0])[0] == "a-b"
+    assert assert_label_variant_id(forward[5][0])[0] == "variable"
+
+
+def test_audio_same_codec_bitrate_different_ext_stay_unique_and_stable() -> None:
+    """WebM/Opus/160 and OGG/Opus/160 both remain choices with unique ids.
+
+    The bitrate-based base id omits ext, so every member of the collision
+    group moves to the fixed bounded ``audio-alt-`` namespace; unambiguous
+    ids keep their exact form.
+    """
+    raw = audio_collision_raw()
+    formats = normalize_formats(raw)
+
+    # Analysis succeeds; both container alternatives remain as choices and
+    # every id stays unique and bounded.
+    ids = [f.variant_id for f in formats]
+    assert len(ids) == len(set(ids))
+    assert all(len(variant_id) <= _VARIANT_ID_MAX_LENGTH for variant_id in ids)
+
+    # Unambiguous base ids keep their exact existing form.
+    assert "audio-aac-128" in ids
+
+    # Every member of the collision group gets a bounded collision id.
+    collision_ids = [i for i in ids if i.startswith("audio-alt-")]
+    assert len(collision_ids) == 2
+    slugs = {assert_collision_audio_id(i) for i in collision_ids}
+    assert slugs == {("webm", "opus"), ("ogg", "opus")}
+
+    # Each variant id maps to its own container's raw stream; the equal
+    # score duplicate collapses deterministically to the smaller raw id.
+    by_id = {f.variant_id: f for f in formats}
+    webm_id = next(i for i in collision_ids if "-webm-" in i)
+    ogg_id = next(i for i in collision_ids if "-ogg-" in i)
+    assert by_id[webm_id].format_id == "251"
+    assert by_id[ogg_id].format_id == "620"
+
+    # Ordering stays source-derived and deterministic; ids and mappings are
+    # stable under reversed source order.
+    assert [f.ext for f in formats] == ["ogg", "webm", "m4a"]
+
+    def mapping(payload: list[dict[str, Any]]) -> list[tuple[str, str]]:
+        return sorted(
+            (f.variant_id, f.format_id) for f in normalize_formats(payload)
+        )
+
+    assert mapping(raw) == mapping(list(reversed(raw)))
+
+
+def test_muxed_preferred_over_higher_score_video_only_without_audio() -> None:
+    """No audio companion at all: the muxed stream must represent the
+    resolution so selections never produce silent video-only output."""
+    raw: list[dict[str, Any]] = [
+        {
+            "format_id": "62-muxed",
+            "ext": "mp4",
+            "vcodec": "avc1.64001F",
+            "acodec": "mp4a.40.2",
+            "height": 720,
+            "width": 1280,
+            "tbr": 1500.0,
+        },
+        {
+            "format_id": "666-vo",
+            "ext": "webm",
+            "vcodec": "vp09.00.10.08",
+            "acodec": "none",
+            "height": 720,
+            "width": 1280,
+            "tbr": 3000.0,
+        },
+    ]
+
+    formats = normalize_formats(raw)
+
+    assert [f.variant_id for f in formats] == ["video-best", "video-720"]
+    assert [f.format_id for f in formats] == ["62-muxed", "62-muxed"]
+    assert all(f.kind == "muxed" for f in formats)
+
+
+def test_video_only_wins_at_resolution_with_audio_companion() -> None:
+    """With a companion available, quality-based selection is preserved."""
+    raw: list[dict[str, Any]] = [
+        {
+            "format_id": "62-muxed",
+            "ext": "mp4",
+            "vcodec": "avc1.64001F",
+            "acodec": "mp4a.40.2",
+            "height": 720,
+            "width": 1280,
+            "tbr": 1500.0,
+        },
+        {
+            "format_id": "666-vo",
+            "ext": "webm",
+            "vcodec": "vp09.00.10.08",
+            "acodec": "none",
+            "height": 720,
+            "width": 1280,
+            "tbr": 3000.0,
+        },
+        {
+            "format_id": "aud-128",
+            "ext": "m4a",
+            "vcodec": "none",
+            "acodec": "mp4a.40.2",
+            "abr": 128.0,
+        },
+    ]
+
+    formats = normalize_formats(raw)
+
+    by_id = {f.variant_id: f for f in formats}
+    assert by_id["video-720"].format_id == "666-vo"
+    assert by_id["video-720"].kind == "video_only"
+    assert by_id["video-best"].format_id == "666-vo"
+    assert by_id["audio-aac-128"].format_id == "aud-128"
+
+
+def test_video_only_only_source_keeps_source_derived_choice() -> None:
+    """A source with only video-only streams keeps its real choice; no audio
+    or conversion is invented."""
+    raw: list[dict[str, Any]] = [
+        {
+            "format_id": "vo-480",
+            "ext": "mp4",
+            "vcodec": "avc1.4d401f",
+            "acodec": "none",
+            "height": 480,
+            "tbr": 900.0,
+        },
+    ]
+
+    formats = normalize_formats(raw)
+
+    assert [f.variant_id for f in formats] == ["video-best", "video-480"]
+    assert all(f.format_id == "vo-480" for f in formats)
+    assert all(f.kind == "video_only" for f in formats)
 
 
 def test_formats_classify_muxed_video_only_and_audio_only() -> None:
@@ -30,10 +743,36 @@ def test_formats_map_codecs_to_readable_labels() -> None:
     formats = {f.format_id: f for f in normalize_formats(single_video_payload()["formats"])}
 
     assert formats["137"].video_codec == "h264"
-    assert formats["248"].video_codec == "vp9"
     assert formats["140"].audio_codec == "aac"
     assert formats["251"].audio_codec == "opus"
     assert formats["18"].audio_codec == "aac"
+
+
+def test_representative_preserves_codec_container_and_fps_details() -> None:
+    raw: list[dict[str, Any]] = [
+        {
+            "format_id": "999",
+            "ext": "webm",
+            "vcodec": "vp09.00.10.08",
+            "acodec": "none",
+            "height": 1440,
+            "width": 2560,
+            "fps": 30,
+            "tbr": 3000.0,
+            "filesize_approx": 80_000_000,
+        },
+    ]
+
+    formats = normalize_formats(raw)
+
+    assert [f.variant_id for f in formats] == ["video-best", "video-1440"]
+    representative = formats[1]
+    assert representative.video_codec == "vp9"
+    assert representative.ext == "webm"
+    assert representative.kind == "video_only"
+    assert representative.fps == 30.0
+    assert representative.filesize_approx_bytes == 80_000_000
+    assert formats[0].label == "Best Available (1440p)"
 
 
 def test_formats_only_report_real_bitrates() -> None:
@@ -49,8 +788,7 @@ def test_formats_preserve_size_and_approximate_size() -> None:
 
     assert formats["137"].filesize_bytes == 95_000_000
     assert formats["137"].filesize_approx_bytes is None
-    assert formats["248"].filesize_bytes is None
-    assert formats["248"].filesize_approx_bytes == 70_000_000
+    assert formats["22"].filesize_bytes == 30_000_000
 
 
 def test_storyboard_and_empty_formats_are_dropped() -> None:
@@ -78,7 +816,9 @@ def test_duplicate_video_itags_collapse_to_best_per_variant() -> None:
         for f in formats
         if f.kind == "video_only" and f.video_codec == "h264" and f.height == 1080
     ]
-    assert [f.format_id for f in matching] == ["137"]
+    # The weaker duplicate adds no extra choice and never wins the mapping.
+    assert [f.variant_id for f in matching] == ["video-best", "video-1080"]
+    assert [f.format_id for f in matching] == ["137", "137"]
 
 
 def test_formats_sorted_video_by_height_then_audio_by_bitrate() -> None:

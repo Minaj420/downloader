@@ -80,12 +80,27 @@ class TestAnalyzeEndpoint:
         assert body["duration_seconds"] == 205.4
         assert body["platform_mismatch"] is False
 
-        formats = {f["format_id"]: f for f in body["formats"]}
-        assert formats["137"]["kind"] == "video_only"
-        assert formats["137"]["resolution_label"] == "1080p"
-        assert formats["251"]["bitrate_kbps"] == 160.0
-        assert formats["599"]["bitrate_kbps"] is None
-        assert "sb2" not in formats
+        formats = {f["variant_id"]: f for f in body["formats"]}
+        # Concise application-level choices: Best Available plus one option
+        # per real source resolution, then source-derived audio options.
+        assert [f["variant_id"] for f in body["formats"]] == [
+            "video-best",
+            "video-1080",
+            "video-720",
+            "video-360",
+            "audio-opus-160",
+            "audio-aac-128",
+            "audio-opus-96",
+            "audio-aac-m4a",
+        ]
+        assert formats["video-best"]["kind"] == "video_only"
+        assert formats["video-best"]["label"] == "Best Available (1080p)"
+        assert formats["video-best"]["format_id"] == "137"
+        assert formats["video-1080"]["resolution_label"] == "1080p"
+        assert formats["video-1080"]["label"] == "1080p"
+        assert formats["audio-opus-160"]["bitrate_kbps"] == 160.0
+        assert formats["audio-aac-m4a"]["bitrate_kbps"] is None
+        assert "sb2" not in {f["format_id"] for f in body["formats"]}
 
         db_path = settings.state_dir / "downloader.db"
         assert _count_sessions(db_path) == 1

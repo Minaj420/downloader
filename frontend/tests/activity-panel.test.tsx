@@ -184,8 +184,9 @@ const singleResult: NormalizedAnalysis = {
   content_type: "single",
   formats: [
     {
-      variant_id: "video-1080-video_only-h264-mp4",
+      variant_id: "video-1080",
       format_id: "137",
+      label: "1080p",
       kind: "video_only",
       ext: "mp4",
       resolution_label: "1080p",

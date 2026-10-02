@@ -20,6 +20,7 @@ from app.config import Settings
 from app.models.jobs import ActivityEvent, DownloadJob
 from app.repositories import activity as activity_repo
 from app.repositories import jobs as job_repo
+from app.services.analysis_normalizer import normalize_formats
 from app.services.job_runner import _JobExecution
 from tests.conftest import FakeAnalyzer, build_application
 from tests.fake_binaries import (
@@ -31,11 +32,12 @@ from tests.fake_binaries import (
     fake_ytdlp_slow,
     fake_ytdlp_steps,
 )
-from tests.yt_dlp_samples import single_video_payload
+from tests.yt_dlp_samples import muxed_and_video_only_payload, single_video_payload
 
 YOUTUBE_URL = "https://www.youtube.com/watch?v=abc123"
-MUXED_VARIANT = "video-720-muxed-h264-mp4"
-VIDEO_ONLY_VARIANT = "video-1080-video_only-h264-mp4"
+MUXED_VARIANT = "video-720"
+VIDEO_ONLY_VARIANT = "video-1080"
+BEST_VARIANT = "video-best"
 AUDIO_VARIANT = "audio-opus-160"
 
 
@@ -196,7 +198,9 @@ class TestJobCreation:
         with app_factory(yt_dlp=fake_ytdlp_ok(app_factory.binaries)) as client:
             analysis = create_analysis(client)
 
-            response = create_job(client, analysis, variant_id="22")
+            # Even a raw yt-dlp id that belongs to a real source stream
+            # (137 backs video-best/video-1080) must be rejected.
+            response = create_job(client, analysis, variant_id="137")
 
             assert response.status_code == 422
             assert response.json()["error"]["code"] == "invalid_variant"
@@ -481,6 +485,179 @@ class TestJobExecution:
             assert final["final_path"] == "audio/Test Video.mp4"
             assert (settings.library_dir / "audio" / "Test Video.mp4").is_file()
 
+    def test_audio_collision_variant_ids_resolve_to_their_raw_formats(
+        self, app_factory: Any
+    ) -> None:
+        """Same codec+bitrate in two containers: both disambiguated variant
+        ids are accepted and download their own raw stream directly."""
+        binaries = app_factory.binaries
+        two_containers = {
+            **single_video_payload(),
+            "formats": [
+                {
+                    "format_id": "251",
+                    "ext": "webm",
+                    "vcodec": "none",
+                    "acodec": "opus",
+                    "abr": 160.0,
+                },
+                {
+                    "format_id": "620",
+                    "ext": "ogg",
+                    "vcodec": "none",
+                    "acodec": "opus",
+                    "abr": 160.0,
+                },
+            ],
+        }
+        with app_factory(
+            yt_dlp=fake_ytdlp_ok(binaries),
+            ffmpeg=str(binaries / "ffmpeg-missing"),
+            analyzer_result=two_containers,
+        ) as client:
+            analysis = create_analysis(client)
+            variants = analysis["formats"]
+            assert len(variants) == 2
+            ids = [variant["variant_id"] for variant in variants]
+            assert len(set(ids)) == 2
+
+            by_raw = {variant["format_id"]: variant["variant_id"] for variant in variants}
+            assert by_raw["251"].startswith("audio-alt-webm-opus-")
+            assert by_raw["620"].startswith("audio-alt-ogg-opus-")
+
+            for variant in variants:
+                job = create_job(
+                    client, analysis, variant_id=variant["variant_id"]
+                ).json()
+                final = wait_for_job(
+                    client, job["id"], statuses={"completed", "failed"}
+                )
+                assert final["status"] == "completed", final
+                assert final["final_path"] == "audio/Test Video.mp4"
+
+    def test_long_codec_collision_ids_stay_bounded_and_selectable(
+        self, app_factory: Any
+    ) -> None:
+        """A pathological source codec must not push collision ids past the
+        API/DB 128-char limit: both bounded ids stay offered, unique,
+        deterministic, and selectable, each mapping to its own raw stream."""
+        binaries = app_factory.binaries
+        long_codec = "x" * 200
+        two_containers = {
+            **single_video_payload(),
+            "formats": [
+                {
+                    "format_id": "web-1",
+                    "ext": "webm",
+                    "vcodec": "none",
+                    "acodec": long_codec,
+                    "abr": 160.0,
+                },
+                {
+                    "format_id": "ogg-1",
+                    "ext": "ogg",
+                    "vcodec": "none",
+                    "acodec": long_codec,
+                    "abr": 160.0,
+                },
+            ],
+        }
+        with app_factory(
+            yt_dlp=fake_ytdlp_ok(binaries),
+            ffmpeg=str(binaries / "ffmpeg-missing"),
+            analyzer_result=two_containers,
+        ) as client:
+            analysis = create_analysis(client)
+            variants = analysis["formats"]
+            ids = [variant["variant_id"] for variant in variants]
+            assert len(ids) == len(set(ids)) == 2
+            assert all(len(variant_id) <= 128 for variant_id in ids)
+
+            # Deterministic: re-analyzing the same source yields identical ids.
+            repeat = create_analysis(client)
+            assert [v["variant_id"] for v in repeat["formats"]] == ids
+
+            by_raw = {v["format_id"]: v["variant_id"] for v in variants}
+            assert by_raw["web-1"].startswith("audio-alt-webm-")
+            assert by_raw["ogg-1"].startswith("audio-alt-ogg-")
+
+            for variant in variants:
+                job = create_job(
+                    client, analysis, variant_id=variant["variant_id"]
+                ).json()
+                final = wait_for_job(
+                    client, job["id"], statuses={"completed", "failed"}
+                )
+                assert final["status"] == "completed", final
+                assert final["variant_id"] == variant["variant_id"]
+                assert final["final_path"] == "audio/Test Video.mp4"
+
+    def test_oversized_single_audio_codec_routes_to_bounded_id(
+        self, app_factory: Any
+    ) -> None:
+        """A lone long-codec audio stream must stay selectable.
+
+        Its base id would embed the ~200-char codec and exceed the
+        128-char API/DB limit, so even as a single-member group it routes
+        through the bounded ``audio-alt-`` digest namespace; a normal
+        short id in the same source keeps its exact existing form.
+        """
+        binaries = app_factory.binaries
+        long_codec = "y" * 200
+        raw_formats = [
+            {
+                "format_id": "900",
+                "ext": "webm",
+                "vcodec": "none",
+                "acodec": long_codec,
+                "abr": 160.0,
+            },
+            {
+                "format_id": "140",
+                "ext": "m4a",
+                "vcodec": "none",
+                "acodec": "mp4a.40.2",
+                "abr": 128.0,
+            },
+        ]
+        single_long_codec = {
+            **single_video_payload(),
+            "formats": raw_formats,
+        }
+        with app_factory(
+            yt_dlp=fake_ytdlp_ok(binaries),
+            ffmpeg=str(binaries / "ffmpeg-missing"),
+            analyzer_result=single_long_codec,
+        ) as client:
+            analysis = create_analysis(client)
+            by_raw = {f["format_id"]: f for f in analysis["formats"]}
+            assert set(by_raw) == {"900", "140"}
+
+            bounded_id = by_raw["900"]["variant_id"]
+            assert bounded_id.startswith("audio-alt-webm-")
+            assert len(bounded_id) <= 92  # bounded namespace bound (< 128)
+            # Short unambiguous ids keep their exact existing form.
+            assert by_raw["140"]["variant_id"] == "audio-aac-128"
+
+            # Deterministic and stable across reversed source order.
+            forward = [
+                (f.variant_id, f.format_id)
+                for f in normalize_formats(raw_formats)
+            ]
+            backward = [
+                (f.variant_id, f.format_id)
+                for f in normalize_formats(list(reversed(raw_formats)))
+            ]
+            assert forward == backward
+            assert ("audio-aac-128", "140") in forward
+            assert (bounded_id, "900") in forward
+
+            job = create_job(client, analysis, variant_id=bounded_id).json()
+            final = wait_for_job(client, job["id"], statuses={"completed", "failed"})
+            assert final["status"] == "completed", final
+            assert final["variant_id"] == bounded_id
+            assert final["final_path"] == "audio/Test Video.mp4"
+
     def test_video_only_variant_merges_with_ffmpeg(
         self, app_factory: Any, settings: Settings
     ) -> None:
@@ -501,6 +678,106 @@ class TestJobExecution:
 
             messages = _activity_messages(settings, job["id"])
             assert any("merging" in message for message in messages)
+
+    def test_best_available_variant_resolves_to_best_source_format(
+        self, app_factory: Any, settings: Settings
+    ) -> None:
+        """video-best maps to the stored best real stream and merges normally."""
+        binaries = app_factory.binaries
+        with app_factory(
+            yt_dlp=fake_ytdlp_ok(binaries),
+            ffmpeg=fake_ffmpeg_ok(binaries),
+        ) as client:
+            analysis = create_analysis(client)
+            assert analysis["formats"][0]["variant_id"] == BEST_VARIANT
+            job = create_job(client, analysis, variant_id=BEST_VARIANT).json()
+
+            final = wait_for_job(client, job["id"], statuses={"completed", "failed"})
+            assert final["status"] == "completed", final
+            # Best source video (137, h264 video-only) + best audio (251,
+            # opus) companion => FFmpeg merge into mkv, no conversion.
+            assert final["final_path"] == "video/Test Video.mkv"
+            assert (settings.library_dir / "video" / "Test Video.mkv").read_text() == (
+                "merged-media"
+            )
+            messages = _activity_messages(settings, job["id"])
+            assert any("merging" in message for message in messages)
+
+    def test_best_available_without_audio_companion_downloads_muxed_directly(
+        self, app_factory: Any, settings: Settings
+    ) -> None:
+        """No audio-only companion: Best Available maps to the muxed stream.
+
+        The same resolution also offers a higher-bitrate video-only stream;
+        selecting it would download silent output with no companion to
+        merge. Both video variants must map to the muxed raw id, and the
+        job must complete by direct download even with FFmpeg unavailable.
+        """
+        binaries = app_factory.binaries
+        with app_factory(
+            yt_dlp=fake_ytdlp_ok(binaries),
+            ffmpeg=str(binaries / "ffmpeg-missing"),
+            analyzer_result=muxed_and_video_only_payload(),
+        ) as client:
+            analysis = create_analysis(client)
+            variants = {f["variant_id"]: f for f in analysis["formats"]}
+            assert set(variants) == {"video-best", "video-720"}
+            assert variants["video-best"]["format_id"] == "62"
+            assert variants["video-720"]["format_id"] == "62"
+            job = create_job(client, analysis, variant_id=BEST_VARIANT).json()
+
+            final = wait_for_job(client, job["id"], statuses={"completed", "failed"})
+            assert final["status"] == "completed", final
+            assert final["final_path"] == "video/Muxed Source Video.mp4"
+            assert (
+                settings.library_dir / "video" / "Muxed Source Video.mp4"
+            ).read_text() == "fake media"
+
+            messages = _activity_messages(settings, job["id"])
+            assert not any("merging" in message for message in messages)
+
+    def test_label_identity_variant_maps_to_real_format_for_jobs(
+        self, app_factory: Any, settings: Settings
+    ) -> None:
+        """Exotic label-namespace variant ids resolve to their real stream.
+
+        A source whose only resolution evidence is an unparseable label
+        gets a digest-namespaced variant id; job creation and the runner
+        must look it up exactly like any other representative id.
+        """
+        binaries = app_factory.binaries
+        labeled = {
+            **single_video_payload(),
+            "formats": [
+                {
+                    "format_id": "77",
+                    "ext": "mp4",
+                    "vcodec": "avc1.640028",
+                    "acodec": "mp4a.40.2",
+                    "resolution": "variable",
+                    "tbr": 1800.0,
+                },
+            ],
+        }
+        with app_factory(
+            yt_dlp=fake_ytdlp_ok(binaries),
+            ffmpeg=str(binaries / "ffmpeg-missing"),
+            analyzer_result=labeled,
+        ) as client:
+            analysis = create_analysis(client)
+            best = analysis["formats"][0]
+            labelled = analysis["formats"][1]
+            assert best["variant_id"] == "video-best"
+            assert labelled["variant_id"].startswith("video-label-variable-")
+            # Both representative ids map to the same real raw stream.
+            assert best["format_id"] == labelled["format_id"] == "77"
+
+            job = create_job(
+                client, analysis, variant_id=labelled["variant_id"]
+            ).json()
+            final = wait_for_job(client, job["id"], statuses={"completed", "failed"})
+            assert final["status"] == "completed", final
+            assert final["final_path"] == "video/Test Video.mp4"
 
     def test_progress_fields_update_during_download(
         self, app_factory: Any, settings: Settings

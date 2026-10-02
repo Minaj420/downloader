@@ -129,11 +129,14 @@ class NormalizedFormat(BaseModel):
     ``variant_id`` is the application-level, stable identifier clients use to
     select a format. ``format_id`` is the raw yt-dlp id kept for the
     backend-side variant→format mapping stored in the analysis session; the
-    UI never displays it.
+    UI never displays it. ``label`` is the application-level display label
+    for the primary choices list (e.g. ``Best Available (1080p)`` or
+    ``1080p``); it describes the chosen output, not the low-level stream.
     """
 
     variant_id: str
     format_id: str
+    label: str | None = None
     kind: MediaFormatKind
     ext: str | None = None
     resolution_label: str | None = None
