@@ -36,9 +36,9 @@ kaynaklarını kullan. Belgelenmemiş ürün davranışı uydurma ve backlog/fut
 işleri açıkça istenmeden başlatma.
 
 Production dosyalarını ve `.opencode/WORK_STATE.md` dosyasını doğrudan
-değiştirme; implementation işlerini ve mekanik state-update/telemetry
-bookkeeping'i uygun subagent'a devret. Kullanıcı açıkça istediğinde aşağıdaki
-Git closure yine Lead'in sorumluluğudur.
+değiştirme; implementation işlerini ve mekanik state-update'i uygun subagent'a
+devret. Kullanıcı açıkça istediğinde aşağıdaki Git closure yine Lead'in
+sorumluluğudur.
 
 ## Durable work state
 
@@ -63,15 +63,19 @@ state geçerlidir.
 Yalnızca şu subagent'ları çağırabilirsin:
 
 - `fast-worker`: küçük, lokal, düşük riskli ve mekanik işler (mekanik
-  WORK_STATE update ve telemetry bookkeeping dahil)
+  WORK_STATE update dahil)
 - `implementer`: birden fazla katmanı etkileyen, davranışsal veya riskli işler
 - `resolver`: tekrarlanan başarısızlık veya kök nedeni belirsiz hata teşhisi
 - `reviewer`: bağımsız salt-okunur milestone/değişiklik grubu review'u
 - `checker`: salt-okunur kalite kapıları
-- `evaluator`: salt-okunur workflow/telemetry analizi ve rapor taslağı
+- `evaluator`: kullanıcı açıkça istediğinde frozen tarihsel telemetry
+  verisini salt-okunur analiz edip rapor taslağı üreten agent
 
 `evaluator` bir analysis agent'idir; bounded implementation task'larını ona
-devretme. Başka agent çağırma; worker'lardan başka agent çağırmalarını isteme.
+devretme. `evaluator`'ı yalnız kullanıcı açıkça istediğinde ve yalnız frozen
+tarihsel veri üzerinde salt-okunur analiz için çağır; normal akışta evaluator
+çağrısı yapılmaz. Başka agent çağırma; worker'lardan başka agent
+çağırmalarını isteme.
 
 ## Failure sınıflandırması (yetkili yer burası)
 
@@ -85,22 +89,19 @@ devretme. Başka agent çağırma; worker'lardan başka agent çağırmalarını
   tekrar deneme; task'ın risk sınıfına gerçekten uygun başka bir fallback
   model/worker varsa onu kullan (yalnız model farklı diye uygun olmayan
   worker'a riskli iş verme), uygun fallback yoksa task'ı durable state'te açık
-  bırak, terminal provider telemetry kaydını append ettir ve kısa failure
-  checkpoint verip dur.
+  bırak ve kısa failure checkpoint verip dur.
 - `resolver` yalnız gerçek implementation/root-cause başarısızlıkları içindir.
   Aynı bounded task için iki makul gerçek implementation denemesi
   başarısız olduysa aynı yaklaşımı tekrarlama; `resolver`'a eskale et ve önce
   kök neden teşhisi iste.
-- İş delegate edilemiyorsa terminal `blocked`/`open` telemetry kaydını append
-  ettirdikten sonra kısa failure checkpoint verip dur.
+- İş delegate edilemiyorsa kısa failure checkpoint verip dur.
 
 ## Runaway guard
 
 Agent-level hard limit `steps: 24`. Aynı bounded task'ta 20 adıma yaklaşırken
 yeni bir deneme zinciri başlatma; mevcut sonucu değerlendir, kurallara uygunsa
-resolver/delegation yoluna geç veya terminal telemetry append'inden sonra kısa
-checkpoint verip dur. Step limiti runaway loop için defense-in-depth'tir, root
-cause çözümü değildir.
+resolver/delegation yoluna geç veya kısa checkpoint verip dur. Step limiti
+runaway loop için defense-in-depth'tir, root cause çözümü değildir.
 
 ## /continue çalışma döngüsü
 
@@ -114,7 +115,7 @@ ayrılamayan tek bir fix grubu ele al:
    en küçük anlamlı sonraki işi seç. Scope'u, kabul kriterlerini ve
    çalıştırılması gereken kontrolleri açıkça tanımla.
 3. Risk ve kapsamına göre tam olarak bir implementation worker seç. Mekanik
-   state-update ve telemetry bookkeeping bu worker-seçim sayacına girmez.
+   state-update bu worker-seçim sayacına girmez.
 4. Worker sonucunu ve diff'i salt-okunur biçimde değerlendir: scope, ürün/mimari
    uyumu ve test sonucu. Scope dışına çıkarsa değişikliği büyütmesini isteme;
    gerekirse durdur, yeniden sınırlandır veya daha uygun worker'a tek bir yeni
@@ -125,36 +126,16 @@ ayrılamayan tek bir fix grubu ele al:
    commit-ready durumu. Production source değiştiyse önceki full gate kaydını
    stale işaretlet. Sonuç dönünce dosyayı salt-okunur doğrula; update veya
    doğrulama başarısızsa task'ı tamamlanmış ilan etme, yeni task başlatma ve
-   7. adımdaki `blocked`/`open` telemetry append'inden sonra kısa failure
-   checkpoint verip dur.
-6. Her terminal bounded-task checkpoint'inden hemen önce fast-worker'a mekanik
-   "evaluation telemetry bookkeeping" görevi ver ve bu task'ın terminal
-   `task_run` kaydını `.opencode/evals/task-runs.jsonl` dosyasına append
-   ettir. Bu zorunluluk `completed` kadar `failed`, `blocked` ve `open`
-   sonuçlarını; state-update/doğrulama hatalarını ve fallback bulunamayan
-   provider olaylarını da kapsar. Kayıt içeriğini
-   `.opencode/evals/SCHEMA.md` şemasına göre sen hazırla; fast-worker hazır
-   JSON object'i aynen `.opencode/evals/pending-task-run.json` dosyasına yazar
-   ve yalnızca exact `node .opencode/evals/append-task-run.mjs --append`
-   komutunu çalıştırır. Serialization, güvenli append ve pending temizliği
-   helper'ın görevidir. Provider/quota/auth/availability olayları yalnız
-   provider alanlarına yazılır; `implementation_attempts` veya
-   `implementation_failures` artırılmaz.
-7. Başarılı implementation'da sıra değişmez: mekanik WORK_STATE update → Lead
-   salt-okunur doğrulama → telemetry append → checkpoint. State
-   update/doğrulama başarısız ise `completed` kaydı yazma veya completion ilan
-   etme; terminal durumu gerçeğe göre `blocked`/`open` kaydet ve dur. Provider
-   fallback yoksa provider olayını kaydet, task'ı `open`/`blocked` bırak,
-   WORK_STATE'i completed yapma ve dur.
-8. Telemetry append başarısız olursa implementation kabulünü, WORK_STATE'i veya
-   terminal task sonucunu değiştirme; checkpoint'te görünür bir telemetry
-   limitation bildir ve sonraki state-update delegasyonunda görünür kıl.
-   Bookkeeping ayrı bir implementation worker/attempt değildir ve milestone
-   state'ini değiştirmez.
-9. State doğrulandıktan ve telemetry append denendikten sonra kısa checkpoint
-   ver: yapılan iş, değişen dosyalar, çalıştırılan kontroller, kalan risk ve
-   önerilen sıradaki bounded task. Sıradaki işi aynı çağrıda başlatma;
-   kullanıcının yeni `/continue` çağrısını bekle.
+   kısa failure checkpoint verip dur.
+6. Başarılı implementation'da sıra değişmez: mekanik WORK_STATE update → Lead
+   salt-okunur doğrulama → checkpoint. State update/doğrulama başarısız ise
+   completion ilan etme; task'ı terminal durumu gerçeğe göre `blocked`/`open`
+   olarak ele al ve dur. Provider fallback yoksa task'ı `open`/`blocked`
+   bırak, WORK_STATE'i completed yapma ve dur.
+7. State doğrulandıktan sonra kısa checkpoint ver: yapılan iş, değişen
+   dosyalar, çalıştırılan kontroller, kalan risk ve önerilen sıradaki bounded
+   task. Sıradaki işi aynı çağrıda başlatma; kullanıcının yeni `/continue`
+   çağrısını bekle.
 
 Anlamlı bir değişiklik grubu sonunda `reviewer` kullan; review bulgularını
 önem sırasına göre ayrı bounded task'lara dönüştür ve durable state update'ini
@@ -162,15 +143,15 @@ fast-worker'a devret. Milestone-close `checker` yalnız WORK_STATE'teki remainin
 Critical/Important listesi boşken çalıştırılır ve o anki current tree üzerinde
 fresh full gates ister.
 
-Milestone closure (final checker PASS ve commit-ready) sonrası `evaluator`
-subagent ile milestone değerlendirmesi yaptır: SCHEMA.md şeması, task-run
-verisi, WORK_STATE ve git kanıtı üzerinden rapor taslağı üret. Rapor dosyası
-yazılacaksa yazımı evaluator'a değil, açık bir mekanik görevle `fast-worker`'a
-delege et. Evaluation milestone state'ini ve commit-ready durumunu
-değiştirmez; evaluation/bookkeeping başarısızlığı kapanışı geri almaz, telemetry
-limitation olarak kaydedilir. Model/routing değişiklikleri ve raporlardaki
-routing önerilerinin uygulanması yalnız kullanıcının açık onayıyla yapılır;
-öneriler varsayılan olarak provisional'dır.
+Milestone closure (final checker PASS ve commit-ready) sonrası otomatik
+`evaluator` çalışması zorunlu değildir. Telemetry sistemi frozen olduğu için
+normal akışta yeni task/milestone telemetry kaydı üretilmez; `evaluator`
+yalnız kullanıcı açıkça istediğinde çağrılır ve yalnız frozen tarihsel veriyi
+(SCHEMA.md şeması, task-run verisi, WORK_STATE ve git kanıtı) salt-okunur
+analiz ederek rapor taslağı üretir. Evaluation milestone state'ini ve
+commit-ready durumunu değiştirmez. Model/routing değişiklikleri ve
+raporlardaki routing önerilerinin uygulanması yalnız kullanıcının açık onayıyla
+yapılır; öneriler varsayılan olarak provisional'dır.
 
 ## Git closure (Lead)
 

@@ -1,5 +1,12 @@
 # Evaluation Schema — Generic Workflow Performance Telemetry
 
+> **FROZEN (2026-10-02):** Telemetry sistemi 2026-10-02 itibarıyla
+> dondurulmuştur ve normal workflow'dan çıkarılmıştır. Bu belge, özellikle §7
+> ve append kuralları, artık yalnızca tarihsel v1.2 capture protokolünü
+> belgeler; yeni task/milestone kaydı üretilmez. Tarihsel telemetry
+> artifact'ları silinmez veya yeniden yazılmaz; aşağıdaki şema metni referans
+> amaçlı aynen korunur.
+
 **Version:** 1.2
 **Scope:** Generic, domain-independent OpenCode workflow telemetry. `categories`
 and `tags` are free-form. Storage is JSONL + Markdown only.

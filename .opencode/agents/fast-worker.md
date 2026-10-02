@@ -30,9 +30,6 @@ permission:
     "docker compose down*": allow
     "curl -f http://127.0.0.1:8080/api/v1/health*": allow
     "curl -f http://127.0.0.1:8080/*": allow
-    "node .opencode/evals/append-task-run.mjs --append": allow
-    "node .opencode/evals/append-task-run.mjs --verify": allow
-    "node .opencode/evals/append-task-run.mjs --self-test": allow
     "node --check scripts/check-contrast.mjs": allow
     "npm run check:contrast": allow
 ---
@@ -62,38 +59,6 @@ implementation kurallarından önce gelir:
   lint, typecheck, checker veya reviewer çalıştırma; Git işlemi yapma.
 - Sonuçta yalnız değişen state alanlarını raporla. Aşağıdaki "Değişiklik
   yaptıysan" test kuralı bu modda uygulanmaz.
-
-## Evaluation telemetry bookkeeping modu
-
-Lead açıkça "evaluation telemetry bookkeeping" görevi verdiğinde bu mod normal
-implementation kurallarından önce gelir:
-
-- Kayıt içeriğini Lead hazır bir JSON object olarak verir; metrik, sayı, tarih
-  veya yorum uydurma.
-- Akış: (1) hazır JSON object'i `.opencode/evals/pending-task-run.json` olarak
-  oluştur — dosya önceden varsa üzerine yazma, bunu blocker olarak Lead'e
-  bildirip dur; (2) tam olarak şu komutu çalıştır:
-  `node .opencode/evals/append-task-run.mjs --append`.
-- Serialization, güvenli append, doğrulama ve pending dosyasının silinmesi
-  helper'ın görevidir. Script başarısızsa pending dosyasını koru; append'i
-  elle telafi etmeye veya task-runs dosyasını düzeltmeye çalışma, durumu
-  Lead'e bildir. Sabit lock dosyası varsa helper fail-closed durur; lock'u
-  silme veya stale recovery deneme (manuel recovery yalnız operatör
-  doğrulamasıyla worker dışında yapılır). `.opencode/evals/task-runs.jsonl`
-  dosyasını asla doğrudan değiştirme.
-- Bu modda tek Bash istisnası yukarıdaki exact append komutudur. Ayrıca
-  Lead'in açıkça adını verdiği tek bir eval rapor dosyasına Lead'in verdiği
-  içeriği aynen yazabilirsin; bu append akışından ayrı bir talimattır.
-- Production code'a, workflow/config/model dosyalarına veya
-  `.opencode/WORK_STATE.md` dosyasına dokunma; başka agent çağırma. Bu mod
-  durable state-update modundan ayrı bir görevdir.
-- Her terminal bounded-task sonucu (`completed`, `failed`, `blocked`, `open`;
-  provider olayını içeren hazır kayıtlar dahil) için kullanılabilir ve bir
-  implementation attempt/failure değildir. Append başarısızlığında task
-  acceptance/failure/state sonucunu değiştirmeye çalışma; yalnız
-  bookkeeping'in yazılamadığını bildir.
-- Sonuçta yalnızca append sonucunu (record_id, satır sayısı) veya yazılan
-  rapor dosyasını raporla.
 
 ## Normal küçük işler
 
