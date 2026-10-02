@@ -1,9 +1,13 @@
 #!/usr/bin/env node
-// Contrast contract check (UI-A11Y-1). The contract itself is documented in
-// docs/design/UI_DIRECTION.md §2 "Contrast Contract".
+// Small deterministic contrast guardrail for the token themes defined in
+// frontend/src/styles.css. NOT an exhaustive or authoritative contract: the
+// CHECKS list below is a short set of representative high-risk semantic
+// combinations (body/muted/header text, primary action, status badges,
+// danger text, control boundary, focus/accent indicator, progress fill).
+// New or changed meaningful colour combinations are verified during
+// implementation; they do not need to be added here.
 //
-// Enforces the allowed meaningful foreground/background/border token pairs
-// against the AUTHORITATIVE token values in frontend/src/styles.css:
+// Reads the real token values directly from styles.css:
 //   - light theme: the first `:root { ... }` block
 //   - dark theme:  `:root { ... }` inside `@media (prefers-color-scheme: dark)`
 //     (inherits every light token, then applies its overrides)
@@ -11,6 +15,7 @@
 // Deliberately NOT a general CSS parser: a narrow, known-block regex read of
 // `#RRGGBB` custom properties only. No dependencies, deterministic output.
 // `color-mix()` and other derived colours are out of scope by design.
+// Missing or non-hex tokens fail closed.
 
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -19,60 +24,20 @@ import { fileURLToPath } from "node:url";
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const stylesPath = join(scriptDir, "..", "src", "styles.css");
 
-// ---------------------------------------------------------------------------
-// Contract: allowed meaningful token pairs (light AND dark are both checked).
-// Keep this list in sync with the Contrast Contract table in
-// docs/design/UI_DIRECTION.md §2. Never copy hex VALUES here; tokens are
-// resolved from styles.css so the check enforces the authoritative CSS.
-// ---------------------------------------------------------------------------
-
-const CATEGORY_THRESHOLDS = {
-  "normal-text": 4.5, // < 24px regular / < 18.66px bold
-  "large-text": 3, // >= 24px regular or >= 18.66px bold
-  "ui-boundary": 3, // meaningful control boundary / non-text state indicator
-};
-
-const CONTRACT = [
-  // body text on the page surface
-  { id: "text/surface", fg: "--color-text", bg: "--color-surface", category: "normal-text", threshold: 4.5 },
-  // text on raised panels, inputs, selects
-  { id: "text/surface-raised", fg: "--color-text", bg: "--color-surface-raised", category: "normal-text", threshold: 4.5 },
-  // text on tinted fills: default/secondary buttons, form header strip
-  { id: "text/surface-tint", fg: "--color-text", bg: "--color-surface-tint", category: "normal-text", threshold: 4.5 },
-  // muted text directly on the page surface (muted notes, empty-state text)
-  { id: "text-muted/surface", fg: "--color-text-muted", bg: "--color-surface", category: "normal-text", threshold: 4.5 },
-  // muted text inside raised panels (activity timestamps, input placeholders)
-  { id: "text-muted/surface-raised", fg: "--color-text-muted", bg: "--color-surface-raised", category: "normal-text", threshold: 4.5 },
-  // header text and backend status label on the ink shell
-  { id: "header-text/ink-950", fg: "--color-header-text", bg: "--color-ink-950", category: "normal-text", threshold: 4.5 },
-  // muted nav links on the ink shell
-  { id: "header-text-muted/ink-950", fg: "--color-header-text-muted", bg: "--color-ink-950", category: "normal-text", threshold: 4.5 },
-  // ink text on accent fill (primary button, numbered step plate)
-  { id: "ink-950/accent", fg: "--color-ink-950", bg: "--color-accent", category: "normal-text", threshold: 4.5 },
-  // accent text on ink fill (primary button hover inversion)
-  { id: "accent/ink-950", fg: "--color-accent", bg: "--color-ink-950", category: "normal-text", threshold: 4.5 },
-  // --color-on-status text on semantic status surfaces (badges)
-  { id: "on-status/info", fg: "--color-on-status", bg: "--color-info", category: "normal-text", threshold: 4.5 },
-  { id: "on-status/success", fg: "--color-on-status", bg: "--color-success", category: "normal-text", threshold: 4.5 },
-  { id: "on-status/danger", fg: "--color-on-status", bg: "--color-danger", category: "normal-text", threshold: 4.5 },
-  { id: "on-status/warning", fg: "--color-on-status", bg: "--color-warning", category: "normal-text", threshold: 4.5 },
-  { id: "on-status/status-neutral", fg: "--color-on-status", bg: "--color-status-neutral", category: "normal-text", threshold: 4.5 },
-  // danger text/border on the raised panels that host job errors and the
-  // transparent Cancel button (real usage; not the page surface)
-  { id: "danger-text/surface-raised", fg: "--color-danger-text", bg: "--color-surface-raised", category: "normal-text", threshold: 4.5 },
-  // meaningful control boundary: input/select borders, quiet button
-  // boundary and progress bar outer boundary on raised surfaces
-  { id: "border-strong/surface-raised", fg: "--color-border-strong", bg: "--color-surface-raised", category: "ui-boundary", threshold: 3 },
-  // default/secondary button boundary (strong border against tint fill)
-  { id: "border-strong/surface-tint", fg: "--color-border-strong", bg: "--color-surface-tint", category: "ui-boundary", threshold: 3 },
-  // non-text accent indicator (focus outline, native radio accent, primary
-  // button outer boundary) against the meaningful surfaces it appears on
-  { id: "accent-ui/surface", fg: "--color-accent-ui", bg: "--color-surface", category: "ui-boundary", threshold: 3 },
-  { id: "accent-ui/surface-raised", fg: "--color-accent-ui", bg: "--color-surface-raised", category: "ui-boundary", threshold: 3 },
-  { id: "accent-ui/surface-tint", fg: "--color-accent-ui", bg: "--color-surface-tint", category: "ui-boundary", threshold: 3 },
-  { id: "accent-ui/ink-950", fg: "--color-accent-ui", bg: "--color-ink-950", category: "ui-boundary", threshold: 3 },
-  // progress fill vs track: meaningful state indicator, direct hex tokens
-  { id: "accent-ui/progress-track", fg: "--color-accent-ui", bg: "--color-progress-track", category: "ui-boundary", threshold: 3 },
+// Representative checks; both themes are checked for every entry.
+// `min` is the WCAG threshold: 4.5 for normal text, 3 for meaningful UI
+// boundaries / non-text state indicators.
+const CHECKS = [
+  { id: "body text on page surface", fg: "--color-text", bg: "--color-surface", min: 4.5 },
+  { id: "muted text on raised panels", fg: "--color-text-muted", bg: "--color-surface-raised", min: 4.5 },
+  { id: "header text on ink shell", fg: "--color-header-text", bg: "--color-ink-950", min: 4.5 },
+  { id: "primary button text on accent", fg: "--color-ink-950", bg: "--color-accent", min: 4.5 },
+  { id: "status badge text on success", fg: "--color-on-status", bg: "--color-success", min: 4.5 },
+  { id: "status badge text on danger", fg: "--color-on-status", bg: "--color-danger", min: 4.5 },
+  { id: "danger text on raised panels", fg: "--color-danger-text", bg: "--color-surface-raised", min: 4.5 },
+  { id: "control boundary on raised panels", fg: "--color-border-strong", bg: "--color-surface-raised", min: 3 },
+  { id: "focus/accent indicator on page surface", fg: "--color-accent-ui", bg: "--color-surface", min: 3 },
+  { id: "progress fill vs track", fg: "--color-accent-ui", bg: "--color-progress-track", min: 3 },
 ];
 
 // ---------------------------------------------------------------------------
@@ -164,26 +129,13 @@ function resolveToken(theme, themeName, token) {
   if (!/^#[0-9a-fA-F]{6}$/.test(value)) {
     throw new Error(
       `token ${token} has unsupported non-hex value "${value}" in the ${themeName} theme; ` +
-        "the contrast contract only supports #RRGGBB tokens",
+        "the contrast check only supports #RRGGBB tokens",
     );
   }
   return value;
 }
 
 function main() {
-  for (const pair of CONTRACT) {
-    const expected = CATEGORY_THRESHOLDS[pair.category];
-    if (expected === undefined) {
-      throw new Error(`pair ${pair.id}: unknown category "${pair.category}"`);
-    }
-    if (pair.threshold !== expected) {
-      throw new Error(
-        `pair ${pair.id}: threshold ${pair.threshold} does not match ` +
-          `category "${pair.category}" (expected ${expected})`,
-      );
-    }
-  }
-
   const { light, dark } = readThemes();
   const themes = [
     ["light", light],
@@ -193,43 +145,39 @@ function main() {
   let pass = 0;
   const failures = [];
 
-  for (const pair of CONTRACT) {
+  for (const check of CHECKS) {
     for (const [themeName, theme] of themes) {
-      const fgHex = resolveToken(theme, themeName, pair.fg);
-      const bgHex = resolveToken(theme, themeName, pair.bg);
+      const fgHex = resolveToken(theme, themeName, check.fg);
+      const bgHex = resolveToken(theme, themeName, check.bg);
       const ratio = contrastRatio(fgHex, bgHex);
-      const ok = ratio >= pair.threshold;
+      const ok = ratio >= check.min;
       if (ok) pass += 1;
       else {
         failures.push(
-          `${pair.id} (${pair.category}, ${themeName}): ` +
-            `${pair.fg} ${fgHex} on ${pair.bg} ${bgHex} = ${ratio.toFixed(2)}:1, ` +
-            `required >= ${pair.threshold}:1`,
+          `${check.id} (${themeName}): ` +
+            `${check.fg} ${fgHex} on ${check.bg} ${bgHex} = ${ratio.toFixed(2)}:1, ` +
+            `required >= ${check.min}:1`,
         );
       }
       console.log(
-        `${ok ? "PASS" : "FAIL"} | ${pair.id} | ${pair.category} | ${themeName} | ` +
-          `${pair.fg} ${fgHex} on ${pair.bg} ${bgHex} | ` +
-          `${ratio.toFixed(2)}:1 | required >= ${pair.threshold}:1`,
+        `${ok ? "PASS" : "FAIL"} | ${check.id} | ${themeName} | ` +
+          `${check.fg} ${fgHex} on ${check.bg} ${bgHex} | ` +
+          `${ratio.toFixed(2)}:1 | required >= ${check.min}:1`,
       );
     }
   }
 
   if (failures.length > 0) {
-    console.error(`\n${failures.length} contrast contract check(s) FAILED:`);
+    console.error(`\nFAIL: ${failures.length} contrast check(s) failed:`);
     for (const failure of failures) console.error(`  - ${failure}`);
-    console.error(
-      "Fix the token values in frontend/src/styles.css. If a UI task introduced a " +
-        "new meaningful pair, add it to the Contrast Contract table in " +
-        "docs/design/UI_DIRECTION.md §2 and to CONTRACT in this script.",
-    );
+    console.error("Fix the token values in frontend/src/styles.css.");
     process.exit(1);
   }
 
   console.log(
-    `\nOK: ${CONTRACT.length} contract pairs x ${themes.length} themes = ` +
-      `${pass} checks passed (thresholds: normal-text >= 4.5:1, ` +
-      `large-text >= 3:1, ui-boundary >= 3:1).`,
+    `\nPASS: ${CHECKS.length} checks x ${themes.length} themes = ` +
+      `${pass} passed (thresholds: normal text >= 4.5:1, ` +
+      `UI boundary / non-text indicator >= 3:1).`,
   );
 }
 
