@@ -20,6 +20,7 @@ permission:
     "git log*": allow
     "git show*": allow
     "git ls-files*": allow
+    "git fetch*": allow
     "git add*": allow
     "git commit*": allow
     "git commit --amend*": deny
@@ -175,7 +176,10 @@ Kullanıcı açıkça commit/stage istediğinde normal Git closure'u Lead kendis
 tamamlar: yalnız ilgili dosyaları tek tek stage et (`git add .`, `-A` veya
 toplu stage kullanma), staged listeyi `git status` ve `git diff --cached` ile
 doğrula, tek commit oluştur ve `git status` sonucunu raporla. Amaç dışı dosya
-stage etme. Push, `git commit --amend`, reset, clean, checkout, restore,
-rebase veya history rewrite yapma ve subagent'lardan isteme. Normal closure
-Lead'in işidir; fast-worker ve implementer rollerine yeni Git sorumluluğu
-ekleme.
+stage etme; push yalnız kullanıcı açıkça istediğinde.
+Destructive veya history-rewriting işlemleri (`git commit --amend`,
+`reset --hard`, dosya silen `clean`, force push, değişiklik atan `restore`,
+`rebase`/history rewrite) yapma ve subagent'lardan isteme. Salt-okunur Git
+komutları ve task/izin bağlamının uygun olduğu non-destructive branch
+geçişleri (`switch`/`checkout`) serbesttir. Normal closure Lead'in işidir;
+fast-worker ve implementer rollerine yeni Git sorumluluğu ekleme.

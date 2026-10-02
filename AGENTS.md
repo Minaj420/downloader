@@ -31,7 +31,9 @@ Only run commands that are actually configured in the repository; report clearly
 ## Git
 
 - Inspect `git status` before making changes; do not overwrite unrelated user changes.
-- Never commit or push unless explicitly asked; never run reset, clean, checkout, restore, rebase, or rewrite history.
+- Read-only commands (`status`, `diff`, `log`, `show`, `fetch`) and non-destructive branch switches (`switch`/`checkout` to change branches) are normal workflow operations when the task and permissions call for them.
+- Never commit or push unless the user explicitly asks.
+- Never run destructive or history-rewriting operations (`reset --hard`, file-deleting `clean`, force push, change-discarding `restore`, `rebase`, `commit --amend`, or any history rewrite) without an explicit user request.
 
 ## Communication
 
