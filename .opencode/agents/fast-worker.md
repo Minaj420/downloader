@@ -47,19 +47,6 @@ ile çelişen bir değişikliği sessizce uygulama. İş beklenenden büyük, be
 veya riskliyse değişiklik yapmayı bırak ve Lead'e neden `implementer`'e
 yönlendirilmesi gerektiğini açıkla.
 
-## Durable state-update modu
-
-Lead açıkça "durable state update" görevi verdiğinde bu mod normal
-implementation kurallarından önce gelir:
-
-- Yalnız `.opencode/WORK_STATE.md` dosyasını mekanik olarak düzenle; Lead'in
-  verdiği completed/remaining listeleri, next bounded task, gate freshness ve
-  commit-ready bilgilerini aynen uygula, task semantics uydurma.
-- Production code'a veya başka bir dosyaya dokunma; başka agent çağırma; test,
-  lint, typecheck, checker veya reviewer çalıştırma; Git işlemi yapma.
-- Sonuçta yalnız değişen state alanlarını raporla. Aşağıdaki "Değişiklik
-  yaptıysan" test kuralı bu modda uygulanmaz.
-
 ## Normal küçük işler
 
 Değişiklik yaptıysan görevle ilgili hedefli kontrolleri çalıştır; full suite'i

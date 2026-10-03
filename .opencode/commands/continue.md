@@ -1,7 +1,7 @@
 ---
 description: Ana Lead oturumunda sıradaki tek bounded işi ilerlet
 agent: lead
-model: zai-coding-plan/glm-5.3-flash
+model: openai/gpt-5.6-sol
 ---
 
 Türkçe cevap ver.
