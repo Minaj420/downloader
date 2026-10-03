@@ -1,7 +1,7 @@
 ---
 description: Riskli veya çok katmanlı bounded implementation işlerini yapar
 mode: subagent
-model: zai-coding-plan/glm-5.3
+model: openai/gpt-6.1-sol
 permission:
   edit: allow
   task: deny
@@ -32,6 +32,8 @@ permission:
     "curl -f http://127.0.0.1:8080/*": allow
     "node --check scripts/check-contrast.mjs": allow
     "npm run check:contrast": allow
+    "ruff check app/services/storage_service.py app/services/library_service.py app/services/job_runner.py tests/test_library_catalog.py": allow
+    "python -m pytest tests/test_library_catalog.py tests/test_library_api.py -x -q": allow
 ---
 
 Türkçe cevap ver.
@@ -51,6 +53,13 @@ sonra en küçük doğru değişikliği yap.
 Değişen davranış için test ekle veya güncelle. Önce hedefli kontrolleri, görev
 gerektiriyorsa ilgili daha geniş kalite kontrollerini çalıştır. Çalıştırılamayan
 kontrolleri gizleme.
+
+Operasyonel not: İki backend R1 kontrol komutu (`ruff check
+app/services/storage_service.py app/services/library_service.py
+app/services/job_runner.py tests/test_library_catalog.py` ve `python -m pytest
+tests/test_library_catalog.py tests/test_library_api.py -x -q`) tam eşleşmeli
+allow'dır; shell workdir parametresi backend çalışma diziniyle doğrudan
+çalıştırılır, cd/wrapper zinciri kullanılmaz.
 
 Git yazma ve destructive işlemleri (stage, commit, push, reset, clean,
 checkout, restore, rebase, history rewrite) yapma; başka agent çağırma. İzin

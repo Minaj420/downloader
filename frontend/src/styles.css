@@ -822,6 +822,338 @@ button:disabled {
 }
 
 /* ------------------------------------------------------------------ */
+/* Library (UI_DIRECTION §7)                                           */
+/* ------------------------------------------------------------------ */
+
+/* Same panel grammar as the New Download panels: raised surface, hairline
+   border, minimal shadow; only existing tokens, no new colour pairs. */
+.library-panel {
+  border: var(--border-default);
+  border-radius: var(--radius-panel);
+  background: var(--color-surface-raised);
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--color-ink-950) 10%, transparent);
+  overflow: hidden;
+}
+
+/* Per-page status heading; receives programmatic keyboard focus when a page
+   transition completes (tabIndex is set in the component). */
+.library-page-heading {
+  margin: 0 0 var(--space-2);
+  font-family: var(--font-display);
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted);
+}
+
+.library-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.library-table th[scope="col"] {
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-surface-tint);
+  border-bottom: var(--border-default);
+  font-family: var(--font-display);
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  /* --color-text on the tinted strip is >=12:1 in both themes; the muted
+     token would fall below AA there (same decision as panel subtitles). */
+  color: var(--color-text);
+  text-align: left;
+  white-space: nowrap;
+}
+
+/* The item-level Name header uses scope="rowgroup" (it spans the whole
+   one-tbody row group); selectors cover both scopes. */
+.library-table td,
+.library-table th[scope="row"],
+.library-table th[scope="rowgroup"] {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: var(--border-default);
+  text-align: left;
+  vertical-align: top;
+}
+
+.library-table tbody:last-child tr:last-child td,
+.library-table tbody:last-child tr:last-child th[scope="row"],
+.library-table tbody:last-child tr:last-child th[scope="rowgroup"] {
+  border-bottom: none;
+}
+
+/* Additional physical copies render as their own sub-row inside the item's
+   row group, so one copy's size/location/path share one semantic group. */
+.library-copy-row td {
+  border-top: var(--border-default);
+}
+
+.library-item-selected td,
+.library-item-selected th[scope="row"],
+.library-item-selected th[scope="rowgroup"] {
+  background: var(--color-surface-tint);
+}
+
+/* Row selection lives on the Name cell so keyboard/touch users get a real
+   button; quiet ghost style, pressed state carries the selection. */
+.library-item-select {
+  padding: 0.2rem 0.45rem;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--color-text);
+  font-weight: 600;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.library-item-select:hover:not(:disabled) {
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-tint);
+}
+
+.library-item-select[aria-pressed="true"] {
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-tint);
+}
+
+/* Real DOM field labels inside every data cell: rendered as the card field
+   labels on mobile; on desktop the column headers carry the same text, so
+   the in-cell labels are hidden there. */
+.library-cell-label {
+  display: none;
+}
+
+.library-cell-value {
+  min-width: 0;
+}
+
+.library-path {
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  overflow-wrap: anywhere;
+}
+
+.library-pagination {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+
+.library-detail {
+  margin-top: var(--space-6);
+  border: var(--border-default);
+  border-radius: var(--radius-panel);
+  background: var(--color-surface-raised);
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--color-ink-950) 10%, transparent);
+  overflow: hidden;
+}
+
+.library-detail-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-surface-tint);
+  border-bottom: var(--border-default);
+}
+
+.library-detail-header h2 {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.library-detail-body {
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.library-detail-title {
+  margin: 0;
+  font-size: 1.15rem;
+  overflow-wrap: anywhere;
+}
+
+.library-detail-grid {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: var(--space-2) var(--space-4);
+}
+
+.library-detail-grid > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.library-detail-grid dt {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted);
+}
+
+.library-detail-grid dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.library-copies-heading {
+  margin: 0 0 var(--space-2);
+  font-size: 0.95rem;
+}
+
+.library-copies {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.library-copy {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem var(--space-3);
+  align-items: baseline;
+  padding: var(--space-2) var(--space-3);
+  border: var(--border-default);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-tint);
+}
+
+.library-copy-location {
+  white-space: nowrap;
+}
+
+.library-copy-size {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Record-only removal (UI_DIRECTION §7): quiet/secondary action group in
+   the detail body — button plus its record-only note and any error retry,
+   separated from the catalog fields above. */
+.library-detail-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: var(--border-default);
+}
+
+/* Desktop table collapses into stacked cards carrying the same fields
+   (UI_DIRECTION §6: no horizontal scrolling tables on small screens).
+   Column headers stay in the accessibility tree via the visually-hidden
+   technique (never display:none); the real in-cell DOM labels name the
+   card fields. */
+@media (max-width: 48rem) {
+  .library-panel {
+    padding: var(--space-3);
+  }
+
+  .library-table {
+    display: block;
+  }
+
+  .library-table thead {
+    display: block;
+  }
+
+  .library-table thead th {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    border: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    background: transparent;
+  }
+
+  /* One card per logical item (tbody row group); copy sub-rows stay inside
+     their item's card so the copy grouping survives the card layout. */
+  .library-table tbody {
+    display: block;
+    padding: var(--space-2) var(--space-3);
+    border: var(--border-default);
+    border-radius: var(--radius-panel);
+    background: var(--color-surface);
+  }
+
+  .library-table tbody + tbody {
+    margin-top: var(--space-3);
+  }
+
+  .library-table tbody.library-item-selected {
+    border-color: var(--color-border-strong);
+  }
+
+  .library-table tr {
+    display: block;
+  }
+
+  .library-table th[scope="row"],
+  .library-table th[scope="rowgroup"],
+  .library-table td {
+    display: grid;
+    grid-template-columns: minmax(6rem, 40%) minmax(0, 1fr);
+    gap: var(--space-2);
+    align-items: baseline;
+    padding: 0.25rem 0;
+    border: none;
+    width: 100%;
+  }
+
+  /* The Name cell carries the title button itself — full width, no label
+     column needed. */
+  .library-table th[scope="row"],
+  .library-table th[scope="rowgroup"] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .library-cell-label {
+    display: block;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--color-text-muted);
+  }
+
+  .library-copy-row {
+    margin-top: 0.35rem;
+    padding-top: 0.35rem;
+    border-top: var(--border-default);
+  }
+
+  .library-item-selected th[scope="row"],
+  .library-item-selected th[scope="rowgroup"],
+  .library-item-selected td {
+    background: transparent;
+  }
+
+  .library-item-selected .library-item-select[aria-pressed="true"] {
+    background: var(--color-surface-tint);
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* Reduced motion (UI_DIRECTION §6)                                    */
 /* ------------------------------------------------------------------ */
 

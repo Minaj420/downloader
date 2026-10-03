@@ -5,13 +5,21 @@ import { App } from "../src/app/App";
 function stubHealthOk() {
   vi.stubGlobal(
     "fetch",
-    vi.fn(
-      async () =>
-        new Response(JSON.stringify({ status: "ok", database: "ok" }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        }),
-    ),
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      // Navigating to Library now loads the catalog list; keep the shell
+      // tests on a valid empty first page instead of the health body.
+      if (url === "/api/v1/library?limit=50&offset=0") {
+        return new Response(
+          JSON.stringify({ items: [], limit: 50, offset: 0, has_more: false }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response(JSON.stringify({ status: "ok", database: "ok" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }),
   );
 }
 

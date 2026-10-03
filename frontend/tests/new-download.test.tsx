@@ -77,6 +77,7 @@ function okHealthHandler(analysisResponse: () => Promise<Response>) {
 const singleResult: NormalizedAnalysis = {
   analysis_id: "a".repeat(32),
   original_url: "https://www.youtube.com/watch?v=abc123",
+  source_id: "abc123",
   detected_platform: "youtube",
   detected_platform_label: "YouTube",
   extractor: "Youtube",

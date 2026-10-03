@@ -40,6 +40,8 @@ export interface CollectionInfo {
 export interface NormalizedAnalysis {
   analysis_id: string;
   original_url: string;
+  /** Raw source media id (yt-dlp `id`) when the source provided one. */
+  source_id: string | null;
   detected_platform: string;
   detected_platform_label: string;
   extractor: string | null;

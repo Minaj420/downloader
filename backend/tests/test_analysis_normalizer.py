@@ -1,6 +1,7 @@
 import re
 from typing import Any
 
+from app.domain.analysis import NormalizedAnalysis
 from app.services.analysis_normalizer import build_normalized_analysis, normalize_formats
 from tests.yt_dlp_samples import playlist_payload, single_video_payload
 
@@ -884,3 +885,43 @@ def test_build_normalized_analysis_collection() -> None:
     ]
     assert analysis.collection.truncated is True
     assert analysis.collection.preview_items[0].position == 1
+
+
+def test_build_normalized_analysis_carries_raw_source_id() -> None:
+    analysis = build_normalized_analysis(
+        single_video_payload(),
+        analysis_id="a" * 32,
+        original_url="https://www.youtube.com/watch?v=abc123",
+        platform_hint=None,
+    )
+
+    assert analysis.source_id == "abc123"
+
+
+def test_build_normalized_analysis_without_source_id_stays_none() -> None:
+    payload = single_video_payload()
+    del payload["id"]
+
+    analysis = build_normalized_analysis(
+        payload,
+        analysis_id="a" * 32,
+        original_url="https://www.youtube.com/watch?v=abc123",
+        platform_hint=None,
+    )
+
+    assert analysis.source_id is None
+
+
+def test_normalized_analysis_without_source_id_is_backward_compatible() -> None:
+    """Sessions persisted before ``source_id`` existed must still validate."""
+    legacy_json = {
+        "analysis_id": "c" * 32,
+        "original_url": "https://www.youtube.com/watch?v=abc123",
+        "detected_platform": "youtube",
+        "detected_platform_label": "YouTube",
+        "content_type": "single",
+    }
+
+    parsed = NormalizedAnalysis.model_validate(legacy_json)
+
+    assert parsed.source_id is None

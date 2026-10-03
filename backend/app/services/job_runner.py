@@ -7,7 +7,9 @@ Flow (ARCHITECTURE.md §18, §28–29):
 
 All state changes, progress, and activity events are persisted and published
 to the SSE bus. Raw yt-dlp format ids never leave this module's inputs: the
-runner resolves ``variant_id`` against the stored analysis session.
+runner resolves ``variant_id`` against the stored analysis session. A
+successful App Library finalization also writes the job's Library catalog
+rows in the same transaction as the completion transition (§37, §51).
 """
 
 import asyncio
@@ -18,12 +20,14 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.domain.analysis import NormalizedAnalysis, NormalizedFormat
 from app.domain.jobs import ACTIVE_JOB_STATUSES, JobError, JobErrorCode, JobStatus
+from app.domain.library import MediaStorageType
 from app.integrations.ffmpeg import FFmpegError, FFmpegFailureKind, FFmpegProcessor
 from app.integrations.ytdlp import (
     DownloadProgress,
@@ -33,11 +37,23 @@ from app.integrations.ytdlp import (
 )
 from app.models.analysis import AnalysisSession
 from app.models.jobs import DownloadJob
+from app.models.library import LibraryItem, MediaFile
 from app.repositories import activity
 from app.repositories import jobs as job_repo
 from app.services.event_bus import EventBus
 from app.services.job_mapping import job_to_dto
-from app.services.storage_service import PlacementCancelled, StorageService
+from app.services.library_service import stage_media_catalog_reference
+from app.services.storage_service import (
+    MediaFileMissingError,
+    MediaFileNotRegularError,
+    MediaFileTargetChangedError,
+    PlacementCancelled,
+    PlacementResult,
+    StorageDeleteFailedError,
+    StoragePathError,
+    StorageService,
+    StorageTargetError,
+)
 from app.utils.processes import ensure_process_terminated
 
 _YT_DLP_KIND_TO_JOB_CODE: dict[YtDlpFailureKind, JobErrorCode] = {
@@ -108,6 +124,50 @@ def merge_container(video: NormalizedFormat, audio: NormalizedFormat) -> str:
     if audio.audio_codec == "aac" and video.video_codec in {"h264", "hevc"}:
         return "mp4"
     return "mkv"
+
+
+def build_app_library_catalog(
+    job: DownloadJob,
+    normalized: NormalizedAnalysis,
+    selected: NormalizedFormat,
+    placement: PlacementResult,
+) -> tuple[LibraryItem, MediaFile]:
+    """Derive the Library catalog rows for a finalized App Library download.
+
+    Only fields with an authoritative existing source are populated — the
+    job, the stored analysis (including the raw source id when the source
+    provided one), the selected normalized format, and the storage
+    placement (ARCHITECTURE.md §23, §37). Music metadata fields
+    (artist/album/…) have no source until Milestone 6 and stay null; the
+    physical row always carries the storage-controlled path and the real
+    file size read inside the storage boundary.
+    """
+    now = datetime.now(UTC)
+    audio = selected.kind == "audio_only"
+    item = LibraryItem(
+        id=uuid4().hex,
+        owner_id=job.owner_id,
+        job_id=job.id,
+        source_url=job.source_url,
+        source_id=normalized.source_id,
+        platform=normalized.detected_platform,
+        media_type="audio" if audio else "video",
+        title=job.title,
+        format=placement.final_path.suffix.lstrip(".") or None,
+        codec=selected.audio_codec if audio else selected.video_codec,
+        bitrate=selected.bitrate_kbps,
+        resolution=selected.resolution_label,
+        duration=normalized.duration_seconds,
+        created_at=now,
+    )
+    media_file = MediaFile(
+        library_item_id=item.id,
+        storage_type=MediaStorageType.APP_LIBRARY.value,
+        path=placement.relative_path,
+        size_bytes=placement.size_bytes,
+        created_at=now,
+    )
+    return item, media_file
 
 
 def _truncate_detail(detail: str | None) -> str | None:
@@ -265,7 +325,7 @@ class _JobExecution:
         else:
             await self._activity("Saved to App Library")
 
-        await self._complete(placement.relative_path)
+        await self._complete(record, normalized, selected, placement)
         self._deps.storage.remove_staging(self._job_id)
 
     async def _download_step(
@@ -355,21 +415,73 @@ class _JobExecution:
             raise _RunAborted
         await self._activity(message)
 
-    async def _complete(self, final_path: str) -> None:
+    async def _complete(
+        self,
+        record: DownloadJob,
+        normalized: NormalizedAnalysis,
+        selected: NormalizedFormat,
+        placement: PlacementResult,
+    ) -> None:
+        """Complete the job and write its Library catalog rows atomically.
+
+        The conditional status update and the catalog inserts share one
+        transaction (ARCHITECTURE.md §51): a stale runner that lost the
+        status race writes no catalog rows, and a failed catalog insert
+        rolls the completion back so the job never reports success without
+        its database-backed Library record. The catalog rows go through
+        ``stage_media_catalog_reference``: after the staged completion
+        update has taken the SQLite write lock, the physical target is
+        re-verified through the storage boundary, so a concurrent Delete
+        File that committed while this completion waited on the lock
+        fails the whole transaction instead of leaving a completed job
+        with a dangling reference to a deleted file.
+        """
+        item, media_file = build_app_library_catalog(
+            record, normalized, selected, placement
+        )
         async with self._deps.session_factory() as session:
-            won = await job_repo.update_job_if_status(
+            won = await job_repo.stage_job_update_if_status(
                 session,
                 self._job_id,
                 _ACTIVE_STATUS_VALUES,
                 {
                     "status": JobStatus.COMPLETED.value,
                     "progress_percent": 100.0,
-                    "final_path": final_path,
+                    "final_path": placement.relative_path,
                     "completed_at": datetime.now(UTC),
                 },
             )
-        if not won:
-            return
+            if not won:
+                return
+            try:
+                await stage_media_catalog_reference(
+                    session,
+                    self._deps.storage,
+                    item,
+                    media_file,
+                    placement_identity=placement.identity,
+                )
+            except (
+                StorageTargetError,
+                StoragePathError,
+                MediaFileMissingError,
+                MediaFileNotRegularError,
+                MediaFileTargetChangedError,
+                StorageDeleteFailedError,
+            ) as exc:
+                # The finalized file vanished or changed under a
+                # concurrent Delete File (or its location became
+                # unverifiable): committing the catalog rows would lie,
+                # so the completion rolls back and the job must not
+                # silently report success (ARCHITECTURE.md §51).
+                raise JobError(
+                    JobErrorCode.INTERNAL_ERROR,
+                    detail=(
+                        "finalized file failed storage re-validation "
+                        f"before catalog commit: {exc!r}"
+                    ),
+                ) from exc
+            await session.commit()
         await self._publish_job_event("job.completed")
 
     async def _fail(self, error: JobError) -> None:

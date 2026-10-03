@@ -1,7 +1,7 @@
 ---
 description: Ana Lead oturumunda sıradaki tek bounded işi ilerlet
 agent: lead
-model: openai/gpt-5.6-sol
+model: openai/gpt-6.1-sol
 ---
 
 Türkçe cevap ver.

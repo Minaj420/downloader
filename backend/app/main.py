@@ -16,6 +16,7 @@ from app.services.analysis_service import AnalysisService, URLAnalyzer
 from app.services.event_bus import EventBus
 from app.services.job_runner import RunnerDeps
 from app.services.job_service import JobService
+from app.services.library_service import LibraryService
 from app.services.queue_manager import QueueManager
 from app.services.storage_service import StorageService
 
@@ -24,7 +25,12 @@ def create_app(settings: Settings | None = None, analyzer: URLAnalyzer | None = 
     resolved_settings = settings or get_settings()
 
     engine, session_factory = create_engine_and_sessionmaker(resolved_settings.database_url)
-    storage = StorageService(resolved_settings.staging_dir, resolved_settings.library_dir)
+    storage = StorageService(
+        resolved_settings.staging_dir,
+        resolved_settings.library_dir,
+        plex_music_root=resolved_settings.plex_music_dir,
+        plex_video_root=resolved_settings.plex_video_dir,
+    )
     bus = EventBus()
     queue_manager = QueueManager(
         session_factory=session_factory,
@@ -56,6 +62,10 @@ def create_app(settings: Settings | None = None, analyzer: URLAnalyzer | None = 
         ):
             Path(directory).mkdir(parents=True, exist_ok=True)
         storage.ensure_layout()
+        # Capture delete-root identities after the layout exists and
+        # before migrations/queue start: deletions trust only these
+        # roots, fail-closed against anything captured later.
+        storage.initialize_delete_roots()
         run_migrations(resolved_settings.sync_database_url)
         await queue_manager.start()
         try:
@@ -71,6 +81,7 @@ def create_app(settings: Settings | None = None, analyzer: URLAnalyzer | None = 
     app.state.event_bus = bus
     app.state.queue_manager = queue_manager
     app.state.job_service = job_service
+    app.state.library_service = LibraryService(session_factory, storage)
 
     app.state.analysis_service = AnalysisService(
         analyzer=analyzer

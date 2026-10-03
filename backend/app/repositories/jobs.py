@@ -63,6 +63,27 @@ async def update_job(
     await session.commit()
 
 
+async def stage_job_update_if_status(
+    session: AsyncSession,
+    job_id: str,
+    expected_statuses: set[str],
+    values: dict[str, Any],
+) -> bool:
+    """Atomically update a job only while its status still matches, without
+    committing.
+
+    The caller keeps the transaction open so related rows (for example the
+    Library catalog written at completion) commit together with this
+    update or not at all.
+    """
+    result = await session.execute(
+        update(DownloadJob)
+        .where(DownloadJob.id == job_id, DownloadJob.status.in_(expected_statuses))
+        .values(**values, updated_at=_now())
+    )
+    return cast(CursorResult[Any], result).rowcount > 0
+
+
 async def update_job_if_status(
     session: AsyncSession,
     job_id: str,
@@ -75,13 +96,10 @@ async def update_job_if_status(
     cancelled), so callers never revive a terminal job from a stale
     in-memory snapshot.
     """
-    result = await session.execute(
-        update(DownloadJob)
-        .where(DownloadJob.id == job_id, DownloadJob.status.in_(expected_statuses))
-        .values(**values, updated_at=_now())
-    )
-    await session.commit()
-    return cast(CursorResult[Any], result).rowcount > 0
+    won = await stage_job_update_if_status(session, job_id, expected_statuses, values)
+    if won:
+        await session.commit()
+    return won
 
 
 async def claimable_queued_jobs(

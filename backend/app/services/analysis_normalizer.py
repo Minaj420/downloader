@@ -621,6 +621,7 @@ def build_normalized_analysis(
     return NormalizedAnalysis(
         analysis_id=analysis_id,
         original_url=original_url,
+        source_id=_optional_str(raw_info.get("id")),
         detected_platform=detected.value,
         detected_platform_label=platform_label(detected.value),
         extractor=_optional_str(raw_info.get("extractor_key"))

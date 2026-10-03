@@ -1267,6 +1267,16 @@ The client must never submit:
 
 as an unrestricted filesystem deletion request.
 
+The physical target is resolved only from the catalog's storage mapping plus delete roots captured at startup: after the storage layout exists, the backend captures each root's device/inode identity — the App Library root mandatorily, configured Plex roots only when present, so a missing optional root leaves deletions unavailable (fail-closed) without taking startup down. The filesystem root itself is never a delete root, and no root descriptors are cached.
+
+Startup snapshots the configured root's absolute lexical walk and canonical path, including the identity and link text of existing aliases (such as macOS `/var` → `/private/var`). Every root operation replays those saved components from the filesystem root descriptor with `O_DIRECTORY|O_NOFOLLOW`, never re-resolving the current configured path; startup aliases must remain unchanged and their saved expansions are walked without following the current link. The final descriptor's identity must match the startup capture — an ancestor or root replaced by a new symlink fails closed even when it leads to the same startup root inode. Reference resolution, writer verification, and deletion use this same policy. From that validated root descriptor the catalog path is walked the same way and the final entry is pinned: any symlink on the path is rejected, traversal and root/directory targets are rejected, and the unlink runs under the held parent descriptor, so parent or root swaps cannot redirect the deletion outside a root. Within the same parent directory POSIX has no atomic verify-and-unlink, so a same-directory entry swap in the micro-window between the identity recheck and the unlink is the documented residual race (it cannot leave the root, and every detectable swap fails closed).
+
+Reference resolution carries both the storage-resolved location and, for an existing entry, its `(st_dev, st_ino)` under the same validated-root semantics. A matching location or existing file identity counts as a shared reference, including different case spellings or storage mappings reaching the same physical target; safely missing paths retain only their lexical location. A shared — or unverifiable (unavailable root, symlinked or unsafe path) — reference blocks deletion with a stable, non-retryable conflict and leaves the database and the file unchanged.
+
+Ordering: immediately after the owner/item/copy validation, stage the copy's catalog delete (this takes the SQLite write lock), run the catalog-wide reference scan inside that same transaction, then delete the physical file through the prepared handle and commit. A concurrent same-path catalog write therefore either serializes before the scan (visible → blocked) or cannot commit until the transaction ends; the irreversible steps (target preparation, unlink, commit) run shielded so cancellation cannot leave the file/database outcome undecided. Storage failures roll the catalog back; database failures before the unlink map to stable retryable busy/database errors with nothing changed; a rare commit failure after the file is gone returns a distinct catalog-consistency error instead of a silent success (§51).
+
+The serialization is completed by the writer side: every catalog write that commits a `media_files` row must already hold the SQLite write lock and re-verify the physical target's existence and placement identity through the storage boundary before committing (§51). A Delete File that committed while the writer waited on the lock is caught by that re-verification — the writer's whole transaction, the job completion transition included, rolls back instead of committing a dangling reference or a completed job whose file is gone. A writer that commits first is visible to the delete's reference scan and blocks the delete as a shared reference without mutation; writers of different paths are unaffected.
+
 If multiple physical copies exist, the UI should make the target clear.
 
 ---
@@ -1610,6 +1620,8 @@ mark job completed
 ```
 
 If the database update fails after file creation, the job must not silently report success.
+
+The "verify expected file exists" step runs inside the catalog-write transaction, after the SQLite write lock is held: the placed file's storage identity is re-verified through the storage boundary right before the catalog commit. A concurrent Delete File that removed the file while the writer waited on the lock fails that re-verification and the whole completion rolls back; a delete that runs afterwards sees the committed row as a shared reference and is blocked (§38).
 
 A reconciliation mechanism may be added later if needed.
 

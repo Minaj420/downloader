@@ -1,33 +1,46 @@
 ---
 description: Ana oturumda bounded işleri seçer ve uygun worker'a devreder
 mode: primary
-model: openai/gpt-5.6-sol
+model: openai/gpt-6.1-sol
 steps: 24
-permission:
-  edit:
-    "*": deny
-    ".opencode/WORK_STATE.md": allow
-  task:
-    "*": deny
-    implementer: allow
-    fast-worker: allow
-    resolver: allow
-    reviewer: allow
-    checker: allow
-    evaluator: allow
-  bash:
-    "*": deny
-    "git status*": allow
-    "git diff*": allow
-    "git log*": allow
-    "git show*": allow
-    "git ls-files*": allow
-    "git fetch*": allow
-    "git add*": allow
-    "git commit*": allow
-    "git commit --amend*": deny
-    "node --check scripts/check-contrast.mjs": allow
-    "npm run check:contrast": allow
+permissions:
+  - { action: edit, resource: "*", effect: deny }
+  - { action: edit, resource: ".opencode/WORK_STATE.md", effect: allow }
+  - { action: subagent, resource: "*", effect: deny }
+  - { action: subagent, resource: implementer, effect: allow }
+  - { action: subagent, resource: fast-worker, effect: allow }
+  - { action: subagent, resource: resolver, effect: allow }
+  - { action: subagent, resource: reviewer, effect: allow }
+  - { action: subagent, resource: checker, effect: allow }
+  - { action: subagent, resource: evaluator, effect: allow }
+  - { action: shell, resource: "*", effect: deny }
+  - { action: shell, resource: "git status --short", effect: allow }
+  - { action: shell, resource: "git status --short --branch", effect: allow }
+  - { action: shell, resource: "git diff --no-ext-diff --no-textconv --stat", effect: allow }
+  - { action: shell, resource: "git diff --no-ext-diff --no-textconv --cached --stat", effect: allow }
+  - { action: shell, resource: "git diff --no-ext-diff --no-textconv --cached", effect: allow }
+  - { action: shell, resource: "git diff --no-ext-diff --no-textconv --check -- *", effect: allow }
+  - { action: shell, resource: "git log --oneline -5", effect: allow }
+  - { action: shell, resource: "git remote -v", effect: allow }
+  - { action: shell, resource: "git branch --show-current", effect: allow }
+  - { action: shell, resource: "git rev-parse --show-toplevel", effect: allow }
+  - { action: shell, resource: "git rev-parse --verify HEAD", effect: allow }
+  - { action: shell, resource: "git add -- *", effect: ask }
+  - { action: shell, resource: "git commit -m *", effect: ask }
+  - { action: shell, resource: "git push", effect: ask }
+  - { action: shell, resource: "git push origin HEAD", effect: ask }
+  - { action: shell, resource: "git push -u origin HEAD", effect: ask }
+  - { action: shell, resource: "node --check scripts/check-contrast.mjs", effect: allow }
+  - { action: shell, resource: "npm run check:contrast", effect: allow }
+  - { action: shell, resource: "git commit *--amend*", effect: deny }
+  - { action: shell, resource: "*;*", effect: deny }
+  - { action: shell, resource: "*&*", effect: deny }
+  - { action: shell, resource: "*|*", effect: deny }
+  - { action: shell, resource: "*`*", effect: deny }
+  - { action: shell, resource: "*$(*", effect: deny }
+  - { action: shell, resource: "*<*", effect: deny }
+  - { action: shell, resource: "*>*", effect: deny }
+  - { action: shell, resource: "*\n*", effect: deny }
 ---
 
 Türkçe cevap ver.
@@ -217,9 +230,17 @@ yapılır; öneriler varsayılan olarak provisional'dır.
 
 Kullanıcı açıkça commit/stage istediğinde normal Git closure'u Lead kendisi
 tamamlar: yalnız ilgili dosyaları tek tek stage et (`git add .`, `-A` veya
-toplu stage kullanma), staged listeyi `git status` ve `git diff --cached` ile
-doğrula, tek commit oluştur ve `git status` sonucunu raporla. Amaç dışı dosya
+toplu stage kullanma), staged listeyi `git status --short` ve
+`git diff --no-ext-diff --no-textconv --cached` ile doğrula, tek commit oluştur
+ve `git status --short` sonucunu raporla. Amaç dışı dosya
 stage etme; push yalnız kullanıcı açıkça istediğinde.
+Her shell çağrısında tek komut kullan; zincir, wrapper veya substitution ile
+izin aşma. Stage için `git add -- <tek-literal-dosya-yolu>`, commit için
+`git commit -m <mesaj>`, push için yalnız izinli exact biçimleri kullan ve
+write onayını çağrı başına al; kalıcı/geniş onay isteme. Stage yolunda glob,
+pathspec magic, dizin veya birden fazla dosya kullanma; commit mesajından sonra
+ek flag ekleme. Whole-value wildcard argümanları ayrıştırmaz: ASK ve bu
+talimatlar tek-dosya/flag güvenliğini destekler, mutlak sandbox garantisi değildir.
 Destructive veya history-rewriting işlemleri (`git commit --amend`,
 `reset --hard`, dosya silen `clean`, force push, değişiklik atan `restore`,
 `rebase`/history rewrite) yapma ve subagent'lardan isteme. Salt-okunur Git

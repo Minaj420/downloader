@@ -676,6 +676,10 @@ The physical media file remains untouched.
 
 Deletes the actual media file from disk.
 
+The target is one physical copy, selected through its Library entry, never a client-supplied filesystem path.
+
+If another catalog entry references the same physical file path, the file is not deleted: the operation is blocked and the reason is reported. The file may be deleted only when the selected copy is the only reference; the physical file and that copy's catalog record are then deleted together, and deleting the last copy also removes the Library item.
+
 This action must require explicit confirmation.
 
 The interface must make the difference between these operations obvious.

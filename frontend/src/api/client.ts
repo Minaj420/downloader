@@ -50,6 +50,21 @@ export async function apiGet<TResponse>(path: string): Promise<TResponse> {
   return (await response.json()) as TResponse;
 }
 
+/**
+ * DELETE with no request body. Successful responses carry no content
+ * (204 No Content), so nothing is parsed — the promise simply resolves.
+ * Errors go through the shared ApiError mapping.
+ */
+export async function apiDelete(path: string): Promise<void> {
+  const response = await fetch(path, {
+    method: "DELETE",
+    headers: { Accept: "application/json" },
+  });
+  if (!response.ok) {
+    throw await toApiError(path, response);
+  }
+}
+
 export async function apiPost<TResponse, TRequest>(path: string, body: TRequest): Promise<TResponse> {
   const response = await fetch(path, {
     method: "POST",

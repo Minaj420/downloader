@@ -172,6 +172,7 @@ class NormalizedAnalysis(BaseModel):
 
     analysis_id: str
     original_url: str
+    source_id: str | None = None
     detected_platform: str
     detected_platform_label: str
     extractor: str | None = None
