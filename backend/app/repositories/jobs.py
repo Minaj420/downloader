@@ -4,7 +4,12 @@ from typing import Any, cast
 from sqlalchemy import CursorResult, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.jobs import ACTIVE_JOB_STATUSES, JobStatus
+from app.domain.jobs import (
+    ACTIVE_JOB_STATUSES,
+    JobErrorCode,
+    JobStatus,
+    job_error_code_retryable,
+)
 from app.models.jobs import DownloadJob
 
 
@@ -112,6 +117,38 @@ async def claimable_queued_jobs(
         .limit(limit)
     )
     return list(result.scalars().all())
+
+
+async def stage_retry_job(session: AsyncSession, job_id: str, owner_id: str) -> bool:
+    """Compare-and-set at the actual write; caller owns activity and commit."""
+    result = await session.execute(
+        update(DownloadJob)
+        .where(
+            DownloadJob.id == job_id,
+            DownloadJob.owner_id == owner_id,
+            DownloadJob.status == JobStatus.FAILED.value,
+            DownloadJob.error_code.in_(
+                [code.value for code in JobErrorCode if job_error_code_retryable(code)]
+            ),
+        )
+        .values(
+            status=JobStatus.QUEUED.value,
+            progress_percent=0.0,
+            downloaded_bytes=None,
+            total_bytes=None,
+            speed_bytes_per_second=None,
+            eta_seconds=None,
+            error_code=None,
+            error_message=None,
+            error_detail=None,
+            started_at=None,
+            completed_at=None,
+            final_path=None,
+            staging_path=None,
+            updated_at=_now(),
+        )
+    )
+    return cast(CursorResult[Any], result).rowcount > 0
 
 
 async def mark_interrupted_active_jobs(session: AsyncSession) -> list[str]:

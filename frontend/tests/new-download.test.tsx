@@ -212,6 +212,45 @@ const queuedJob: Job = {
   completed_at: null,
 };
 
+const failedRetryJob: Job = {
+  ...queuedJob,
+  status: "failed",
+  error: { code: "download_failed", message: "Download failed on first attempt.", retryable: true },
+  updated_at: "2026-09-28T12:00:03.123456Z",
+  completed_at: "2026-09-28T12:00:03.123456Z",
+};
+const retriedJob: Job = {
+  ...queuedJob,
+  updated_at: "2026-09-28T12:00:03.123457Z",
+};
+
+function retryFlowHandler(
+  retry: () => Promise<Response>,
+  read: () => Promise<Response> = () => Promise.resolve(jsonResponse(failedRetryJob)),
+  create: () => Job = () => queuedJob,
+  cancel?: () => Promise<Response>,
+) {
+  stubEventSource();
+  return stubFetch((url, init) => {
+    if (url === "/api/v1/health") return Promise.resolve(jsonResponse({ status: "ok", database: "ok" }));
+    if (url === "/api/v1/analysis") return Promise.resolve(jsonResponse(singleResult));
+    if (url === "/api/v1/jobs" && init?.method === "POST") return Promise.resolve(jsonResponse(create()));
+    if (url === "/api/v1/jobs/job-1/retry") return retry();
+    if (url === "/api/v1/jobs/job-1/cancel" && cancel) return cancel();
+    if (url === "/api/v1/jobs/job-1") return read();
+    if (url.endsWith("/activity")) return Promise.resolve(jsonResponse({ events: [] }));
+    return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+  });
+}
+
+async function showRetryableFailure() {
+  const { user } = await renderNewDownload();
+  await createQueuedJob(user);
+  act(() => FakeEventSource.current?.emit("job.failed", failedRetryJob));
+  await screen.findByRole("button", { name: "Retry" });
+  return user;
+}
+
 function jobFlowHandler(cancelResponse?: Job) {
   stubEventSource();
   return stubFetch((url, init) => {
@@ -255,6 +294,424 @@ async function fillAndSubmit(user: ReturnType<typeof userEvent.setup>, url: stri
 }
 
 describe("NewDownloadPage", () => {
+  it("only offers Retry for a retryable failed job", async () => {
+    retryFlowHandler(() => Promise.resolve(jsonResponse(retriedJob)));
+    await showRetryableFailure();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
+    const statuses = ["queued", "analyzing", "downloading", "post_processing", "finalizing", "completed", "cancelled", "failed"] as const;
+    for (const [index, status] of statuses.entries()) {
+      act(() => FakeEventSource.current?.emit("job.updated", {
+        ...failedRetryJob, status, error: { ...failedRetryJob.error, retryable: status !== "failed" },
+        // Each independent status transition is a strictly newer snapshot.
+        updated_at: `2026-09-28T12:00:${String(4 + index).padStart(2, "0")}Z`,
+      }));
+      expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
+    }
+  });
+
+  it("posts an empty payload to the same id once, preserves Activity and resumes polling", async () => {
+    const pending = deferred<Response>();
+    const fetchMock = retryFlowHandler(() => pending.promise, () => Promise.resolve(jsonResponse({
+      ...retriedJob, status: "downloading", updated_at: "2026-09-28T12:00:04Z",
+    })));
+    const user = await showRetryableFailure();
+    act(() => FakeEventSource.current?.emit("activity.created", {
+      id: 1, job_id: queuedJob.id, level: "error", event_type: "job.failed", message: "Historical attempt", created_at: failedRetryJob.updated_at,
+    }));
+    await user.click(screen.getByRole("button", { name: /Activity/ }));
+    expect(screen.getByText("Historical attempt")).toBeInTheDocument();
+    const retry = screen.getByRole("button", { name: "Retry" });
+    act(() => { retry.click(); retry.click(); });
+    expect(screen.getByRole("button", { name: "Retrying…" })).toBeDisabled();
+    const calls = fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/retry"));
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.[0]).toBe("/api/v1/jobs/job-1/retry");
+    expect(calls[0]?.[1]?.method).toBe("POST");
+    expect(JSON.parse(String(calls[0]?.[1]?.body))).toEqual({});
+    vi.useFakeTimers();
+    try {
+      await act(async () => pending.resolve(jsonResponse(retriedJob)));
+      expect(screen.getByText("Queued")).toBeInTheDocument();
+      expect(screen.getByRole("progressbar")).toBeInTheDocument();
+      expect(screen.getByText("Historical attempt")).toBeInTheDocument();
+      await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+      expect(screen.getByText("Downloading")).toBeInTheDocument();
+    } finally { vi.useRealTimers(); }
+    expect(fetchMock.mock.calls.filter(([url]) => url === "/api/v1/jobs")).toHaveLength(1);
+    expect(fetchMock.mock.calls.filter(([url]) => url === "/api/v1/analysis")).toHaveLength(1);
+    act(() => FakeEventSource.current?.emit("job.completed", {
+      ...retriedJob, status: "completed", updated_at: "2026-09-28T12:00:05Z",
+    }));
+    expect(screen.getByText("Completed")).toBeInTheDocument();
+  });
+
+  it.each(["downloading", "completed", "failed"] as const)("does not let late queued HTTP or old terminal SSE overwrite newer %s", async (status) => {
+    const pending = deferred<Response>();
+    retryFlowHandler(() => pending.promise);
+    const user = await showRetryableFailure();
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    act(() => FakeEventSource.current?.emit("job.failed", failedRetryJob));
+    act(() => FakeEventSource.current?.emit("job.updated", {
+      ...retriedJob, status, error: status === "failed" ? failedRetryJob.error : null,
+      updated_at: "2026-09-28T12:00:03.123458Z",
+    }));
+    await act(async () => pending.resolve(jsonResponse(retriedJob)));
+    expect(screen.getByText(status === "downloading" ? "Downloading" : status === "completed" ? "Completed" : "Failed")).toBeInTheDocument();
+    expect(screen.queryByText("Queued")).not.toBeInTheDocument();
+  });
+
+  describe.each(["downloading", "completed"] as const)("equal-time snapshots after %s", (status) => {
+    it.each(["queued", "failed", "downloading"] as const)("ignores stale %s SSE without contaminating current state", async (staleStatus) => {
+      retryFlowHandler(() => Promise.resolve(jsonResponse(retriedJob)));
+      await showRetryableFailure();
+      const current: Job = { ...retriedJob, status, progress: { ...retriedJob.progress, percent: 64 } };
+      act(() => FakeEventSource.current?.emit("job.updated", current));
+      act(() => FakeEventSource.current?.emit("job.updated", {
+        ...failedRetryJob, status: staleStatus, updated_at: current.updated_at,
+      }));
+      expect(screen.getByText(status === "downloading" ? "Downloading" : "Completed")).toBeInTheDocument();
+      expect(screen.queryByText(failedRetryJob.error!.message)).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
+      if (status === "downloading") expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "64");
+    });
+
+    it.each(["POST", "GET"])("keeps current state after delayed equal-time retry %s", async (phase) => {
+      const post = deferred<Response>();
+      const read = deferred<Response>();
+      const fetchMock = retryFlowHandler(() => post.promise, () => read.promise);
+      const user = await showRetryableFailure();
+      await user.click(screen.getByRole("button", { name: "Retry" }));
+      if (phase === "GET") {
+        await act(async () => post.resolve(jsonResponse({ error: { message: "Retry response lost" } }, 503)));
+        await screen.findByText("Retry response lost");
+      }
+      act(() => FakeEventSource.current?.emit("job.updated", { ...retriedJob, status }));
+      await act(async () => {
+        if (phase === "POST") post.resolve(jsonResponse(retriedJob));
+        else read.resolve(jsonResponse({ ...failedRetryJob, updated_at: retriedJob.updated_at }));
+      });
+      expect(screen.getByText(status === "downloading" ? "Downloading" : "Completed")).toBeInTheDocument();
+      expect(screen.queryByText("Queued")).not.toBeInTheDocument();
+      expect(screen.queryByText(failedRetryJob.error!.message)).not.toBeInTheDocument();
+      expect(screen.queryByText("Retry response lost")).not.toBeInTheDocument();
+      expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/retry"))).toHaveLength(1);
+    });
+  });
+
+  it.each(["queued", "failed"] as const)("rejects a delayed equal-time %s poll after downloading SSE", async (status) => {
+    const poll = deferred<Response>();
+    const fetchMock = retryFlowHandler(() => Promise.resolve(jsonResponse(retriedJob)), () => poll.promise);
+    const { user } = await renderNewDownload();
+    await createQueuedJob(user);
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => url === "/api/v1/jobs/job-1")).toBe(true), { timeout: 3000 });
+    act(() => FakeEventSource.current?.emit("job.updated", {
+      ...retriedJob, status: "downloading", progress: { ...retriedJob.progress, percent: 64 },
+    }));
+    await act(async () => poll.resolve(jsonResponse({ ...failedRetryJob, status, updated_at: retriedJob.updated_at })));
+    expect(screen.getByText("Downloading")).toBeInTheDocument();
+    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "64");
+    expect(screen.queryByText(failedRetryJob.error!.message)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
+  });
+
+  it("ignores repeated equivalent timestamps but accepts strictly newer sub-millisecond snapshots", async () => {
+    retryFlowHandler(() => Promise.resolve(jsonResponse(retriedJob)));
+    await showRetryableFailure();
+    const current: Job = { ...retriedJob, status: "downloading", progress: { ...retriedJob.progress, percent: 64 } };
+    act(() => FakeEventSource.current?.emit("job.updated", current));
+    for (const updated_at of [current.updated_at, "2026-09-28T12:00:03.1234570Z", current.updated_at]) {
+      act(() => FakeEventSource.current?.emit("job.updated", { ...current, updated_at }));
+      act(() => FakeEventSource.current?.emit("job.updated", {
+        ...current, updated_at, progress: { ...current.progress, percent: 0 },
+      }));
+      expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "64");
+    }
+    act(() => FakeEventSource.current?.emit("job.failed", failedRetryJob));
+    expect(screen.getByText("Downloading")).toBeInTheDocument();
+    act(() => FakeEventSource.current?.emit("job.completed", {
+      ...current, status: "completed", updated_at: "2026-09-28T12:00:03.123458Z",
+    }));
+    expect(screen.getByText("Completed")).toBeInTheDocument();
+  });
+
+  it.each(["api", "network"])("shows %s retry failure and permits an explicit reattempt after reconciliation", async (kind) => {
+    let attempts = 0;
+    const fetchMock = retryFlowHandler(() => {
+      attempts += 1;
+      if (attempts > 1) return Promise.resolve(jsonResponse(retriedJob));
+      return kind === "api"
+        ? Promise.resolve(jsonResponse({ error: { message: "Retry is unavailable", code: "job_not_retryable", retryable: false } }, 409))
+        : Promise.reject(new TypeError("Failed to fetch"));
+    });
+    const user = await showRetryableFailure();
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    await screen.findByText(kind === "api" ? "Retry is unavailable" : /Could not retry the download/);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled());
+    expect(attempts).toBe(1);
+    expect(fetchMock.mock.calls.some(([url]) => url === "/api/v1/jobs/job-1")).toBe(true);
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    await screen.findByText("Queued");
+    expect(attempts).toBe(2);
+    expect(screen.queryByText(/Could not retry|Retry is unavailable/)).not.toBeInTheDocument();
+  });
+
+  it("reconciles a lost mutation response with the current active job without automatic retry", async () => {
+    const fetchMock = retryFlowHandler(() => Promise.reject(new TypeError("network")), () => Promise.resolve(jsonResponse(retriedJob)));
+    const user = await showRetryableFailure();
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    await screen.findByText("Queued");
+    expect(screen.queryByText(/Could not retry the download/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
+    act(() => FakeEventSource.current?.emit("job.completed", {
+      ...retriedJob, status: "completed", updated_at: "2026-09-28T12:00:05Z",
+    }));
+    expect(screen.getByText("Completed")).toBeInTheDocument();
+    expect(screen.queryByText(/Could not retry the download/)).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/retry"))).toHaveLength(1);
+  });
+
+  it("clears a lost-response alarm when GET confirms a completed attempt", async () => {
+    const fetchMock = retryFlowHandler(() => Promise.reject(new TypeError("network")),
+      () => Promise.resolve(jsonResponse({ ...retriedJob, status: "completed", updated_at: "2026-09-28T12:00:05Z" })));
+    const user = await showRetryableFailure();
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    await screen.findByText("Completed");
+    expect(screen.queryByText(/Could not retry the download/)).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/retry"))).toHaveLength(1);
+  });
+
+  it.each(["api", "network"])("preserves the %s mutation error when reconciliation GET fails", async (kind) => {
+    const fetchMock = retryFlowHandler(() => kind === "api"
+      ? Promise.resolve(jsonResponse({ error: { message: "Retry is unavailable", code: "job_not_retryable", retryable: false } }, 409))
+      : Promise.reject(new TypeError("network")), () => Promise.reject(new TypeError("GET failed")));
+    const user = await showRetryableFailure();
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled());
+    expect(screen.getByText(kind === "api" ? "Retry is unavailable" : /Could not retry the download/)).toBeInTheDocument();
+    expect(screen.getByText(failedRetryJob.error!.message)).toBeInTheDocument();
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/retry"))).toHaveLength(1);
+  });
+
+  describe.each(["POST", "GET"])("newer SSE while %s is delayed", (phase) => {
+    it.each(["downloading", "completed", "failed"] as const)("preserves newer %s without a false mutation alarm", async (status) => {
+      const post = deferred<Response>();
+      const read = deferred<Response>();
+      const fetchMock = retryFlowHandler(() => post.promise, () => read.promise);
+      const user = await showRetryableFailure();
+      await user.click(screen.getByRole("button", { name: "Retry" }));
+      if (phase === "GET") {
+        await act(async () => post.resolve(jsonResponse({ error: { message: "Retry response lost" } }, 503)));
+        await screen.findByText("Retry response lost");
+      }
+      act(() => FakeEventSource.current?.emit("job.updated", {
+        ...retriedJob, status, updated_at: "2026-09-28T12:00:05Z",
+        error: status === "failed" ? { code: "download_failed", message: "The new attempt failed.", retryable: true } : null,
+      }));
+      if (phase === "POST") {
+        await act(async () => post.resolve(jsonResponse({ error: { message: "Retry response lost" } }, 503)));
+      }
+      await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => url === "/api/v1/jobs/job-1")).toBe(true));
+      // Even a successful but older reconciliation must not replace the SSE state.
+      await act(async () => read.resolve(jsonResponse(retriedJob)));
+      expect(screen.getByText(status === "downloading" ? "Downloading" : status === "completed" ? "Completed" : "Failed")).toBeInTheDocument();
+      expect(screen.queryByText("Queued")).not.toBeInTheDocument();
+      expect(screen.queryByText("Retry response lost")).not.toBeInTheDocument();
+      if (status === "failed") expect(screen.getByText("The new attempt failed.")).toBeInTheDocument();
+      expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/retry"))).toHaveLength(1);
+    });
+  });
+
+  it("keeps newer SSE state when reconciliation returns the old failure", async () => {
+    const read = deferred<Response>();
+    retryFlowHandler(() => Promise.reject(new TypeError("network")), () => read.promise);
+    const user = await showRetryableFailure();
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    await screen.findByText(/Could not retry the download/);
+    act(() => FakeEventSource.current?.emit("job.completed", {
+      ...retriedJob, status: "completed", updated_at: "2026-09-28T12:00:05Z",
+    }));
+    await act(async () => read.resolve(jsonResponse(failedRetryJob)));
+    expect(screen.getByText("Completed")).toBeInTheDocument();
+    expect(screen.queryByText(/Could not retry the download/)).not.toBeInTheDocument();
+  });
+
+  it("does not reinstate the mutation alarm when GET fails after newer SSE", async () => {
+    const read = deferred<Response>();
+    retryFlowHandler(() => Promise.reject(new TypeError("network")), () => read.promise);
+    const user = await showRetryableFailure();
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    await screen.findByText(/Could not retry the download/);
+    act(() => FakeEventSource.current?.emit("job.updated", retriedJob));
+    await act(async () => read.resolve(jsonResponse({ error: { message: "GET failed" } }, 503)));
+    expect(screen.getByText("Queued")).toBeInTheDocument();
+    expect(screen.queryByText(/Could not retry the download|GET failed/)).not.toBeInTheDocument();
+  });
+
+  it.each(["switch", "unmount"])("ignores delayed reconciliation after job %s", async (action) => {
+    const read = deferred<Response>();
+    let creates = 0;
+    const fetchMock = retryFlowHandler(() => Promise.reject(new TypeError("network")), () => read.promise,
+      () => ++creates === 1 ? queuedJob : { ...queuedJob, id: "job-2", title: "Another job" });
+    const view = render(<App />);
+    const user = userEvent.setup();
+    await createQueuedJob(user);
+    act(() => FakeEventSource.current?.emit("job.failed", failedRetryJob));
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    await screen.findByText(/Could not retry the download/);
+    if (action === "unmount") view.unmount();
+    else {
+      await user.click(screen.getByRole("button", { name: "Download" }));
+      await screen.findByText("Another job");
+    }
+    const callCount = fetchMock.mock.calls.length;
+    await act(async () => read.resolve(jsonResponse({ ...retriedJob, status: "completed", updated_at: "2026-09-28T12:00:05Z" })));
+    expect(fetchMock.mock.calls).toHaveLength(callCount);
+    if (action === "switch") {
+      expect(screen.getByText("Another job")).toBeInTheDocument();
+      expect(screen.getByText("Queued")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
+      expect(screen.queryByText(/Completed|Could not retry the download/)).not.toBeInTheDocument();
+    }
+  });
+
+  it.each(["success", "failure"])("ignores old retry %s callbacks when tracking another job", async (outcome) => {
+    const pending = deferred<Response>();
+    let creates = 0;
+    retryFlowHandler(() => pending.promise, undefined, () => ++creates === 1 ? queuedJob : { ...queuedJob, id: "job-2", title: "Another job" });
+    const user = await showRetryableFailure();
+    const oldSource = FakeEventSource.current;
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    await user.click(screen.getByRole("button", { name: "Download" }));
+    await screen.findByText("Another job");
+    await act(async () => pending.resolve(outcome === "success" ? jsonResponse(retriedJob) : jsonResponse({ error: { message: "Old retry error" } }, 409)));
+    act(() => oldSource?.emit("job.failed", failedRetryJob));
+    expect(screen.getByText("Another job")).toBeInTheDocument();
+    expect(screen.getByText("Queued")).toBeInTheDocument();
+    expect(screen.queryByText("Old retry error")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retrying…" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
+  });
+
+  it("rejects an old in-flight polling response after retry starts", async () => {
+    const poll = deferred<Response>();
+    const fetchMock = retryFlowHandler(() => Promise.resolve(jsonResponse(retriedJob)), () => poll.promise);
+    const { user } = await renderNewDownload();
+    await createQueuedJob(user);
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => url === "/api/v1/jobs/job-1")).toBe(true), { timeout: 3000 });
+    act(() => FakeEventSource.current?.emit("job.failed", failedRetryJob));
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    await screen.findByText("Queued");
+    await act(async () => poll.resolve(jsonResponse(failedRetryJob)));
+    expect(screen.getByText("Queued")).toBeInTheDocument();
+    expect(screen.queryByText("Failed")).not.toBeInTheDocument();
+  });
+
+  it("blocks Cancel while retry is pending despite active SSE, then allows explicit cancellation", async () => {
+    const pending = deferred<Response>();
+    const fetchMock = retryFlowHandler(() => pending.promise, undefined, undefined,
+      () => Promise.resolve(jsonResponse({ ...retriedJob, status: "cancelled", updated_at: "2026-09-28T12:00:05Z" })));
+    const user = await showRetryableFailure();
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    act(() => FakeEventSource.current?.emit("job.updated", {
+      ...retriedJob, status: "downloading", updated_at: "2026-09-28T12:00:04Z",
+    }));
+    expect(screen.getByText("Downloading")).toBeInTheDocument();
+    const cancel = screen.getByRole<HTMLButtonElement>("button", { name: "Cancel" });
+    expect(cancel).toBeDisabled();
+    await user.click(cancel);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/cancel"))).toHaveLength(0);
+    // Exercise the handler guard independently of the disabled UI.
+    act(() => {
+      cancel.disabled = false;
+      cancel.click();
+      cancel.click();
+    });
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/cancel"))).toHaveLength(0);
+    expect(screen.queryByRole("button", { name: "Cancelling…" })).not.toBeInTheDocument();
+    await act(async () => pending.resolve(jsonResponse(retriedJob)));
+    expect(screen.getByText("Downloading")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await screen.findByText("Download cancelled.");
+    const cancelCalls = fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/cancel"));
+    expect(cancelCalls).toHaveLength(1);
+    expect(cancelCalls[0]?.[0]).toBe("/api/v1/jobs/job-1/cancel");
+    expect(cancelCalls[0]?.[1]?.method).toBe("POST");
+  });
+
+  it.each(["success", "error"])("blocks Retry until pending cancel %s settles, then enables Cancel on the retried job", async (outcome) => {
+    const pending = deferred<Response>();
+    const fetchMock = retryFlowHandler(() => Promise.resolve(jsonResponse(retriedJob)), undefined, undefined,
+      () => pending.promise);
+    const { user } = await renderNewDownload();
+    await createQueuedJob(user);
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("button", { name: "Cancelling…" })).toBeDisabled();
+    act(() => FakeEventSource.current?.emit("job.failed", failedRetryJob));
+    const retry = screen.getByRole<HTMLButtonElement>("button", { name: "Retry" });
+    expect(retry).toBeDisabled();
+    await user.click(retry);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/retry"))).toHaveLength(0);
+    // Bypass the DOM disable to exercise the synchronous handler guard too:
+    // racing events must not mutate tracking generation or start a retry.
+    act(() => {
+      retry.disabled = false;
+      retry.click();
+      retry.click();
+    });
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/retry"))).toHaveLength(0);
+    await act(async () => pending.resolve(outcome === "success"
+      ? jsonResponse(failedRetryJob)
+      : jsonResponse({ error: { message: "Cancel failed", code: "cancel_failed", retryable: false } }, 409)));
+    expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    await screen.findByText("Queued");
+    const retryCalls = fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/retry"));
+    expect(retryCalls).toHaveLength(1);
+    expect(retryCalls[0]?.[0]).toBe("/api/v1/jobs/job-1/retry");
+    expect(retryCalls[0]?.[1]?.method).toBe("POST");
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
+    act(() => FakeEventSource.current?.emit("job.updated", {
+      ...retriedJob, status: "downloading", updated_at: "2026-09-28T12:00:04Z",
+    }));
+    expect(screen.getByText("Downloading")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Cancelling…" })).not.toBeInTheDocument();
+  });
+
+  it("does not let a stale cancel callback contaminate the next tracked job", async () => {
+    const pending = deferred<Response>();
+    let creates = 0;
+    retryFlowHandler(() => Promise.resolve(jsonResponse(retriedJob)), undefined,
+      () => ++creates === 1 ? queuedJob : { ...queuedJob, id: "job-2", title: "Another job" },
+      () => pending.promise);
+    const user = await showRetryableFailure();
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    await screen.findByText("Queued");
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("button", { name: "Cancelling…" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Download" }));
+    await screen.findByText("Another job");
+    await act(async () => pending.resolve(jsonResponse({ ...retriedJob, status: "cancelled", updated_at: "2026-09-28T12:00:05Z" })));
+    expect(screen.getByText("Queued")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
+    expect(screen.queryByText("Download cancelled.")).not.toBeInTheDocument();
+  });
+
+  it("ignores a pending retry response after unmount without starting reconciliation", async () => {
+    const pending = deferred<Response>();
+    const fetchMock = retryFlowHandler(() => pending.promise);
+    const view = render(<App />);
+    const user = userEvent.setup();
+    await createQueuedJob(user);
+    act(() => FakeEventSource.current?.emit("job.failed", failedRetryJob));
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    view.unmount();
+    const callCount = fetchMock.mock.calls.length;
+    await act(async () => pending.resolve(jsonResponse({ error: { message: "Too late" } }, 409)));
+    expect(fetchMock.mock.calls).toHaveLength(callCount);
+  });
+
   it("renders the analyze form with platform options", async () => {
     okHealthHandler(() => Promise.resolve(jsonResponse(singleResult)));
     await renderNewDownload();

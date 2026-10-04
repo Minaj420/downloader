@@ -206,9 +206,11 @@ async def run_download_job(
     processes: ProcessRegistry,
     cancel_gates: CancelGateRegistry,
 ) -> None:
+    execution = _JobExecution(job_id, deps, cancel_event, processes, cancel_gates)
     try:
-        await _JobExecution(job_id, deps, cancel_event, processes, cancel_gates).run()
+        await execution.run()
     finally:
+        await execution.drain_helpers()
         processes.pop(job_id, None)
         cancel_gates.pop(job_id, None)
 
@@ -230,6 +232,15 @@ class _JobExecution:
         self._last_progress_emit = 0.0
         self._source_url_cache: str | None = None
         self._owner_id: str | None = None
+        self._helpers: set[asyncio.Task[Any]] = set()
+        self._closed = False
+
+    async def drain_helpers(self) -> None:
+        # Close callbacks before waiting: no old callback can schedule a write
+        # after the queue manager observes this attempt's task as finished.
+        self._closed = True
+        if self._helpers:
+            await asyncio.gather(*self._helpers, return_exceptions=True)
 
     async def run(self) -> None:
         record = await self._load_job()
@@ -356,6 +367,8 @@ class _JobExecution:
         self, step_index: int, total_steps: int
     ) -> Callable[[DownloadProgress], None]:
         def forward(progress: DownloadProgress) -> None:
+            if self._closed:
+                return
             now = time.monotonic()
             if now - self._last_progress_emit < self._deps.progress_min_interval:
                 return
@@ -367,7 +380,7 @@ class _JobExecution:
                 else 0.0
             )
             percent = min((step_index + step_fraction) / total_steps * 100.0, 100.0)
-            asyncio.get_running_loop().create_task(
+            task = asyncio.get_running_loop().create_task(
                 self._update_progress(
                     progress_percent=percent,
                     downloaded_bytes=progress.downloaded_bytes,
@@ -376,6 +389,7 @@ class _JobExecution:
                     eta_seconds=progress.eta_seconds,
                 )
             )
+            self._helpers.add(task)
 
         return forward
 
@@ -525,9 +539,10 @@ class _JobExecution:
         if self._cancel_event.is_set() and process.returncode is None:
             # Cancellation arrived between the pre-step gate and this
             # registration; terminate instead of letting the step run on.
-            asyncio.get_running_loop().create_task(
+            task = asyncio.get_running_loop().create_task(
                 ensure_process_terminated(process, _TERMINATION_GRACE_SECONDS)
             )
+            self._helpers.add(task)
 
     async def _load_job(self) -> DownloadJob | None:
         return await _get_job(self._deps.session_factory, self._job_id)

@@ -9,6 +9,9 @@ interface JobProgressProps {
   job: Job;
   isCancelling: boolean;
   onCancel: () => void;
+  isRetrying: boolean;
+  retryError: string | null;
+  onRetry: () => void;
   activityEvents: ActivityEvent[];
   activityLoadStatus: ActivityLoadStatus;
   onRefreshActivity: () => void;
@@ -35,6 +38,9 @@ export function JobProgress({
   job,
   isCancelling,
   onCancel,
+  isRetrying,
+  retryError,
+  onRetry,
   activityEvents,
   activityLoadStatus,
   onRefreshActivity,
@@ -79,7 +85,7 @@ export function JobProgress({
             {speed && <span>{speed}</span>}
             {eta && <span>ETA {eta}</span>}
           </p>
-          <button type="button" className="button-danger" onClick={onCancel} disabled={isCancelling}>
+          <button type="button" className="button-danger" onClick={onCancel} disabled={isRetrying || isCancelling}>
             {isCancelling ? "Cancelling…" : "Cancel"}
           </button>
         </>
@@ -98,6 +104,13 @@ export function JobProgress({
       {job.status === "cancelled" && (
         <p className="job-result">Download cancelled.</p>
       )}
+
+      {job.status === "failed" && job.error?.retryable && (
+        <button type="button" className="button-secondary" onClick={onRetry} disabled={isRetrying || isCancelling}>
+          {isRetrying ? "Retrying…" : "Retry"}
+        </button>
+      )}
+      {retryError && <p className="job-result job-error" role="alert">{retryError}</p>}
 
       <ActivityPanel
         key={job.id}

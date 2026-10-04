@@ -17,9 +17,12 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.api.v1.events import _replay_backlog
 from app.config import Settings
+from app.domain.jobs import job_error_code_retryable
+from app.integrations.ytdlp import YtDlpDownloader, YtDlpError, YtDlpFailureKind
 from app.models.jobs import ActivityEvent, DownloadJob
 from app.repositories import activity as activity_repo
 from app.repositories import jobs as job_repo
+from app.services import queue_manager as queue_runtime
 from app.services.analysis_normalizer import normalize_formats
 from app.services.job_runner import _JobExecution
 from tests.conftest import FakeAnalyzer, build_application
@@ -934,6 +937,165 @@ class TestJobExecution:
             assert any("already exists" in message for message in messages)
 
 
+class TestQueueConcurrency:
+    @pytest.mark.parametrize(
+        ("concurrency", "first_status"),
+        [(2, "completed"), (1, "completed"), (1, "failed")],
+    )
+    def test_occupied_slots_bound_execution_and_release_drains_queue(
+        self,
+        app_factory: Any,
+        settings: Settings,
+        monkeypatch: pytest.MonkeyPatch,
+        concurrency: int,
+        first_status: str,
+    ) -> None:
+        """Observe the real lifespan loop; gate only the downloader boundary.
+
+        Runner instrumentation counts whole executions, including finalization
+        and helper drain. The loop spy is passive: tests never claim work or
+        notify the queue to make the waiting job advance.
+        """
+        condition = threading.Condition()
+        releases = [threading.Event() for _ in range(concurrency + 1)]
+        started: list[str] = []
+        blocked: set[str] = set()
+        active: set[str] = set()
+        active_history: list[frozenset[str]] = []
+        cycles = 0
+        real_runner = queue_runtime.run_download_job
+        real_download = YtDlpDownloader.download
+        real_claim = queue_runtime.QueueManager._claim_and_run
+
+        async def observed_runner(job_id: str, **kwargs: Any) -> None:
+            with condition:
+                started.append(job_id)
+                active.add(job_id)
+                active_history.append(frozenset(active))
+                condition.notify_all()
+            try:
+                await real_runner(job_id, **kwargs)
+            finally:
+                with condition:
+                    active.remove(job_id)
+                    active_history.append(frozenset(active))
+                    condition.notify_all()
+
+        async def gated_download(downloader: YtDlpDownloader, **kwargs: Any) -> list[str]:
+            job_id = Path(kwargs["output_template"]).parent.name
+            with condition:
+                index = started.index(job_id)
+                blocked.add(job_id)
+                condition.notify_all()
+            assert await asyncio.to_thread(releases[index].wait, 10), "release timed out"
+            if index == 0 and first_status == "failed":
+                raise YtDlpError(YtDlpFailureKind.NETWORK_ERROR, "controlled failure")
+            return await real_download(downloader, **kwargs)
+
+        async def observed_claim(manager: queue_runtime.QueueManager) -> None:
+            nonlocal cycles
+            await real_claim(manager)
+            with condition:
+                cycles += 1
+                condition.notify_all()
+
+        def wait_until(predicate: Callable[[], bool]) -> None:
+            with condition:
+                assert condition.wait_for(predicate, timeout=10), (
+                    f"queue barrier timed out: started={started}, active={active}, "
+                    f"blocked={blocked}, cycles={cycles}"
+                )
+
+        def wait_for_download(job_id: str) -> None:
+            wait_until(lambda: job_id in blocked)
+
+        monkeypatch.setattr(queue_runtime, "run_download_job", observed_runner)
+        monkeypatch.setattr(YtDlpDownloader, "download", gated_download)
+        monkeypatch.setattr(queue_runtime.QueueManager, "_claim_and_run", observed_claim)
+        with app_factory(
+            yt_dlp=fake_ytdlp_ok(app_factory.binaries), concurrency=concurrency
+        ) as client:
+            try:
+                analysis = create_analysis(client)
+                jobs = []
+                for _ in range(concurrency):
+                    response = create_job(client, analysis)
+                    assert response.status_code == 200
+                    job = response.json()
+                    assert job["status"] == "queued"
+                    assert job["analysis_id"] == analysis["analysis_id"]
+                    assert job["variant_id"] == MUXED_VARIANT
+                    assert job["destination"] == "app_library"
+                    jobs.append(job)
+                    wait_for_download(job["id"])
+
+                occupied = {job["id"] for job in jobs}
+                with condition:
+                    assert active == occupied
+                    assert frozenset(occupied) in active_history
+
+                response = create_job(client, analysis)
+                assert response.status_code == 200
+                queued = response.json()
+                assert queued["status"] == "queued"
+                assert queued["analysis_id"] == analysis["analysis_id"]
+                assert queued["variant_id"] == MUXED_VARIANT
+                assert queued["destination"] == "app_library"
+                jobs.append(queued)
+
+                # Several actual automatic loop passes with occupied slots,
+                # not a fixed sleep that might precede the first queue check.
+                with condition:
+                    observed_cycles = cycles
+                wait_until(lambda: cycles >= observed_cycles + 3)
+                current = client.get(f"/api/v1/jobs/{queued['id']}")
+                assert current.status_code == 200
+                assert current.json()["status"] == "queued"
+                with condition:
+                    assert active == occupied
+                    assert queued["id"] not in started
+                for job_id in occupied:
+                    current = client.get(f"/api/v1/jobs/{job_id}")
+                    assert current.status_code == 200
+                    assert current.json()["status"] == "downloading"
+
+                releases[0].set()
+                wait_for_download(queued["id"])
+                first = wait_for_job(
+                    client, jobs[0]["id"], statuses={"completed", "failed"}
+                )
+                assert first["status"] == first_status, first
+                if first_status == "failed":
+                    assert first["error"]["code"] == "network_error"
+                with condition:
+                    assert active == (occupied - {jobs[0]["id"]}) | {queued["id"]}
+                if concurrency == 2:
+                    current = client.get(f"/api/v1/jobs/{jobs[1]['id']}")
+                    assert current.status_code == 200
+                    assert current.json()["status"] == "downloading"
+
+                for release in releases:
+                    release.set()
+                for job in jobs[1:]:
+                    final = wait_for_job(
+                        client, job["id"], statuses={"completed", "failed"}
+                    )
+                    assert final["status"] == "completed", final
+                wait_until(lambda: not active)
+                with condition:
+                    assert started == [job["id"] for job in jobs]
+                    assert max(map(len, active_history)) == concurrency
+                    assert all(len(snapshot) <= concurrency for snapshot in active_history)
+                assert {row[0]: row[1] for row in _job_rows(settings)} == {
+                    job["id"]: first_status if index == 0 else "completed"
+                    for index, job in enumerate(jobs)
+                }
+            finally:
+                # Release before TestClient exits, even if any assertion fails.
+                for release in releases:
+                    release.set()
+
+
 class TestCancellation:
     def test_cancel_running_job_terminates_and_cleans_staging(
         self, app_factory: Any, settings: Settings
@@ -1378,6 +1540,7 @@ class TestRestartRecovery:
         job = response.json()
         assert job["status"] == "failed"
         assert job["error"]["code"] == "interrupted_by_restart"
+        assert job["error"]["retryable"] is True
 
     def test_queued_jobs_survive_restart(
         self, app_factory: Any, settings: Settings
@@ -1423,6 +1586,22 @@ class TestRestartRecovery:
             final = wait_for_job(client, "b" * 32, statuses={"completed", "failed"})
 
         assert final["status"] == "completed"
+
+
+class TestJobErrorRetryabilityTaxonomy:
+    @pytest.mark.parametrize(
+        ("code", "expected"),
+        [
+            ("interrupted_by_restart", True),
+            ("network_error", True),
+            ("timeout", True),
+            ("cancelled", False),
+            ("authentication_required", False),
+            ("no_such_code", False),
+        ],
+    )
+    def test_job_error_code_retryable(self, code: str, expected: bool) -> None:
+        assert job_error_code_retryable(code) is expected
 
 
 class TestSse:

@@ -74,3 +74,7 @@ export async function getJob(jobId: string): Promise<Job> {
 export async function cancelJob(jobId: string): Promise<Job> {
   return apiPost<Job, Record<string, never>>(`/api/v1/jobs/${jobId}/cancel`, {});
 }
+
+export async function retryJob(jobId: string): Promise<Job> {
+  return apiPost<Job, Record<string, never>>(`/api/v1/jobs/${jobId}/retry`, {});
+}

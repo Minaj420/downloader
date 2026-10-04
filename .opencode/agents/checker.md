@@ -2,33 +2,41 @@
 description: Kaynak dosyaları değiştirmeden kalite kontrollerini çalıştırır
 mode: subagent
 model: zai-coding-plan/glm-5.3-flash
-permission:
-  edit: deny
-  task: deny
-  bash:
-    "*": deny
-    "git status": allow
-    "git status --short": allow
-    "git status --short --branch": allow
-    "cd backend": allow
-    "cd frontend": allow
-    ".venv/bin/ruff check .": allow
-    ".venv/bin/mypy app tests": allow
-    ".venv/bin/pytest": allow
-    "npm run lint": allow
-    "npm run typecheck": allow
-    "npm test -- --run": allow
-    "npm run build": allow
-    "node --check scripts/check-contrast.mjs": allow
-    "npm run check:contrast": allow
-    "docker compose build": allow
-    "docker compose up -d": allow
-    "docker compose ps": allow
-    "docker compose logs": allow
-    "docker compose logs *": allow
-    "docker compose down": allow
-    "curl -f http://127.0.0.1:8080/api/v1/health": allow
-    "curl -f http://127.0.0.1:8080/": allow
+permissions:
+  - { action: edit, resource: "*", effect: deny }
+  - { action: subagent, resource: "*", effect: deny }
+  - { action: shell, resource: "*", effect: deny }
+  - { action: shell, resource: "git status", effect: allow }
+  - { action: shell, resource: "git status --short", effect: allow }
+  - { action: shell, resource: "git status --short --branch", effect: allow }
+  - { action: shell, resource: ".venv/bin/ruff check .", effect: allow }
+  - { action: shell, resource: ".venv/bin/mypy app tests", effect: allow }
+  - { action: shell, resource: ".venv/bin/pytest", effect: allow }
+  - { action: shell, resource: ".venv/bin/pytest tests/test_job_retry.py tests/test_jobs.py -q", effect: allow }
+  - { action: shell, resource: ".venv/bin/ruff check app/api/v1/jobs.py app/repositories/jobs.py app/services/job_service.py app/services/queue_manager.py app/services/job_runner.py tests/test_job_retry.py", effect: allow }
+  - { action: shell, resource: ".venv/bin/mypy app/api/v1/jobs.py app/repositories/jobs.py app/services/job_service.py app/services/queue_manager.py app/services/job_runner.py tests/test_job_retry.py", effect: allow }
+  - { action: shell, resource: "npm run lint", effect: allow }
+  - { action: shell, resource: "npm run typecheck", effect: allow }
+  - { action: shell, resource: "npm test -- --run", effect: allow }
+  - { action: shell, resource: "npm run build", effect: allow }
+  - { action: shell, resource: "node --check scripts/check-contrast.mjs", effect: allow }
+  - { action: shell, resource: "npm run check:contrast", effect: allow }
+  - { action: shell, resource: "docker compose build", effect: allow }
+  - { action: shell, resource: "docker compose up -d", effect: allow }
+  - { action: shell, resource: "docker compose ps", effect: allow }
+  - { action: shell, resource: "docker compose logs", effect: allow }
+  - { action: shell, resource: "docker compose logs *", effect: allow }
+  - { action: shell, resource: "docker compose down", effect: allow }
+  - { action: shell, resource: "curl -f http://127.0.0.1:8080/api/v1/health", effect: allow }
+  - { action: shell, resource: "curl -f http://127.0.0.1:8080/", effect: allow }
+  - { action: shell, resource: "*;*", effect: deny }
+  - { action: shell, resource: "*&*", effect: deny }
+  - { action: shell, resource: "*|*", effect: deny }
+  - { action: shell, resource: "*`*", effect: deny }
+  - { action: shell, resource: "*$(*", effect: deny }
+  - { action: shell, resource: "*<*", effect: deny }
+  - { action: shell, resource: "*>*", effect: deny }
+  - { action: shell, resource: "*\n*", effect: deny }
 ---
 
 Türkçe cevap ver.
@@ -44,17 +52,37 @@ başına FAIL nedeni değildir. Kontrollere başlamadan önce `git status --shor
 iki çıktıyı karşılaştır; tracked veya ilgili untracked kaynak dosyalarda
 beklenmeyen bir değişiklik varsa bunu FAIL olarak raporla.
 
-Komutlar (tam biçimleriyle):
+Her shell çağrısında `workdir` parametresini doğrudan ilgili backend/frontend
+çalışma dizinine ayarla ve tek komut gönder. `cd` zinciri veya wrapper kullanma;
+ayrı shell çağrıları arasında çalışma dizininin kalıcı olduğunu varsayma.
 
-- `cd backend && .venv/bin/ruff check .`
-- `cd backend && .venv/bin/mypy app tests`
-- `cd backend && .venv/bin/pytest`
-- `cd frontend && npm run lint`
-- `cd frontend && npm run typecheck`
-- `cd frontend && npm test -- --run`
-- `cd frontend && npm run build`
-- `cd frontend && node --check scripts/check-contrast.mjs`
-- `cd frontend && npm run check:contrast`
+Bounded task için yalnız Lead'in istediği targeted kontrolleri çalıştır.
+Targeted komut izin nedeniyle reddedilirse full suite'e fallback yapma, aynı
+intent'i farklı yazım/wrapper ile tekrar deneme; blocker olarak Lead'e bildir.
+Full gates yalnız Lead'in açık milestone-close bağlamında çalıştırılır.
+
+Targeted komutlar (tam biçimleriyle; shell `workdir`: backend dizini):
+
+- `.venv/bin/pytest tests/test_job_retry.py tests/test_jobs.py -q`
+- `.venv/bin/ruff check app/api/v1/jobs.py app/repositories/jobs.py app/services/job_service.py app/services/queue_manager.py app/services/job_runner.py tests/test_job_retry.py`
+- `.venv/bin/mypy app/api/v1/jobs.py app/repositories/jobs.py app/services/job_service.py app/services/queue_manager.py app/services/job_runner.py tests/test_job_retry.py`
+
+Full gate komutları (tam biçimleriyle; yalnız explicit milestone-close):
+
+Shell `workdir`: backend dizini:
+
+- `.venv/bin/ruff check .`
+- `.venv/bin/mypy app tests`
+- `.venv/bin/pytest`
+
+Shell `workdir`: frontend dizini:
+
+- `npm run lint`
+- `npm run typecheck`
+- `npm test -- --run`
+- `npm run build`
+- `node --check scripts/check-contrast.mjs`
+- `npm run check:contrast`
 
 Docker ile ilgili değişiklik varsa ortamı kontrol öncesindeki durumuna göre
 yönet:

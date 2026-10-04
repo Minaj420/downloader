@@ -6,6 +6,7 @@ format mapping stays backend-side in the stored analysis (ARCHITECTURE.md
 §9–10): the browser can never submit format ids or CLI arguments.
 """
 
+import asyncio
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
@@ -20,6 +21,7 @@ from app.domain.jobs import (
     JobError,
     JobErrorCode,
     JobStatus,
+    job_error_code_retryable,
 )
 from app.models.analysis import AnalysisSession
 from app.models.jobs import DownloadJob
@@ -141,6 +143,74 @@ class JobService:
             return await job_repo.list_jobs(session, actor.id)
 
     async def cancel_job(self, actor: Actor, job_id: str) -> DownloadJob:
+        async with self._queue_manager.lifecycle_lock(job_id):
+            return await self._cancel_job(actor, job_id)
+
+    async def retry_job(self, actor: Actor, job_id: str) -> DownloadJob | None:
+        async with self._queue_manager.lifecycle_lock(job_id):
+            record = await self.get_job(actor, job_id)
+            if record is None:
+                return None
+            if record.status != JobStatus.FAILED.value or not job_error_code_retryable(
+                record.error_code or ""
+            ):
+                raise JobError(JobErrorCode.INVALID_STATE)
+            await self._queue_manager.wait_for_attempt(job_id)
+            # Keep the lock until the transaction, session close and runtime
+            # finalization have a definite outcome, even on repeated request
+            # cancellation. Never forward that cancellation to the operation.
+            operation = asyncio.create_task(self._finalize_retry(actor, job_id))
+            cancelled = False
+            while True:
+                try:
+                    result = await asyncio.shield(operation)
+                    break
+                except asyncio.CancelledError:
+                    if operation.cancelled():
+                        raise
+                    cancelled = True
+                except Exception:
+                    if cancelled:
+                        raise asyncio.CancelledError from None
+                    raise
+            if cancelled:
+                raise asyncio.CancelledError
+            return result
+
+    async def _finalize_retry(self, actor: Actor, job_id: str) -> DownloadJob | None:
+        async with self._session_factory() as session:
+            won = await job_repo.stage_retry_job(session, job_id, actor.id)
+            if not won:
+                if await job_repo.get_job(session, job_id, actor.id) is None:
+                    return None
+                raise JobError(JobErrorCode.INVALID_STATE)
+            event = await activity.add_activity_event(
+                session,
+                job_id=job_id,
+                level="info",
+                event_type="job",
+                message="Retry queued",
+            )
+            record = await job_repo.get_job(session, job_id, actor.id)
+            assert record is not None
+            await session.commit()
+            payload = {
+                "id": event.id,
+                "job_id": event.job_id,
+                "level": event.level,
+                "event_type": event.event_type,
+                "message": event.message,
+                "created_at": utc_isoformat(event.created_at),
+            }
+        self._queue_manager.reset_attempt(job_id)
+        self._bus.publish(
+            {"event": "activity.created", "id": event.id, "data": payload}
+        )
+        self._queue_manager.publish_snapshot("job.updated", record)
+        self._queue_manager.notify()
+        return record
+
+    async def _cancel_job(self, actor: Actor, job_id: str) -> DownloadJob:
         record = await self.get_job(actor, job_id)
         if record is None:
             raise JobError(

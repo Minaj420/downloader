@@ -131,3 +131,17 @@ async def cancel_job(
     except JobError as exc:
         return _error_response(exc)
     return job_to_dto(record).model_dump(mode="json")
+
+
+@router.post("/jobs/{job_id}/retry")
+async def retry_job(
+    job_id: str, http_request: Request, actor: Actor = Depends(get_actor)
+) -> Any:
+    service: JobService = http_request.app.state.job_service
+    try:
+        record = await service.retry_job(actor, job_id)
+    except JobError as exc:
+        return _error_response(exc)
+    if record is None:
+        return _not_found_response()
+    return job_to_dto(record).model_dump(mode="json")

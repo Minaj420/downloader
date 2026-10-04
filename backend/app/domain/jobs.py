@@ -62,6 +62,7 @@ _RETRYABLE_JOB_CODES = frozenset(
         JobErrorCode.INTERNAL_ERROR,
         JobErrorCode.POST_PROCESSING_FAILED,
         JobErrorCode.ANALYSIS_EXPIRED,
+        JobErrorCode.INTERRUPTED_BY_RESTART,
     }
 )
 

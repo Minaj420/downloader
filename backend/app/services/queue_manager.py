@@ -9,6 +9,7 @@ concurrency and runs them. Restart recovery marks previously active jobs as
 import asyncio
 import threading
 from typing import Any
+from weakref import WeakValueDictionary
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -41,6 +42,7 @@ class QueueManager:
         self._processes: ProcessRegistry = {}
         self._cancel_events: dict[str, asyncio.Event] = {}
         self._cancel_gates: dict[str, threading.Lock] = {}
+        self._lifecycle_locks: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
         self._started = False
 
     @property
@@ -89,6 +91,27 @@ class QueueManager:
     def cancel_event_for(self, job_id: str) -> asyncio.Event:
         return self._cancel_events.setdefault(job_id, asyncio.Event())
 
+    def lifecycle_lock(self, job_id: str) -> asyncio.Lock:
+        """Serialize retry/cancel without retaining inactive or unknown IDs.
+
+        Holders and waiters keep strong references (including ``async with``),
+        so every overlapping operation uses the same lock. Lookup/allocation
+        has no await and runs on the single queue event loop.
+        """
+        return self._lifecycle_locks.setdefault(job_id, asyncio.Lock())
+
+    async def wait_for_attempt(self, job_id: str) -> None:
+        task = self._tasks.get(job_id)
+        if task is not None:
+            # A disconnected retry request must not cancel the old runner.
+            await asyncio.shield(task)
+
+    def reset_attempt(self, job_id: str) -> None:
+        """Only after old execution and its helpers have fully unwound."""
+        self._cancel_events.pop(job_id, None)
+        self._cancel_gates.pop(job_id, None)
+        self._processes.pop(job_id, None)
+
     async def request_cancel(self, job_id: str) -> None:
         """Signal cancellation independent of any in-memory job snapshot.
 
@@ -132,6 +155,11 @@ class QueueManager:
             queued = await job_repo.claimable_queued_jobs(session, limit=available)
         for record in queued:
             if record.id in self._tasks or self._stop_event.is_set():
+                continue
+            lock = self._lifecycle_locks.get(record.id)
+            if lock is not None and lock.locked():
+                # Retry's commit may already be visible while its await is
+                # returning. Do not capture the old cancel event before reset.
                 continue
             cancel_event = self.cancel_event_for(record.id)
             self._tasks[record.id] = asyncio.create_task(

@@ -6,6 +6,7 @@ import {
   cancelJob as cancelJobRequest,
   getJob,
   isActiveJob,
+  retryJob,
   useCreateJob,
   type Job,
 } from "../api/jobs";
@@ -21,6 +22,12 @@ import { AUTO_PLATFORM_VALUE } from "../features/new-download/platforms";
 
 const POLL_INTERVAL_MS = 2000;
 
+// Preserve backend sub-millisecond precision (Date.parse alone discards it).
+function snapshotTime(job: Job): string {
+  const fraction = job.updated_at.match(/\.(\d+)/)?.[1] ?? "";
+  return new Date(job.updated_at).toISOString().slice(0, 19) + fraction.padEnd(9, "0");
+}
+
 export function NewDownloadPage() {
   const [url, setUrl] = useState("");
   const [platform, setPlatform] = useState(AUTO_PLATFORM_VALUE);
@@ -35,6 +42,39 @@ export function NewDownloadPage() {
   const activityJobIdRef = useRef<string | null>(null);
   const activityRequestGeneration = useRef(0);
   const [isCancelling, setIsCancelling] = useState(false);
+  const [isRetrying, setIsRetrying] = useState(false);
+  const [retryError, setRetryError] = useState<string | null>(null);
+  const trackedJob = useRef<Job | null>(null);
+  const trackingGeneration = useRef(0);
+  const retryPending = useRef(false);
+  const cancelPending = useRef(false);
+  const retryFloor = useRef<string | null>(null);
+  const retryErrorFloor = useRef<string | null>(null);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      trackingGeneration.current += 1;
+      activityRequestGeneration.current += 1;
+    };
+  }, []);
+
+  const acceptSnapshot = useCallback((updated: Job) => {
+    const current = trackedJob.current;
+    if (!mounted.current || current?.id !== updated.id) return;
+    const time = snapshotTime(updated);
+    if (retryFloor.current != null && time <= retryFloor.current) return;
+    // Equal timestamps cannot order snapshots: conservatively keep current.
+    if (time <= snapshotTime(current)) return;
+    trackedJob.current = updated;
+    setJob(updated);
+    // A newer same-ID attempt disproves the mutation alarm, not job.error.
+    if (retryErrorFloor.current != null && time > retryErrorFloor.current) {
+      retryErrorFloor.current = null;
+      setRetryError(null);
+    }
+  }, []);
   const analyze = useAnalyzeUrl();
   const createJob = useCreateJob();
 
@@ -71,6 +111,16 @@ export function NewDownloadPage() {
         },
         {
           onSuccess: (created) => {
+            if (!mounted.current) return;
+            trackingGeneration.current += 1;
+            trackedJob.current = created;
+            retryFloor.current = null;
+            retryErrorFloor.current = null;
+            retryPending.current = false;
+            cancelPending.current = false;
+            setIsRetrying(false);
+            setIsCancelling(false);
+            setRetryError(null);
             activityRequestGeneration.current += 1;
             activityJobIdRef.current = created.id;
             setJob(created);
@@ -121,33 +171,38 @@ export function NewDownloadPage() {
       return;
     }
     let hasOpened = false;
+    let disposed = false;
     const unsubscribe = subscribeToJobUpdates(
       (updated) => {
-        if (updated.id === jobId) {
-          setJob(updated);
+        if (!disposed && updated.id === jobId) {
+          acceptSnapshot(updated);
         }
       },
       () => {
         // The event stream dropped: refresh authoritative REST state.
-        if (hasOpened) {
+        if (!disposed && hasOpened) {
           void refreshActivity();
         }
       },
       (activityEvent) => {
-        if (activityEvent.job_id === jobId) {
+        if (!disposed && activityEvent.job_id === jobId) {
           setActivityEvents((previous) =>
             mergeActivityEvents(previous, [activityEvent]),
           );
         }
       },
       () => {
+        if (disposed) return;
         // Subscribe first, then close the history/live race with REST.
         hasOpened = true;
         void refreshActivity();
       },
     );
-    return unsubscribe;
-  }, [jobId, refreshActivity]);
+    return () => {
+      disposed = true;
+      unsubscribe();
+    };
+  }, [jobId, refreshActivity, acceptSnapshot]);
 
   const jobActive = job != null && isActiveJob(job.status);
   const pollKey = jobActive ? jobId : null;
@@ -157,10 +212,11 @@ export function NewDownloadPage() {
     }
     let cancelled = false;
     const poll = window.setInterval(async () => {
+      const generation = trackingGeneration.current;
       try {
         const fresh = await getJob(pollKey);
-        if (!cancelled) {
-          setJob(fresh);
+        if (!cancelled && generation === trackingGeneration.current) {
+          acceptSnapshot(fresh);
         }
       } catch {
         // Transient polling failure: the SSE stream or the next poll recovers.
@@ -170,18 +226,70 @@ export function NewDownloadPage() {
       cancelled = true;
       window.clearInterval(poll);
     };
-  }, [pollKey]);
+  }, [pollKey, acceptSnapshot]);
 
   const handleCancel = async () => {
-    const current = job;
-    if (current == null) return;
+    const current = trackedJob.current;
+    if (current == null || cancelPending.current || retryPending.current) return;
+    const generation = trackingGeneration.current;
+    cancelPending.current = true;
     setIsCancelling(true);
     try {
-      setJob(await cancelJobRequest(current.id));
+      const updated = await cancelJobRequest(current.id);
+      if (generation === trackingGeneration.current) acceptSnapshot(updated);
     } catch {
       // Keep the panel as-is; polling will reflect the outcome.
     } finally {
-      setIsCancelling(false);
+      if (mounted.current && generation === trackingGeneration.current) {
+        cancelPending.current = false;
+        setIsCancelling(false);
+      }
+    }
+  };
+
+  const handleRetry = async () => {
+    const current = trackedJob.current;
+    if (current?.status !== "failed" || !current.error?.retryable || retryPending.current || cancelPending.current) return;
+    const generation = ++trackingGeneration.current;
+    retryPending.current = true;
+    const previousFloor = retryFloor.current;
+    retryFloor.current = snapshotTime(current);
+    setIsRetrying(true);
+    retryErrorFloor.current = null;
+    setRetryError(null);
+    const stillTracked = () => mounted.current && generation === trackingGeneration.current;
+    try {
+      const updated = await retryJob(current.id);
+      if (!stillTracked()) return;
+      // SSE may already have observed this attempt progressing or finishing
+      // while the queued HTTP response was in flight.
+      if (trackedJob.current === current) acceptSnapshot(updated);
+      void refreshActivity();
+    } catch (error) {
+      if (!stillTracked()) return;
+      const failureTime = snapshotTime(current);
+      const newerAttemptObserved = trackedJob.current?.id === current.id
+        && snapshotTime(trackedJob.current) > failureTime;
+      retryErrorFloor.current = newerAttemptObserved ? null : failureTime;
+      setRetryError(newerAttemptObserved ? null : error instanceof ApiRequestError
+        ? error.message
+        : "Could not retry the download. Check your connection and try again.");
+      // A lost response may still mean the server accepted the action. Only
+      // read authoritative state; never automatically repeat the mutation.
+      try {
+        const fresh = await getJob(current.id);
+        if (!stillTracked()) return;
+        retryFloor.current = previousFloor;
+        acceptSnapshot(fresh);
+        void refreshActivity();
+      } catch {
+        if (stillTracked()) retryFloor.current = previousFloor;
+      }
+    } finally {
+      if (stillTracked()) {
+        retryPending.current = false;
+        setIsRetrying(false);
+      }
     }
   };
 
@@ -237,6 +345,9 @@ export function NewDownloadPage() {
           job={job}
           isCancelling={isCancelling}
           onCancel={handleCancel}
+          isRetrying={isRetrying}
+          retryError={retryError}
+          onRetry={handleRetry}
           activityEvents={activityEvents}
           activityLoadStatus={activityLoadStatus}
           onRefreshActivity={() => void refreshActivity()}
