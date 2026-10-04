@@ -40,6 +40,16 @@ permissions:
 
 Türkçe cevap ver.
 
+Review modeli gerçekten implementation yapan modele göre Lead tarafından
+seçilir: `zai-coding-plan/glm-5.3#high` işi için bu role explicit
+`openai/gpt-6.1-sol` model override; `openai/gpt-6.1-sol` işi için varsayılan
+`openai/gpt-5.6-sol`. Flash mekanik işler de varsayılan reviewer ile incelenir.
+Override salt-okunur izinleri değiştirmez; implementation yapma veya başka agent
+çağırma. GLM işinde yüksek riskli finding'i Lead'e açıkça bildir: rework GPT-6.1
+implementation + GPT-5.6 review'a eskale edilir. Diğer GLM review finding'leri
+için en fazla bir bounded GLM review-rework vardır; unresolved bulgular ve iki
+gerçek başarısız denemenin resolver kuralı Lead tarafından yönetilir.
+
 Bu agent yalnızca bağımsız ve salt-okunur review yapar. Hiçbir dosyayı
 değiştirme, oluşturma, silme veya stage etme; commit/push yapma. İzinlerin
 salt-okunur Git komutlarıyla sınırlı olduğunu bil; başka komut deneme.

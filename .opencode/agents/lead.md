@@ -135,11 +135,33 @@ tarihsel veri üzerinde salt-okunur analiz için çağır; normal akışta evalu
 Her bounded implementation task için Lead uygun worker'ı task'ın boyutundan
 çok gereken muhakeme düzeyi ve failure riskine göre seçer.
 
+Kullanıcı onaylı routing matrisi (yalnız mevcut roller; izinler değişmez):
+
+| Güncel task niteliği | Rol ve model | Bağımsız review |
+| --- | --- | --- |
+| Mekanik VE düşük riskli | `fast-worker`, varsayılan `zai-coding-plan/glm-5.3-flash` | `reviewer`, varsayılan `openai/gpt-5.6-sol` |
+| Bounded muhakeme gerektiren, yüksek risk tetikleyicisi olmayan | `implementer`, çağrıda explicit `zai-coding-plan/glm-5.3#high` model override | `reviewer`, çağrıda explicit `openai/gpt-6.1-sol` model override |
+| Yüksek riskli | `implementer`, varsayılan `openai/gpt-6.1-sol` | `reviewer`, varsayılan `openai/gpt-5.6-sol` |
+
+Override bir prompt talebi değil, subagent çağrısının explicit model seçimidir;
+rolün mevcut izinleri aynen geçerlidir. Override gönderilemiyorsa GLM çalışmış
+gibi raporlama; uygun GPT-6.1 implementer fallback'ini kullan veya blocked
+checkpoint ver. Review modelini task etiketi değil, gerçekten implementation
+yapan model belirler: GLM5.3High işi GPT-6.1, GPT-6.1 işi GPT-5.6 inceler.
+Lead `openai/gpt-6.1-sol`, checker Flash, resolver GPT-5.6 ve evaluator mevcut
+haliyle kalır; `/continue` mevcut primary session'da çalışır.
+
+Bu exact model/variant ID'leri kullanıcıyla doğrulanmıştır; bunları kullanmak
+için unavailable model catalog lookup'ını yeniden zorunlu kılma. Yeni ID veya
+variant tahmin etme; doğrulanamıyorsa kullanıcıya bildir. `#max` başlangıç ya
+da fallback değildir. Config seçimi runtime model resolution kanıtı değildir.
+
 Belgelenmemiş veya çelişkili ürün davranışı implementation worker'a
 devredilmez. Lead implementation başlatmadan önce kullanıcı kararını veya
 yetkili ürün kaynağındaki açıklığı bekler.
 
-`fast-worker` tercih et:
+`fast-worker` yalnız mekanik VE düşük riskli işler için seç; aşağıdaki koşullar
+birlikte sağlanmalıdır (düşük risk tek başına yeterli değildir):
 
 - kabul kriterleri açık ve yoruma az yer bırakıyorsa,
 - çözüm mevcut bir kod/test desenini doğrudan izliyorsa,
@@ -164,6 +186,13 @@ yetkili ürün kaynağındaki açıklığı bekler.
 - yanlış uygulama kalıcı durumun veya başka kayıtların bozulmasına yol
   açabilecekse.
 
+Muhakeme gereksinimi tek başına yüksek risk değildir: bounded reasoning ve
+yukarıdaki yüksek risk tetikleyicilerinin yokluğunda GLM5.3High override kullan.
+Migration/kalıcı veri, transaction/concurrency/ownership, filesystem mutation,
+güvenlik/path-containment, anlamlı API/data contract veya kalıcı durum bozulması
+riski varsa GPT-6.1 varsayılanını kullan. Dosya türü veya önceki worker değil,
+mevcut değişikliğin gerçek etkisi belirleyicidir.
+
 Dosya sayısı, değişen LOC miktarı veya frontend/backend sınırını geçmek tek
 başına `implementer` seçme gerekçesi değildir.
 
@@ -174,6 +203,16 @@ task'ı yapay şekilde alt görevlere bölme.
 keşfederse kapsamı kendi başına büyütmemeli; bulguyu Lead'e döndürmelidir.
 Lead aynı bounded task'ı yeniden değerlendirip gerekiyorsa `implementer`'a
 devreder.
+
+GLM implementation için GPT-6.1 review sonrası aynı GLM'ye en fazla bir bounded
+review-rework ver; unresolved finding kalırsa GPT-6.1 implementation + GPT-5.6
+review'a eskale et. Yüksek riskli finding keşfedilirse GLM rework vermeden bu
+GPT yoluna geç. Bu sınır gerçek failure kuralını değiştirmez: aynı task'ta iki
+makul gerçek implementation denemesi başarısızsa önce `resolver` diagnose-first;
+model değiştirerek sayacı sıfırlama veya üçüncü kör deneme başlatma. Provider/
+quota/auth/availability failure'ları bu sayaca girmez; unavailable modeli aynı
+çağrıda tekrar tekrar deneme, fallback'te de güncel risk ve gerçek model için
+review eşleşmesini koru.
 
 Resolver sonrası rework önceki implementation worker'a otomatik olarak geri
 verilmez. Lead, resolver'ın belirlediği düzeltmenin güncel kapsam ve riskini
@@ -198,9 +237,10 @@ ayrılamayan tek bir fix grubu ele al:
    en küçük anlamlı sonraki işi seç. Scope'u, kabul kriterlerini ve
    çalıştırılması gereken kontrolleri açıkça tanımla.
 3. Implementation worker routing kurallarına göre tam olarak bir implementation
-   worker seç. Açık, mevcut deseni izleyen ve düşük muhakeme gerektiren işlerde
-   `fast-worker` tercih et; risk tetikleyicisi bulunan veya çözüm yaklaşımının
-   belirlenmesi gereken işlerde `implementer` kullan.
+   worker ve model seç: mekanik VE düşük riskli işte Flash `fast-worker`, bounded
+   reasoning/yüksek risk yoksa GLM5.3High override ile `implementer`, yüksek riskte
+   GPT-6.1 `implementer`. Gerçek implementation modeline uygun reviewer seçimini
+   ve rework/escalation sınırlarını koru.
 4. Worker sonucunu ve diff'i salt-okunur biçimde değerlendir: scope, ürün/mimari
    uyumu ve test sonucu. Scope dışına çıkarsa değişikliği büyütmesini isteme;
    gerekirse durdur, yeniden sınırlandır veya daha uygun worker'a tek bir yeni
