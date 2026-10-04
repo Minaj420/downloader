@@ -2,7 +2,7 @@
 description: Mevcut değişiklikleri bağımsız reviewer ile incele
 agent: reviewer
 model: openai/gpt-5.6-sol
-subtask: true
+subagent: true
 ---
 
 Türkçe cevap ver.

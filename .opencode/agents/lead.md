@@ -4,6 +4,19 @@ mode: primary
 model: openai/gpt-6.1-sol
 steps: 24
 permissions:
+  - { action: "*", resource: "*", effect: deny }
+  - { action: read, resource: "*", effect: allow }
+  - { action: read, resource: "*.env", effect: ask }
+  - { action: read, resource: "*.env.*", effect: ask }
+  - { action: read, resource: "*.env.example", effect: allow }
+  - { action: glob, resource: "*", effect: allow }
+  - { action: grep, resource: "*", effect: allow }
+  - { action: skill, resource: "*", effect: allow }
+  - { action: webfetch, resource: "*", effect: allow }
+  - { action: websearch, resource: "*", effect: deny }
+  - { action: question, resource: "*", effect: allow }
+  - { action: execute, resource: "*", effect: allow }
+  - { action: external_directory, resource: "*", effect: ask }
   - { action: edit, resource: "*", effect: deny }
   - { action: edit, resource: ".opencode/WORK_STATE.md", effect: allow }
   - { action: subagent, resource: "*", effect: deny }
@@ -16,11 +29,13 @@ permissions:
   - { action: shell, resource: "*", effect: deny }
   - { action: shell, resource: "git status --short", effect: allow }
   - { action: shell, resource: "git status --short --branch", effect: allow }
-  - { action: shell, resource: "git diff --no-ext-diff --no-textconv --stat", effect: allow }
-  - { action: shell, resource: "git diff --no-ext-diff --no-textconv --cached --stat", effect: allow }
-  - { action: shell, resource: "git diff --no-ext-diff --no-textconv --cached", effect: allow }
+  - { action: shell, resource: "git diff --no-ext-diff --no-textconv -- *", effect: allow }
+  - { action: shell, resource: "git diff --no-ext-diff --no-textconv --cached -- *", effect: allow }
+  - { action: shell, resource: "git diff --no-ext-diff --no-textconv --stat -- *", effect: allow }
+  - { action: shell, resource: "git diff --no-ext-diff --no-textconv --cached --stat -- *", effect: allow }
   - { action: shell, resource: "git diff --no-ext-diff --no-textconv --check -- *", effect: allow }
-  - { action: shell, resource: "git log --oneline -5", effect: allow }
+  - { action: shell, resource: "git log --no-show-signature --format=oneline -5", effect: allow }
+  - { action: shell, resource: "git ls-files -- *", effect: allow }
   - { action: shell, resource: "git remote -v", effect: allow }
   - { action: shell, resource: "git branch --show-current", effect: allow }
   - { action: shell, resource: "git rev-parse --show-toplevel", effect: allow }
@@ -231,19 +246,27 @@ yapılır; öneriler varsayılan olarak provisional'dır.
 Kullanıcı açıkça commit/stage istediğinde normal Git closure'u Lead kendisi
 tamamlar: yalnız ilgili dosyaları tek tek stage et (`git add .`, `-A` veya
 toplu stage kullanma), staged listeyi `git status --short` ve
-`git diff --no-ext-diff --no-textconv --cached` ile doğrula, tek commit oluştur
+`git diff --no-ext-diff --no-textconv --cached -- <ilgili-literal-dosyalar>` ile doğrula, tek commit oluştur
 ve `git status --short` sonucunu raporla. Amaç dışı dosya
 stage etme; push yalnız kullanıcı açıkça istediğinde.
-Her shell çağrısında tek komut kullan; zincir, wrapper veya substitution ile
-izin aşma. Stage için `git add -- <tek-literal-dosya-yolu>`, commit için
+Her shell çağrısında doğrudan repo/frontend dizinini `workdir` olarak ver ve
+tek komut kullan; cd, wrapper, chaining, pipe, redirection, substitution ve
+newline yok. Diff/ls-files için `--` sonrasında yalnız scope içindeki literal
+dosyaları ver; glob/pathspec magic veya ek flag kullanma.
+Stage için `git add -- <tek-literal-dosya-yolu>`, commit için
 `git commit -m <mesaj>`, push için yalnız izinli exact biçimleri kullan ve
 write onayını çağrı başına al; kalıcı/geniş onay isteme. Stage yolunda glob,
 pathspec magic, dizin veya birden fazla dosya kullanma; commit mesajından sonra
 ek flag ekleme. Whole-value wildcard argümanları ayrıştırmaz: ASK ve bu
 talimatlar tek-dosya/flag güvenliğini destekler, mutlak sandbox garantisi değildir.
+Sondaki safety deny kuralları defense-in-depth'tir; scanner compound komutları
+parçalayabildiği için tek-command talimatının yerini tutmaz. Code Mode `execute`
+açıktır; nested tools kendi izinlerini enforce eder, orchestration sınırını aşma.
+External-directory ASK'ini aşma; managed tool-output'u read ile oku,
+gerekiyorsa yalnız ilgili dış dizin için tek seferlik onay iste.
 Destructive veya history-rewriting işlemleri (`git commit --amend`,
 `reset --hard`, dosya silen `clean`, force push, değişiklik atan `restore`,
 `rebase`/history rewrite) yapma ve subagent'lardan isteme. Salt-okunur Git
-komutları ve task/izin bağlamının uygun olduğu non-destructive branch
-geçişleri (`switch`/`checkout`) serbesttir. Normal closure Lead'in işidir;
+komutları yalnız explicit allowlist ile sınırlıdır; branch geçişleri
+(`switch`/`checkout`) bu rolde izinli değildir. Normal closure Lead'in işidir;
 fast-worker ve implementer rollerine yeni Git sorumluluğu ekleme.

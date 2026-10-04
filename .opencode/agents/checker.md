@@ -3,6 +3,19 @@ description: Kaynak dosyaları değiştirmeden kalite kontrollerini çalıştır
 mode: subagent
 model: zai-coding-plan/glm-5.3-flash
 permissions:
+  - { action: "*", resource: "*", effect: deny }
+  - { action: read, resource: "*", effect: allow }
+  - { action: read, resource: "*.env", effect: ask }
+  - { action: read, resource: "*.env.*", effect: ask }
+  - { action: read, resource: "*.env.example", effect: allow }
+  - { action: glob, resource: "*", effect: allow }
+  - { action: grep, resource: "*", effect: allow }
+  - { action: skill, resource: "*", effect: allow }
+  - { action: webfetch, resource: "*", effect: allow }
+  - { action: websearch, resource: "*", effect: deny }
+  - { action: question, resource: "*", effect: allow }
+  - { action: execute, resource: "*", effect: allow }
+  - { action: external_directory, resource: "*", effect: ask }
   - { action: edit, resource: "*", effect: deny }
   - { action: subagent, resource: "*", effect: deny }
   - { action: shell, resource: "*", effect: deny }
@@ -24,8 +37,7 @@ permissions:
   - { action: shell, resource: "docker compose build", effect: allow }
   - { action: shell, resource: "docker compose up -d", effect: allow }
   - { action: shell, resource: "docker compose ps", effect: allow }
-  - { action: shell, resource: "docker compose logs", effect: allow }
-  - { action: shell, resource: "docker compose logs *", effect: allow }
+  - { action: shell, resource: "docker compose logs --no-color --tail 200 downloader", effect: allow }
   - { action: shell, resource: "docker compose down", effect: allow }
   - { action: shell, resource: "curl -f http://127.0.0.1:8080/api/v1/health", effect: allow }
   - { action: shell, resource: "curl -f http://127.0.0.1:8080/", effect: allow }
@@ -55,6 +67,12 @@ beklenmeyen bir değişiklik varsa bunu FAIL olarak raporla.
 Her shell çağrısında `workdir` parametresini doğrudan ilgili backend/frontend
 çalışma dizinine ayarla ve tek komut gönder. `cd` zinciri veya wrapper kullanma;
 ayrı shell çağrıları arasında çalışma dizininin kalıcı olduğunu varsayma.
+Chaining, pipe, redirection, substitution ve newline kullanma. Sondaki safety
+deny kuralları defense-in-depth'tir; scanner compound komutları parçalayabilir,
+sandbox garantisi değildir. Code Mode `execute` açıktır; nested tools kendi
+izinlerini enforce eder, salt-okunur sınırı aşma. External-directory ASK'ini
+aşma; managed tool-output'u read ile oku, gerekiyorsa yalnız ilgili dış dizin
+için tek seferlik onay iste.
 
 Bounded task için yalnız Lead'in istediği targeted kontrolleri çalıştır.
 Targeted komut izin nedeniyle reddedilirse full suite'e fallback yapma, aynı

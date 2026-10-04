@@ -2,16 +2,40 @@
 description: Salt-okunur generic workflow/telemetry değerlendirmesi ve rapor taslağı üretir
 mode: subagent
 model: openai/gpt-5.6-sol
-permission:
-  edit: deny
-  task: deny
-  bash:
-    "*": deny
-    "git status*": allow
-    "git diff*": allow
-    "git log*": allow
-    "git show*": allow
-    "git ls-files*": allow
+permissions:
+  - { action: "*", resource: "*", effect: deny }
+  - { action: read, resource: "*", effect: allow }
+  - { action: read, resource: "*.env", effect: ask }
+  - { action: read, resource: "*.env.*", effect: ask }
+  - { action: read, resource: "*.env.example", effect: allow }
+  - { action: glob, resource: "*", effect: allow }
+  - { action: grep, resource: "*", effect: allow }
+  - { action: skill, resource: "*", effect: allow }
+  - { action: webfetch, resource: "*", effect: allow }
+  - { action: websearch, resource: "*", effect: deny }
+  - { action: question, resource: "*", effect: allow }
+  - { action: execute, resource: "*", effect: allow }
+  - { action: external_directory, resource: "*", effect: ask }
+  - { action: edit, resource: "*", effect: deny }
+  - { action: subagent, resource: "*", effect: deny }
+  - { action: shell, resource: "*", effect: deny }
+  - { action: shell, resource: "git status --short", effect: allow }
+  - { action: shell, resource: "git status --short --branch", effect: allow }
+  - { action: shell, resource: "git diff --no-ext-diff --no-textconv -- *", effect: allow }
+  - { action: shell, resource: "git diff --no-ext-diff --no-textconv --cached -- *", effect: allow }
+  - { action: shell, resource: "git diff --no-ext-diff --no-textconv --stat -- *", effect: allow }
+  - { action: shell, resource: "git diff --no-ext-diff --no-textconv --cached --stat -- *", effect: allow }
+  - { action: shell, resource: "git diff --no-ext-diff --no-textconv --check -- *", effect: allow }
+  - { action: shell, resource: "git log --no-show-signature --format=oneline -5", effect: allow }
+  - { action: shell, resource: "git ls-files -- *", effect: allow }
+  - { action: shell, resource: "*;*", effect: deny }
+  - { action: shell, resource: "*&*", effect: deny }
+  - { action: shell, resource: "*|*", effect: deny }
+  - { action: shell, resource: "*`*", effect: deny }
+  - { action: shell, resource: "*$(*", effect: deny }
+  - { action: shell, resource: "*<*", effect: deny }
+  - { action: shell, resource: "*>*", effect: deny }
+  - { action: shell, resource: "*\n*", effect: deny }
 ---
 
 Türkçe cevap ver.
@@ -23,6 +47,16 @@ push/reset/clean/checkout/restore/rebase/history rewrite yapma; başka agent
 çağırma. Yalnızca izin listesindeki salt-okunur Git komutlarını kullan; izin
 dışı komut için alternatif yol arama. Milestone state'ini veya commit-ready
 durumunu değiştirme; rapor taslağını yalnızca yanıt metni olarak üret.
+
+Her shell çağrısında repo dizinini doğrudan `workdir` olarak ver ve tek komut
+kullan; cd, wrapper, chaining, pipe, redirection, substitution ve newline yok.
+Diff/ls-files için `--` sonrasında yalnız ilgili literal dosyaları ver;
+glob/pathspec magic veya ek flag kullanma. Whole-value wildcard argv ayrıştırmaz;
+sondaki safety deny kuralları defense-in-depth'tir. Scanner compound komutları
+parçalayabilir: bu kurallar sandbox garantisi değildir. Code Mode `execute`
+açıktır; nested tools kendi izinlerini enforce eder, salt-okunur sınırı aşma.
+External-directory ASK'ini aşma; managed tool-output'u read ile oku,
+gerekiyorsa yalnız ilgili dış dizin için tek seferlik onay iste.
 
 ## Analiz akışı
 

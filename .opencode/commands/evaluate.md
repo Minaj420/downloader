@@ -2,7 +2,7 @@
 description: Task-run ve milestone verisini salt-okunur evaluator ile analiz et
 agent: evaluator
 model: openai/gpt-5.6-sol
-subtask: true
+subagent: true
 ---
 
 Türkçe cevap ver.

@@ -1,7 +1,7 @@
 ---
 description: Projenin kalite kapılarını salt-okunur checker ile çalıştır
 agent: checker
-subtask: true
+subagent: true
 ---
 
 Türkçe cevap ver.

@@ -6,10 +6,12 @@ checkpoint özeti veya hafıza bu dosyayla çelişirse BU DOSYA geçerlidir.
 Geçmiş ayrıntılar için Git geçmişi kullanılmalıdır.
 
 Son güncelleme: 2026-10-04
-Güncelleme nedeni: M4 final milestone review ve fresh full checker PASS.
-Remaining boş, milestone review KAPALI; current source tree için 9/9 full gates
-FRESH/PASS. Backend 498 tests, frontend 117 tests; commit-ready EVET.
-Bu çağrıda production/test/config değişmedi; stage/commit/push yapılmadı.
+Güncelleme nedeni: gerçek /review routing smoke PASS; workflow closure tamam.
+Workflow task COMPLETED/ACCEPTED; remaining Critical/Important boş.
+Yedi agent ve üç command normalize edildi; production/test/model değişmedi.
+Reload kullanıcı tarafından bildirildi; Lead/worker positive smoke PASS.
+Effective-config configured resolution ve gerçek /review dispatch smoke PASS.
+Git write YOK; production/test/config bu çağrıda değişmedi.
 
 Current workflow config: Lead yalnız WORK_STATE üzerinde path-scoped doğrudan
 yazma yetkisine sahiptir; ayrı bookkeeping agent çağrısı kaldırılmıştır;
@@ -17,16 +19,10 @@ WORK_STATE compact current snapshot olarak tutulur. Historical archive semantic
 recovery note tamamlandı (ayrıntı: Historical Archive Status).
 Implementer: GPT-6.1 Sol; fast-worker/checker: GLM-5.3-Flash;
 Lead: GPT-6.1 Sol; reviewer/resolver: GPT-5.6 Sol. Risk bazlı routing değişmedi.
-Checker izinleri native V2 ordered `permissions`: deny edit/subagent/shell,
-mevcut full gates + üç exact M4 targeted allow; ayraç/yönlendirme deny.
-Checker targeted allow eksikliği statik olarak doğrulandı; worker legacy
-wildcard kuralları bulunduğundan worker retlerinin kök nedeni kesinleşmedi.
-Legacy frontmatter V2'de desteklenir; dönüşüm tek başına root-cause iddiası değil.
-Lead shell izinleri (2026-10-03): `.opencode/agents/lead.md` native V2
-permissions; salt-okunur Git exact allow'lar + add/commit/push per-call ASK;
-broad shell yok. Reviewer'ın opsiyonel notu: body'deki "salt-okunur Git
-komutları serbesttir" cümlesi allow listesinden geniş ifadeli (Important değil,
-permission bloğu fiilen engelliyor); ileride metin daraltılabilir.
+Current workflow: yedi agent native V2 explicit permissions; Checker exact full
+gates + üç M4 targeted allow korunur. Lead scoped normal/cached diff ve Git
+write ASK; worker Git write deny. Commands review/checks/evaluate subagent.
+V1 dönüşümü tek başına permission root-cause çözümü iddiası değildir.
 
 ## Active Milestone
 
@@ -118,15 +114,85 @@ explicit kararı; bu bir finding değil, resolved decision kaydıdır):
 Critical: none.
 
 Important: none.
+WF-PERM-I1 RESOLVED (static): üç worker resource `npm test -- --run tests/*`
+ve literal targeted-test talimatı gerçek frontend/tests dizinine uyarlandı.
 
 ## Next Bounded Task
 
-Aktif bounded task: YOK; M4 kapanış doğrulaması tamamlandı.
-WF-M4-TARGETED-PERM COMPLETED; reload sonrası üç exact komut runtime'da çalıştı.
-Next bounded task: YOK — kullanıcı kararı bekleniyor. Explicit stage/commit
-talebi gelirse Lead Git closure; yeni milestone/backlog otomatik başlamaz.
+Aktif bounded task: YOK; WF-PERMISSION-V2-NORMALIZE-1 COMPLETED/ACCEPTED.
+WF-PERM-I1 fix COMPLETED/RESOLVED; scoped review KAPALI/PASS.
+Next: kullanıcı explicit commit/push talebiyle Lead Git closure (11 scoped dosya);
+sonraki ürün/milestone task kullanıcı kararını bekler. /evaluate çalıştırılmadı.
+Command native syntax/semantics ve gerçek /review routing PASS; final review
+KAPALI ve checker PASS. Kaynak değişmedi; full gates tekrar gerekmiyor.
+Kullanıcının repo dizininde debug config/agents çıktısı alındı: yedi custom agent
+native V2 ordered effective policy kaynak yüklemesi teyit edildi; configured
+deny/ASK sınırları doğru. Sınırlı yeni-session positive smoke PASS; destructive
+negative runtime probe yapılmadı, saved approvals/policies bu çıktıdan bilinmez.
+Broad shell izin ekleme veya wrapper yok; yeni /continue beklenir.
 
 ## Review Status
+
+- Gerçek /review background routing smoke reviewer
+  `ses_efb77fe6fffeVH9QOYfKkai9wA` ve `ses_efb77a80dffeYYQsKxLNRsuc44`: PASS;
+  reviewer/openai gpt-5.6-sol, safe literal Git/read erişimleri çalıştı;
+  allowlist dışı diff biçimleri reddedildi. Critical/Important yok, kaynak/edit/
+  Git write/full gate yok. Son acceptance eksikliği RESOLVED; review KAPALI.
+
+- WF-PERM final reviewer `ses_efb7e633affeAGAbmTt4mVqQj0`: KAPALI/PASS,
+  Critical/Important yok. Resmi V2 commands/migrate/permissions/agents belgeleri
+  native `subagent: true` background child semantiğini doğruladı; üç command
+  agent/model referansı korunmuş. Kaynak/read/status/ls-files incelemesi;
+  scoped diff izin reddi tekrar edilmedi. Gerçek slash dispatch yapılmadı.
+- WF-PERM final checker `ses_efb7c4fb2ffePZuDAi5uCadTlU`: current tree fresh
+  9/9 full gates PASS; status öncesi/sonrası birebir aynı. Backend 498 tests,
+  mypy 65 files; frontend 117 tests/5 files; build 91 modules; contrast 20/20.
+  Üç bilinen non-blocking backend deprecation warning. Docker NOT RUN.
+  Source/config mutation yok; checker çağrısı subagent tool, slash dispatch değil.
+
+- Kullanıcı CLI kanıtı (2026-10-04, repo workdir): debug config proje opencode.json
+  ve .opencode kaynaklarını, default_agent lead ve korunmuş title modelini gösterdi.
+  debug agents yedi custom rolün native ordered permissions yüklemesini teyit etti.
+  Son eşleşme: readonly roller edit/subagent deny; workers Git write deny;
+  Lead WORK_STATE-only edit ve altı subagent; add/commit/exact push ASK;
+  amend deny, force-push/reset/restore/rebase allowlist dışı deny. Worker frontend
+  tests/* ve Checker üç M4 targeted biçimleri korunmuş. Configured rule resolution
+  PASS; bu çıktı saved approvals/hard policies veya slash commands içermiyor.
+  Managed-output önceki allow'ları son external_directory * ASK ile override
+  edilmiş: non-blocking friction gözlemi runtime kaynak listesinde teyit edildi.
+
+- Reload sonrası smoke (2026-10-04): kullanıcı reload bildirdi; yeni fast-worker
+  `ses_efb84ad73ffebMoCHYKC88hZQQ` frontend explicit workdir targeted test
+  `npm test -- --run tests/backend-status.test.tsx` PASS (1 file/2 tests).
+  Worker status/scoped diff/read PASS, test öncesi/sonrası status birebir aynı.
+  Lead normal scoped diff ve cached scoped diff PASS (cached boş/stage yok).
+  Yeni source/config edit yok; yalnız Lead bu snapshot'ı güncelledi.
+  Positive allow smoke tamam; effective config identity, deny/ASK ve slash
+  command routing kanıtı değil. Önceden denied debug çağrıları tekrarlanmadı;
+  mevcut allowlist'te opencode debug config/agents bulunmuyor.
+
+- WF-PERM-I1 fast-worker `ses_efb9368eaffep23YwiJdoVEpmq`: yalnız üç worker'da
+  resource ve body test-path düzeltildi; scoped diff-check/grep PASS.
+  frontend workdir `npm test -- --run tests/backend-status.test.tsx` PASS
+  (1 file/2 tests). Production/test kaynakları ve model/routing değişmedi.
+- WF-PERM-I1 reviewer `ses_efb90d33dffeQJsKldJ1TAkKxi`: static RESOLVED/PASS;
+  Critical/Important yok; scoped review KAPALI. Reviewer scoped diff permission
+  denied, aynı intent retry yok; güncel source/read/status ile teyit edildi.
+  Lead scoped diff-check ve altı değişen satır grep doğrulaması PASS.
+  Reload yok; targeted PASS yeni effective policy kanıtı değildir. Genel config
+  review statik bulgusu kapandı, runtime/final closure değerlendirmesi PENDING.
+
+- WF-PERM implementer `ses_efba0ca95ffemhUNdHufEe6KnC`: 10 config dosyası,
+  scoped diff-check PASS; production/test/opencode.json/model/routing aynı.
+- WF-PERM reviewer `ses_efb9a5c83ffeDAaXlDecUqo1BR`: ilk review REWORK REQUIRED;
+  WF-PERM-I1 yukarıdaki scoped re-review ile RESOLVED; Critical yok.
+- Lead scoped diff okuması PASS; frontend test-path finding teyit edildi.
+  `opencode debug config` ve `opencode debug agents` PERMISSION DENIED, process
+  başlamadı; aynı intent retry yok. Implementation failure değil, resolver yok.
+  Effective policy/command parsing/reload/smoke PENDING; full gates koşulmadı.
+- Non-blocking: external_directory `*` ASK managed-output defaults'u override
+  edip friction yaratabilir. Güvenli taşınabilir istisnalar runtime kanıtsız
+  eklenmez. Wildcard/scanner kuralları mutlak sandbox garantisi değildir.
 
 - Current M4 FINAL milestone reviewer `ses_efbb844b4ffeShrDkT6XzXXfMl`:
   PASS/KAPALI; Critical/Important yok. Configured concurrency/multiple queue,
@@ -299,7 +365,16 @@ FORMAT-UX-1; M6-DOC-ARTWORK-1; M3-LIB-1..5.
 
 ## Current Working Tree / Gate Freshness
 
-- CURRENT authoritative full gate kaydı: M4 final current source tree FRESH/PASS.
+- Current WF config tree final checker: FRESH/PASS, 9/9;
+  `ses_efb7c4fb2ffePZuDAi5uCadTlU` 2026-10-04. Remaining boş; reload sonrası
+  positive smoke ve effective configured resolution PASS. Actual /review dispatch
+  PASS; negative destructive probes/saved approvals bilinmiyor (non-blocking).
+  backend Ruff/mypy PASS (65 files), pytest 498 PASS; frontend lint/typecheck
+  PASS, tests 117 PASS (5 files), build PASS (91 modules), node syntax PASS,
+  contrast 20/20 PASS. Status unchanged; sadece ignored cache/build çıktısı.
+  On agent/command dosyası modified; WORK_STATE Lead orchestration update.
+  Production source değişmedi. M4 gate kanıtı workflow runtime closure değildir.
+- Historical authoritative source gate kaydı: M4 final source tree FRESH/PASS.
   Checker `ses_efbaa7843ffewrtNkvPC81AjY6`, 2026-10-04; 9/9 gates:
   backend `.venv/bin/ruff check .` PASS, `.venv/bin/mypy app tests` PASS (65 files),
   `.venv/bin/pytest` PASS (498 tests, 3 non-blocking deprecation warnings).
@@ -383,17 +458,22 @@ FORMAT-UX-1; M6-DOC-ARTWORK-1; M3-LIB-1..5.
 
 ## Commit-Ready
 
-Commit-ready: EVET (Milestone 4). Remaining findings boş; frontend/backend/grup
-ve milestone review KAPALI; current-tree final checker 9/9 full gates FRESH/PASS.
-Stage/commit/push henüz yapılmadı; kullanıcı explicit Git closure talebi beklenir.
+Commit-ready: EVET (WF-PERMISSION-V2-NORMALIZE-1): remaining findings boş,
+final review KAPALI/PASS ve current-tree final checker 9/9 FRESH/PASS.
+Gerçek /review dispatch smoke PASS; production/test/config değişmedi.
+Kullanıcı commit/push explicit yetkisi mevcut; Lead yalnız 11 scoped dosyayı
+tek tek stage edip cached diff doğrulamasıyla tek workflow commit ve normal
+push yapacak; dört untracked archive artifact kapsam DIŞINDA kalır.
+M4 ACCEPTED/COMPLETED ve committed: `3bf1fcc feat: harden download queue with
+safe retry support`, Lead git log/status ile doğrulandı. Yeni stage/commit/push yok.
 Önceki M3 Git closure (2026-10-04): 38 ilgili dosya tek tek stage edildi;
 staged status ve no-ext-diff/no-textconv cached diff doğrulandı.
 Commit `e49d843 feat: add library catalog with safe delete file actions`
 oluşturuldu; `git push origin HEAD` PASS (cff1571..e49d843).
 Önceki workflow commit'i `4c68448` da push edildi; main/origin/main eşit.
 Bu closure anında production source değişmemiş ve M3 gate kaydı geçerliydi;
-M4-QH-1 sonrası artık current-tree kaydı değildir. M4 değişiklikleri stage veya
-commit edilmedi. `.opencode/WORK_STATE.md` local modified; dört
+M4-QH-1 sonrası artık current-tree kaydı değildir. M4 closure `3bf1fcc` ile tamamlandı.
+`.opencode/WORK_STATE.md` local modified; dört
 `.opencode/archive/_*.md` geçici artifact untracked ve kapsam DIŞINDA.
 
 Commit-ready ancak şu ÜÇ koşul BİRLİKTE sağlanırsa EVET olur: remaining
