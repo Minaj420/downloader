@@ -74,3 +74,18 @@ def test_media_files_foreign_key_references_library_items_with_cascade() -> None
     # Catalog-level cascade only (PRODUCT_SPEC.md §21): deleting a library
     # item row removes its catalog rows, never the physical file.
     assert foreign_key.ondelete == "CASCADE"
+
+
+def test_collection_tables_are_registered_with_parent_ownership_and_order() -> None:
+    parent = Base.metadata.tables["download_jobs"]
+    child = Base.metadata.tables["job_items"]
+    assert {
+        "job_type", "total_items", "completed_items", "failed_items",
+        "collection_mode", "collection_profile_json",
+    } <= set(parent.columns.keys())
+    assert "owner_id" not in child.columns
+    fk = next(iter(child.columns["job_id"].foreign_keys))
+    assert fk.target_fullname == "download_jobs.id"
+    assert fk.ondelete == "CASCADE"
+    index = next(i for i in child.indexes if i.name == "ix_job_items_job_source_order")
+    assert [column.name for column in index.columns] == ["job_id", "source_order"]

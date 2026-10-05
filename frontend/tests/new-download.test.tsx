@@ -186,6 +186,16 @@ const collectionResult: NormalizedAnalysis = {
         position: 2,
       },
     ],
+    items: [],
+    selection_scope: "legacy_preview",
+    analysis_window_limit: 25,
+    analyzed_items: 0,
+    selectable_items: 0,
+    selected_item_limit: 200,
+    total_items_known: false,
+    selection_truncated: true,
+    selection_limit_message:
+      "v0.1 allows at most 200 selected items per job. Only selectable items in this analysis snapshot are available; unseen items are not included.",
   },
 };
 
@@ -866,6 +876,11 @@ describe("NewDownloadPage", () => {
     expect(screen.getByText("Track One")).toBeInTheDocument();
     expect(screen.getByText("Track Two")).toBeInTheDocument();
     expect(screen.getByText("Only a preview is shown.")).toBeInTheDocument();
+    // A legacy stored preview is never promoted to choices: it stays
+    // read-only and asks for a re-analysis instead of synthesizing ids.
+    expect(
+      screen.getByText(/This analysis predates selectable items/),
+    ).toBeInTheDocument();
 
     // The collection preview stays read-only: items are plain list rows in
     // the Media Preview panel, never selectable variants.

@@ -1,506 +1,880 @@
 # Active Work State
 
-Bu dosya Lead için kalıcı (durable) ve yetkili (authoritative) current
-state snapshot'ıdır; historical journal DEĞİLDİR. Session inference,
-checkpoint özeti veya hafıza bu dosyayla çelişirse BU DOSYA geçerlidir.
-Geçmiş ayrıntılar için Git geçmişi kullanılmalıdır.
+Bu dosya Lead için kalıcı ve yetkili current snapshot'tır; historical journal
+değildir. Geçmiş ayrıntılar için Git geçmişi kullanılmalıdır.
 
-Son güncelleme: 2026-10-04
-Güncelleme nedeni: gerçek /review routing smoke PASS; workflow closure tamam.
-Workflow task COMPLETED/ACCEPTED; remaining Critical/Important boş.
-Yedi agent ve üç command normalize edildi; production/test/model değişmedi.
-Reload kullanıcı tarafından bildirildi; Lead/worker positive smoke PASS.
-Effective-config configured resolution ve gerçek /review dispatch smoke PASS.
-Git write YOK; production/test/config bu çağrıda değişmedi.
-
-Current workflow config: Lead yalnız WORK_STATE üzerinde path-scoped doğrudan
-yazma yetkisine sahiptir; ayrı bookkeeping agent çağrısı kaldırılmıştır;
-WORK_STATE compact current snapshot olarak tutulur. Historical archive semantic
-recovery note tamamlandı (ayrıntı: Historical Archive Status).
-Implementer: GPT-6.1 Sol; fast-worker/checker: GLM-5.3-Flash;
-Lead: GPT-6.1 Sol; reviewer/resolver: GPT-5.6 Sol. Risk bazlı routing değişmedi.
-Current workflow: yedi agent native V2 explicit permissions; Checker exact full
-gates + üç M4 targeted allow korunur. Lead scoped normal/cached diff ve Git
-write ASK; worker Git write deny. Commands review/checks/evaluate subagent.
-V1 dönüşümü tek başına permission root-cause çözümü iddiası değildir.
+Son güncelleme: 2026-10-05
+Güncelleme nedeni: kullanıcı commit ardından push istedi; Git closure son doğrulama aşamasında.
+Remaining boş, milestone review kapalı, M5 ACCEPTED/COMPLETED ve commit-ready EVET.
+Production/test/config tree gate boyunca değişmedi; yalnız Lead orchestration snapshot güncellendi.
 
 ## Active Milestone
 
-Milestone 4 — Queue Hardening (ARCHITECTURE.md §59): ACCEPTED/COMPLETED (2026-10-04).
-Kullanıcı explicit başlattı.
-Current milestone acceptance: final re-review PASS/KAPALI + fresh full gates PASS.
+Milestone 5 — Playlist / Album (ARCHITECTURE.md §59): ACCEPTED/COMPLETED.
+Aktif implementation milestone/task YOK; sonraki milestone seçilmedi/başlatılmadı.
+Kapsam: parent/child jobs, item selection, source-aware collection profile,
+aggregate progress ve source track ordering; App Library destination.
+M6 naming/metadata/artwork, M7 Plex, M8 device, channel/profile bulk kapsam dışı.
+Yetkili ürün: PRODUCT_SPEC §8–10/17; mimari: ARCHITECTURE §19/23/59.
 
-- M4-QH-1 — Restart interruption retryability: ACCEPTED/COMPLETED.
-  `interrupted_by_restart` merkezi retryability taksonomisine eklendi; restart
-  API ve helper test kanıtı mevcut. Backend pytest 460 passed, ruff PASS,
-  mypy 64 source files PASS. Final M4 milestone review kapsamında kabul edildi.
+Önceki M4 ve M3 ACCEPTED/COMPLETED; commit kayıtları `3bf1fcc`, `e49d843`.
+WF-PERMISSION-V2-NORMALIZE-1/WF-PERM-I1 COMPLETED/ACCEPTED/RESOLVED;
+configured resolution, reload smoke ve gerçek /review routing PASS.
 
-- M4-QH-2 — Owner-scoped atomik backend retry API: ACCEPTED/COMPLETED.
-  Implementer `ses_efc210715ffe6MwdaVg025nAk3` endpoint, CAS state/activity,
-  runtime coordination ve targeted testler ekledi; çalışma ağacında tutuldu.
-  R1/R2 resolved; targeted kontroller PASS, bütün backend retry grubunun final
-  bağımsız review'u PASS / KAPALI (M4 milestone closure değildir).
-- M4-QH-2-R1 — ACCEPTED/COMPLETED / RESOLVED.
-  Implementer `ses_efc14d247fferCvoQ7prd9bF4h`: retry transaction/session-close/
-  runtime finalization shield task'ında; repeated cancellation kesin sonuçtan
-  sonra caller'a iletilir, lifecycle lock o zamana kadar tutulur. Üç cancellation
-  penceresi ve gerçek SQLite commit-failure rollback testleri eklendi.
-  R1-T rework sonrası cancellation ve commit-failure regresyonları dahil
-  targeted pytest 97 passed; scoped Ruff/mypy PASS, independent acceptance PASS.
-  Test event observation activity-first tüketimle uyumlu bariyere alındı;
-  fixture explicit re-export F811'i registration bozmadan giderdi.
-- M4-QH-2-R2 — ACCEPTED/COMPLETED / RESOLVED.
-  QueueManager lifecycle locks weak-value registry; inactive IDs retained değil.
-  Holder/waiter same-lock, request lifecycle/claim guard ve R1 shield korunuyor.
-  Targeted pytest 105 passed (3 bilinen warnings), scoped Ruff/mypy PASS;
-  independent R2 acceptance PASS. Production source değişti: full gates STALE.
-- M4-QH-3 — New Download job-progress Retry aksiyonu: ACCEPTED/COMPLETED.
-  Aynı ID boş retry POST, failed+retryable button, pending/double-submit guard,
-  mutation error/reconciliation, SSE/poll timestamp ve tracking guards eklendi.
-  Activity geçmişi korunuyor. R1/R2/R3 resolved; frontend bütünsel review PASS /
-  KAPALI. QueuePage/Settings değiştirilmedi. Final milestone closure PASS.
-- M4-QH-3-R1 — ACCEPTED/COMPLETED / RESOLVED.
-  Cancel ve Retry karşı operasyon pending iken UI ve senkron handler ref guards
-  ile bloklanır; async generation cleanup ve job-switch korumaları korunur.
-  Targeted New Download+Activity 44 tests, lint/typecheck PASS; bağımsız scoped
-  re-review PASS. R2/R3 bu task'ta değiştirilmedi.
-- M4-QH-3-R2 — ACCEPTED/COMPLETED / RESOLVED.
-  Retry mutation alarmı failure timestamp floor ile izlenir; daha yeni same-ID
-  GET/SSE snapshot alarma karşı attempt kanıtıdır, job.error korunur. Stale GET,
-  failed reconciliation, yeni job/unmount guards ve automatic POST tekrar yasağı
-  korunuyor. Targeted 57 tests, lint/typecheck, independent review PASS.
-- M4-QH-3-R3 — ACCEPTED/COMPLETED / RESOLVED.
-  Ortak acceptSnapshot eşit timestamp'te mevcut state'i korur; SSE/HTTP/GET/poll
-  regressions ve strictly-newer sub-ms kabul testleri dahil targeted 70 tests,
-  lint/typecheck PASS. Independent scoped ve frontend bütünsel acceptance PASS.
-  Bilinen sınırlama: meşru equal-time update de reddedilir; daha yeni snapshot
-  gelmezse UI eski kalabilir. Yeni revision/migration sözleşmesi eklenmedi.
-- M4-QH-4 — ACCEPTED/COMPLETED / RESOLVED.
-  Gerçek API/lifespan/runner ve SQLite terminal kayıtlarıyla kontrollü download
-  bariyerli üç senaryo: concurrency=2 iki active/üçüncü queued, slot boşalınca
-  otomatik progression ve cap; concurrency=1 completion/failure sonrası drain.
-  Targeted 108 tests, scoped Ruff/mypy PASS; independent acceptance PASS.
+## Completed / Current Status
 
-Önceki milestone: Milestone 3 — Library ACCEPTED/COMPLETED (2026-10-03).
-
-- M3-LIB-1, M3-LIB-2, M3-LIB-3, M3-LIB-4, M3-LIB-5: ACCEPTED/COMPLETED.
-- M3-LIB-6-R1: ACCEPTED/COMPLETED — targeted kontroller + independent review PASS.
-- M3-LIB-6-R2: ACCEPTED/COMPLETED — targeted kontroller + independent review PASS.
-- M3-LIB-6-R3: ACCEPTED/COMPLETED — targeted kontroller + independent review PASS.
-- M3-LIB-6-R4: ACCEPTED/COMPLETED — targeted kontroller + independent review PASS.
-- M3-LIB-6-R5: ACCEPTED/COMPLETED — targeted kontroller + independent review PASS.
-- M3-LIB-6-R6: ACCEPTED/COMPLETED — targeted kontroller + independent review PASS.
-- M3-LIB-6 — Delete File backend/storage API foundation: ACCEPTED/COMPLETED.
-  R1–R6 sonrası final grup review ACCEPTANCE PASS + fresh final checker PASS.
-- M3-LIB-7 — Delete File frontend/confirmation: ACCEPTED/COMPLETED.
-  Frontend/milestone review KAPALI / PASS; fresh final checker PASS.
-- M3-LIB-7-R1 stale lastCopy finding'i resolved; mounted success/GET200/404
-  ve read-only retry kabul edildi. R2 route/remount finding'i de resolved.
-
-## Current Product Decision
-
-Same-path Delete File product decision RESOLVED (2026-10-03, kullanıcı
-explicit kararı; bu bir finding değil, resolved decision kaydıdır):
-
-- Shared physical path başka bir katalog kaydı tarafından referanslanıyorsa
-  Delete File fiziksel dosyayı SİLMEZ; işlem bloke edilir ve kullanıcıya
-  neden açıkça gösterilir.
-- Yalnızca seçili kayıt dosyanın TEK referansıysa, explicit confirmation
-  sonrasında fiziksel dosya + seçili katalog kaydı silinebilir.
-- "Delete all references" davranışı M3 kapsamı DIŞINDADIR.
+- M5-FINAL-CHECKER: COMPLETED/PASS. Checker
+  `ses_ef28ac368ffeWNE6XgeqhrLLLm` current tree fresh configured full gates 9/9 PASS;
+  ön/son git status --short --branch birebir aynı, kaynak değişmedi. Lead status doğruladı.
+  Backend Ruff PASS, mypy84 dosya PASS, pytest1466 PASS/4 deprecation warning;
+  frontend lint/typecheck PASS, full147 test/7 dosya PASS, build93 module PASS,
+  contrast syntax PASS ve representative20/20 PASS. Docker source değişmediği
+  için Docker komutu yok; gerçek ağ smoke yok. Remaining boş ve review kapalıyla
+  M5 ACCEPTED/COMPLETED, current tree için commit-ready EVET. Kısmi stage mevcut;
+  commit/push henüz yok. Kaynak değişikliği yok, fresh gates geçerli.
+- M5-INDEPENDENT-MILESTONE-REVIEW: PASS/KAPALI; M5-REVIEW-R1 RESOLVED.
+  Mechanical Worker `ses_ef29834ecffeDZbOGHAm1CHsT3` yalnız PRODUCT_SPEC §17 ve
+  ARCHITECTURE §19/21 current implemented status ve historical assignment ayrımını
+  hizaladı; locked hükümler, unsupported sınırlar ve M5 dışı içerik korundu.
+  Source/test/config delta yok. Canonical scoped diff/check/status ve native status
+  reads PASS; test/full gates yok. GPT5.6 reviewer
+  `ses_ef29c9d97ffe9YbAMpdWyS1mUB` R1 RESOLVED/acceptance PASS, Critical/Important yok.
+  Lead current/historical status okumalarıyla doğruladı. Integrated milestone review
+  kapanmıştır; current-tree final checker/fresh full gates 9/9 PASS, commit-ready EVET.
+- M5-6-COLLECTION-PROGRESS-CONTROLS: COMPLETED/ACCEPTED. GPT6.1 implementer
+  `ses_ef2a57c38ffe0WhbJcyNGjsAn6`: parent gerçek N/C/F + terminal C/N yüzdesi,
+  read-only child sonuç/hata listesi, backend retryable ile failed/cancelled collection
+  parent Retry; single failed-only davranışı korundu. SSE items:null sonrası
+  generation/timestamp korumalı coalesced REST enrichment, terminal final read,
+  eski child facts için explicit last-known/loading/error, Retry floor/state korunur.
+  Delta frontend/src/api/jobs.ts, pages/NewDownloadPage.tsx,
+  features/new-download/JobProgress.tsx, yeni CollectionProgress.tsx ve
+  tests/collection-progress.test.tsx. İlk test turu bölge adı çakışması FAIL;
+  tek bounded düzeltme sonrası targeted86 (16 yeni + 56 single + 14 selection),
+  lint/typecheck ve scoped canonical whitespace PASS. GPT5.6 reviewer
+  `ses_ef2a04618ffeieIjZ25NUek2ft` PASS, Critical/Important yok; Lead diff/source PASS.
+  Backend/API/config/CSS değişmedi; full gates STALE, build/full suite yok.
+  M5.6 iki frontend grubu kabul edildi; M5 milestone review/final checker pending.
+- M5-6-SELECTION-FLOW: COMPLETED/ACCEPTED. GLM5.3#high implementer
+  `ses_ef2c9e21effe9cXhxkbXzd1E6X`: snapshot-scoped stable item selection,
+  selectable-only Select All/Deselect All ve backend 200 cap, truthful window/total,
+  legacy reanalysis fallback, explicit Audio/Video + native Original/Best Available
+  collection create; single variant request ve existing tracking korunur.
+  Delta frontend api/analysis.ts, api/jobs.ts, pages/NewDownloadPage.tsx,
+  features/new-download/AnalysisResult.tsx, yeni CollectionSelection.tsx,
+  tests/new-download.test.tsx, yeni tests/collection-selection.test.tsx.
+  GPT6.1 reviewer `ses_ef2bbac5affeY2kN8jf46mWgCE` ilk Important R1:
+  mutate→pending-render aralığında duplicate POST; resolver
+  `ses_ef2ba801cffea2hqsxUE32nT4C` gerçek notifyManager async yarışını doğruladı.
+  Tek GLM review-rework: senkron create ref guard + onSettled unlock, aynı tick
+  single/collection double-click testleri. Final targeted70/lint/typecheck PASS;
+  reviewer R1 RESOLVED/PASS, remaining Critical/Important yok. Lead diff/source read PASS.
+  Süreç sapması: worker ilk task'ta iki failed validation sonrası resolver beklemeden
+  düzeltmiş; rework'te de failed test sonrası önce Lead'e dönme sınırını aşarak açık
+  microtask-flush test düzeltmesi yapmış. Lead bunu uygun akış olarak onaylamaz;
+  failure counter sıfırlanmadı, R1 rework öncesi resolver çalıştı ve ek GLM turu yok.
+  Runtime model worker GLM5.3#high olarak raporlandı; routing değişmedi/telemetry yok.
+  Progress N/C/F, child status ve parent controls M5.6 sonraki slice; conversion/
+  video ceiling UI eklenmedi. Backend/config/CSS değişmedi; full gates STALE.
+- M5-4B-QUEUE-BINDING: COMPLETED/ACCEPTED, aktif worker YOK. GPT6.1 implementer
+  `ses_ef2e43ea9fferlw42V4335lVpG`: production analyzer/ChildRunnerDeps wiring,
+  single+collection candidate selection ve parent dispatch, ortak global slot sahipliği.
+  Collection deps olmayan legacy/test runtime single-only filtreyi LIMIT öncesi korur.
+  İki failed validation sonrası resolver `ses_ef2d9f764ffeP4Vls6mKfJoh1X`:
+  shutdown monkeypatch eski signature nedeniyle TypeError→Timeout; production hata yok.
+  Resolver-guided wrapper düzeltmesi ve mixed K=1/2 process sınırı, Cancel/CAS/stop
+  selection yarışları, Retry fresh event/gate ve sequential child kabul testleri eklendi.
+  Son bounded test düzeltmesi sonrası targeted765 PASS; fresh scoped Ruff/mypy,
+  canonical diff/check/status/native new-test read PASS. Gerçek ağ smoke/full gates yok.
+  Actual delta: queue_manager.py, repositories/jobs.py, main.py, test_collection_jobs.py,
+  yeni test_collection_dispatch.py, test_collection_shutdown.py signature compatibility.
+  GPT5.6 reviewer `ses_ef2d1d85fffeD6G1WUB7Ij2WrX` PASS, Critical/Important yok.
+  Lead wiring/source/scoped diff doğruladı. Production dispatch artık AKTİF;
+  M5.6 frontend pending, current full gates STALE, M5 commit-ready HAYIR.
+- WF-DIFF-FRICTION-PREVENTION: COMPLETED/ACCEPTED. Mechanical Worker
+  `ses_ef2f28ca9ffeGnYNpHez73IEtL` lead/fast-worker/implementer/reviewer
+  gövdelerine exact canonical diff/workdir/literal-path ve ret kanıtı kuralları ekledi.
+  Ret başka role otomatik yasak değil; aynı intent başka rol/araçla tekrar edilmez.
+  Model, routing, permissions/frontmatter ve önceki Mechanical contract değişmedi.
+  Scoped canonical diff/check/status ve native source karşılaştırması PASS;
+  GPT5.6 reviewer `ses_ef2ed4cbaffe60Lr9oUzveRw6w` PASS, findings yok.
+  Reviewer'ın yanlış WORKSTATE yolu tool.execution idi, permission reddi değildi;
+  doğru canonical yol okundu. Lead scoped diff/source doğruladı. Config validator
+  configured değil, full gates/runtime reload smoke yok. Dosya kaydı runtime'da
+  yeni prompt yüklenmesinin kanıtı değildir; sonraki gerçek görevde dikkate alınır.
+  Production/M5 davranışı değişmedi; next M5-4B-QUEUE-BINDING ve stale gates korunur.
+- DOC-SHUTDOWN-LINE-WRAP: COMPLETED; Mechanical Worker
+  `ses_ef33e5eb2ffekJcXiUhphycETO` yalnız PRODUCT_SPEC.md577–602 ve
+  ARCHITECTURE.md754–776 paragraflarını mevcut boşluklardan kısa satırlara böldü.
+  Kullanıcının eksiksiz metniyle whitespace-normalized içerik/sıra korundu;
+  tek Markdown paragraf, inline code ve çevre içerik değişmedi.
+  Worker scoped diff-check/status/native post-read PASS; Lead iki paragrafın
+  tamamını read ile kesilmeden doğruladı. Kod/test/config değişmedi; test/full
+  gates yok. Yalnız format olduğu için yeni davranış review'u başlatılmadı.
+  M5-4B-QUEUE-BINDING sıradaki bounded task olarak değişmedi, başlatılmadı.
+- M5-5-ORDERLY-SHUTDOWN: COMPLETED/ACCEPTED, aktif worker YOK.
+  Kullanıcı PRODUCT577/ARCH754 eksiksiz metnini sağladı; okuma engeli çözüldü,
+  önceki denied shell tekrarlanmadı. GPT6.1 implementer
+  `ses_ef32d76e7ffesWLeEAik706btJ`: shared cancellation-safe stop, geç claim guard,
+  attempt/API operation ve lock/gate waiter/definite session-close/publication drain;
+  ardından mevcut collection recovery matrisiyle settlement, stop-return öncesi commit.
+  Yapay Cancel marker yok; single business rules/terminal ve queued NULL korunur;
+  dispatch guard açılmadı. Delta: queue_manager.py, job_service.py,
+  collection_persistence.py, yeni test_collection_shutdown.py (44 test).
+  İlk validation'daki test başlangıç yarışları düzeltildi; final targeted657,
+  scoped Ruff/mypy PASS. Worker denied diff tekrar etmedi; Lead source/status okudu.
+  GPT5.6 reviewer `ses_ef318d952ffej7Chl6Njvgya5I` PASS, Critical/Important yok.
+  Normal Uvicorn admission/connection drain lifespan'dan önce; ek admission ürün
+  politikası eklenmedi. Full gates yok; current tree STALE, M5 commit-ready HAYIR.
+- M5-5-SHUTDOWN-SCOPE / SHUTDOWN-DECISIONS-DOC: COMPLETED/ACCEPTED.
+  Scope reviewer `ses_ef34b2883ffexymgfNROgaA1ug` readonly readiness PASS;
+  raporundaki erken 'A seçildi' iddiası Lead tarafından onay sayılmadı. Ana kullanıcı
+  sorusuyla gerçek seçim alındı: full drain sonrası kapanışta kalıcılaştır, DB dispose
+  öncesinde. Kullanıcı docs kabulünden sonra devamı onayladı; bu çağrı tek docs
+  grubuyla sınırlı kaldı, production uygulama sonraki bounded task.
+  Mechanical Flash `ses_ef33e5eb2ffekJcXiUhphycETO`: PRODUCT577, ARCH754/§21note816
+  locked orderly shutdown record. İlk independent review ordering belirsizliğini
+  Important SHUTDOWN-DOC-R1 yaptı; tek literal sentence rework sonrası GPT5.6
+  reviewer `ses_ef3352391ffeubX8oAu0M8YQk2` PASS/R1 RESOLVED, yeni findings yok.
+  Exact sözleşme: stop yeni claims durdurur → collection attempts ve API Cancel/Retry
+  owned work full drain → mevcut recovery matrisiyle durable settlement commit →
+  stop döner → engine.dispose. Yapay User Cancel marker yok; committed terminal,
+  completed çıktı/failed nedenleri/actual counters ve unclaimed queued korunur;
+  marker dalı mevcut Cancel matrisi, single unchanged. Unsupported repair/autoResume/
+  API/schema/force-kill garantisi yok. Scoped whitespace/read/status PASS;
+  docs lint configured değil, test/full gates yok. Shutdown kodu NOT IMPLEMENTED.
+- M5-5-COLLECTION-STARTUP-RECOVERY: COMPLETED/ACCEPTED. GPT6.1 implementer
+  `ses_ef3705022ffeliEkUCvkr9gFP6`: startup-before-claim fresh writer-first recovery,
+  pre-normalization C/F facts önceliği; marker-retained Cancel; gerçek interruption
+  child/parent N/C/F/Activity atomic. Terminal ve normal queued NULL unchanged.
+  STAGED commit, NO_CHANGE/UNSUPPORTED whole rollback; no repair/autoresume.
+  Legacy interruption update single-only, single semantics/dispatch guard unchanged.
+  Failed start _started reset; per-collection independent commits idempotent,
+  sonraki startup hatası önceki başarılı commit'i geri almaz ama claim başlamaz.
+  İki failed validation turu sonrası resolver `ses_ef3689eabffek07rExxvjkIKRZ`
+  diagnose-first: test SQL SET-order matcher yanlış yazımı yakalıyordu. Mechanical
+  `ses_ef364ca7effeoaYLfHCaqvMUkV` resolver-guided matcher/line wrap uyguladı;
+  kalan lost-CAS fixture bulk single update'ı da yakaladığından resolver yeni kanıtla
+  final id-WHERE predicate'i belirledi, tek contract correction ile final669 PASS.
+  Scoped7 Ruff/mypy PASS; production logic bu test rework'lerinde değişmedi.
+  Mechanical SQL-print teşhis tool izin reddi tekrar edilmedi; source traceback/read
+  kanıtı kullanıldı. GPT5.6 reviewer `ses_ef353d838ffe4pSihvgzcKbXaL` PASS;
+  Critical/Important yok. Lead helper/startup/status read PASS. Reviewer scoped
+  commit-ready ifadesi final checker yerine geçmez; M5 commit-ready HAYIR.
+- M5-5-RECOVERY-DECISIONS-DOC / RECOVERY-DOC-R1: COMPLETED/ACCEPTED/RESOLVED.
+  Mechanical Worker Flash `ses_ef37c28a5ffeVTiWr6r5Zj6crx`: yalnız PRODUCT575,
+  ARCH752/802/812; startup'ta precommitted completed/failed facts önceliği ve §21
+  collection exception kaydedildi, single recovery unchanged. Marker Cancel matrisi,
+  completed/error preservation, gerçek counts ve interruption dalı korundu;
+  unknown/cancelled-NULL/corrupt repair/shutdown/autoresume tasarımı eklenmedi.
+  Required reads/scoped diff-check/status/post-read PASS; ilk geçici provider hatası
+  implementation failure sayılmadı, sonraki kontrol PASS. Kod/test/config değişmedi.
+  GPT5.6 reviewer `ses_ef376e944ffeZ9r6IXjnTk3bZI` PASS, R1 resolved; yeni findings yok.
+  Reviewer denied diff retry yapmadı; direct source/status okudu. Lead hedefPRODUCT
+  ve ARCH§21 read PASS; docs lint configured değil, test/full gates koşulmadı.
+- M5-5-RECOVERY-SCOPE: SCOPE/USER DECISION COMPLETED; docs acceptance artık kapalı.
+  Readonly GPT5.6 reviewer `ses_ef39d2e23ffe32AvB6akg771ld`: startup matrisi
+  incelendi, §21 blanket active→interrupted ile committed child terminal facts
+  önceliği için Important ürün açıklığı buldu. Kullanıcı marker olmayan önceden
+  aktif parent'ta tüm child'lar completed/failed commit edilmişse child facts kazanır
+  dedi: nonempty all-completed→completed; F=N→all_children_failed; C>0,F>0,C+F=N
+  →partial_failure. Çıktılar/hata nedenleri/counters korunur. RECOVERY-DOC-R1 resolved:
+  yetkili PRODUCT575/ARCH752 ve §21 kaydı kabul edildi.
+  Diğer sınırlar: recovery claim'den önce; terminal parent unchanged; normal queued
+  NULL marker queued kalır; persisted marker startup'ta clear edilmez ve mevcut
+  Cancel matrisi uygulanır. Kesilen aktif child interrupted_by_restart; queued
+  child ve mevcut failed/completed korunur; parent interruption + actual aggregates
+  atomik. Önceden settled facts dalı interruption normalization'dan önce değerlendirilir.
+  Unknown/empty/corrupt set için repair/terminal/100% uydurulmaz; exact handling
+  implementation kapsamlandırmasında belirsizse Lead'e döner. Auto-resume/Retry yok.
+  Orderly shutdown ayrı bounded scope; sentetik User Cancel seçilmedi.
+  Source/status read doğrulandı; kod/test/docs/config değişmedi, test/gates yok.
+- M5-5-COLLECTION-RETRY: COMPLETED/ACCEPTED. GPT6.1 implementer
+  `ses_ef3bd2bf7ffe3mvVDtsjB3fiTq`: shared child/parent eligibility, caller-owned
+  writer-first atomic subset retry/reset, actual N/C/F ve C/N; completed/ineligible
+  rows/catalog immutable, marker yalnız başarılı reset'te NULL. Lifecycle lock/shield
+  full old-attempt drain → definite commit/close → runtime reset/publication/notify.
+  Repository child-fact preload ile read/list/SSE mapping aynı predicate'e bağlandı;
+  single Retry/known classifier/queue guard unchanged; recovery/activation yok.
+  Targeted7 pytest572 PASS/Ruff PASS; tekrar mypy method-assign FAIL sonrası resolver
+  `ses_ef3b3833dffeBDRjaOz7Nm7jsb` diagnose-first. Mechanical Worker
+  `ses_ef3b0198bffeon6NbTRj6zm7s7` test spy için MonkeyPatch fixture+setattr exact
+  düzeltmesi yaptı: changed test305 PASS, scoped7 Ruff/mypy PASS. Production değişmedi.
+  GPT5.6 reviewer `ses_ef3ad9c75ffew03ygvUsPpqIFU` PASS; Critical/Important yok.
+  Scoped diff izin engeli retry yok; Lead service/helper/mapping read doğruladı.
+  Residual contract limit: error=null terminal parent/cancelled child DTO mevcut
+  şemada error.retryable gösteremez; normal parent persistence error doldurur.
+  Yeni alan/sahte error eklenmedi; frontend cancelled Retry sunumu M5-6 kapsamı.
+- M5-5-RETRY-ELIGIBILITY-DOC: COMPLETED/ACCEPTED. Mechanical Worker Flash
+  `ses_ef3da143dffe7pPNuPACH6js2r`: yalnız PRODUCT_SPEC569/573 ve ARCH715/746/748
+  ile ilgili deferred-classification referansları; cancelled/incomplete/failed code
+  kararları ve parent zarfı kaydedildi. Known failed classifier, completed immutability,
+  existing drain/reset/marker constraints unchanged. Scoped diff-check/status PASS.
+  GPT5.6 reviewer `ses_ef3d59b33ffenxvPrCazHIB3qy` PASS, yeni findings yok;
+  scoped diff permission denied, retry yok; source read/status doğruladı.
+  Lead PRODUCT573 ve ARCH746-750 read PASS. Kod/test/config/migration yok;
+  docs lint configured değil, test/full gates koşulmadı.
+- M5-5-RETRY-ELIGIBILITY-SCOPE: COMPLETED; readonly GPT5.6 reviewer
+  `ses_ef3e3efbbffezW4cbSUrpDtHkq` scope PASS, yeni Critical/Important yok.
+  User-approved kararlar (PRODUCT_SPEC573/ARCHITECTURE748 kaydı ACCEPTED):
+  (1) Cancelled child'ların tümü reason/code ne olursa olsun retry-eligible.
+  (2) Parent Retry yalnız terminal failed/cancelled collection parent'ta; completed,
+  queued/active ve unknown/corrupt parent reddedilir. Full old-attempt drain sonrası
+  queued/analyzing/downloading/post_processing/finalizing child'lar incomplete kabul
+  edilir ve başarılı atomik retry/reset içinde queued hazırlanır; yeni status yok.
+  (3) Failed child missing/unknown persisted error code → ineligible. Known failed
+  code'lar mevcut job_error_code_retryable listesine uyar; liste genişletilmez,
+  transient JobError.retryable persisted code kararını override etmez.
+  Parent eligibility eligible-child existence; aggregate summary code değil.
+  Completed child/çıktılar immutable; recovery normalization/shutdown ayrı scope.
+  Source/read/status doğrulandı; kod/test/docs/config değişmedi, gates çalışmadı.
+- M5-PARENT-RUNNER-REMAINDER: COMPLETED/ACCEPTED; kalan aşama3–6 kapandı.
+  GPT6.1 implementer `ses_ef3f9bfb9ffe1K5fV6uDhVLmVm`: real child JobError CAS
+  recording + Activity/aggregate, queued kardeşlere sıralı devam; completed/failed
+  immutable skip. Mevcut committed C/N reused, post-commit snapshotlar; writer-first
+  nonempty ALL-completed success helper ve dar failure helper entegrasyonu.
+  Marker children-win/F>=1 durable ordering korunur. Accepted Cancel API runner
+  settlement miss'inde fresh owned marked terminal'i döndürür; duplicate terminal
+  Activity/snapshot yok. Slot/drain/definite transaction ownership korunur.
+  EXHAUSTED artık bu attempt'in dar terminal settlement commit'ini ifade eder;
+  SKIPPED/LOST_ELIGIBILITY terminal iddiası değildir. Retry/recovery/dispatch yok.
+  İlk targeted293/11 FAIL, sonra311/1 FAIL: iki gerçek deneme sonrası resolver
+  `ses_ef3f0da27ffeSIOzp646pWeWHR` diagnose-first. Kalan callback100 assertion'ı
+  garanti edilmeyen child SQL write order varsayıyordu; parent C/N hatası değildi.
+  Mechanical Worker `ses_ef3ec3a1effe6GSwZwMUiV2hLx`: child status assertion,
+  unused test import removal ve tek source blank-line; production logic değişmedi.
+  Final targeted7 pytest312 PASS, scoped6 Ruff/mypy PASS; üç mevcut uyarı.
+  GPT5.6 reviewer `ses_ef3e9e1b4ffeVxuEG1e2hUYlXi` PASS; Critical/Important yok.
+  Lead current source/helper/API read ve status doğruladı. Reviewer scoped hazır
+  ifadesi final checker yerine geçmez: M5/current tree commit-ready HAYIR.
+- M5-PARENT-RUNNER-1/2: COMPLETED/ACCEPTED (yalnız kullanıcı onaylı iki aşama).
+  GPT6.1 implementer `ses_ef68d998effeEwR4b9nfK3tyzv`: yeni internal parent runner,
+  caller-owned tek slot/registered attempt/shared event-gate-registry sözleşmesi;
+  runner lifecycle lock tutmaz. Mevcut marker-aware claim commit sonrası raw source
+  order ile child'lar doğrudan sıralı await; completed skip, unsupported/corrupt set
+  reject. Marker/lost eligibility/SKIPPED/error/cancel sonraki child'ı engeller;
+  child full owned drain tamamlanmadan dönmez. EXHAUSTED/SKIPPED/LOST_ELIGIBILITY
+  internal nonterminal sonuçlardır; parent terminal/success/failure ilanı YOK.
+  Yeni parent aggregate/SSE/terminal reducer/retry/recovery/dispatch eklenmedi;
+  mevcut child persistence/aggregate davranışı yalnız reused. Caller slotunu
+  coroutine tamamen dönene kadar tutar; production queue binding yapılmadı.
+  Targeted4 pytest152 PASS, scoped2 Ruff/mypy PASS; ilk fixture hatası düzeltildi,
+  son edit docstring-only. GPT5.6 reviewer `ses_ef688c232ffeOrDSgphC0Yaw9d` PASS;
+  yeni findings yok. Worker/reviewer diff izin engeli retry yok; yeni iki dosya
+  doğrudan read edildi, Lead source/test inventory/status doğruladı. Kalan aşamalar
+  artık yukarıdaki ayrı remainder grubunda kabul edildi.
+- M5-PARENT-CANCEL-LIFECYCLE: COMPLETED/ACCEPTED. GPT6.1 implementer
+  `ses_ef69b8b6fffeI9qw6d7jfjiDrg`: collection-specific durable request commit →
+  event-loop'u bloke etmeyen gate signal → lifecycle lock/owned slot ile drain →
+  caller-owned atomic general settlement ve post-commit Activity/snapshot.
+  Queued/active child cancelled; failed nedenleri ve completed/catalog korunur;
+  nonempty all-completed parent completed, marker kalıcı, gerçek N/C/F.
+  Unknown/incomplete/empty set settlement reddi rollback; yeni politika seçilmedi.
+  Request/settlement write/commit failure explicit rollback; repeated API cancellation
+  owned lifecycle operation tamamlanana kadar shield edilir. Single/retry/recovery/
+  dispatch unchanged. Targeted7 pytest326 PASS, scoped7 Ruff/mypy PASS.
+  İlk iki COMMIT-failure test hatası explicit rollback sonrası geçti.
+  GPT5.6 reviewer `ses_ef6931843ffeDoBOVhZ50YIuuX` PASS; Critical/Important yok.
+  Worker scoped diff permission denied, retry yok; Lead scoped literal tracked diff,
+  helper/queue/service read ve yeni test case inventory doğrulaması PASS.
+- M5-PARENT-CANCEL-DECISIONS-DOC: COMPLETED/ACCEPTED. Mechanical Worker Flash
+  `ses_ef6a36f1dffe6fPqTRbDESbg2n`: yalnız PRODUCT_SPEC569/571 ve ARCH746/748;
+  kullanıcı onaylı drain sonrası child matrisi ve all-completed children-win kaydı.
+  F>=1 failure-race, NULL-marker child CAS, marker kalıcılığı ve guard değişmedi.
+  Required reads, scoped diff-check/post-read/status PASS; test/full gates yok.
+  GPT5.6 reviewer `ses_ef6a051f4ffeWv3SOCnXaesBiP` PASS; yeni findings yok.
+  Reviewer scoped diff permission denied, retry yok; kaynak read/status doğruladı.
+  Lead hedef paragraf read PASS. Kod/test/migration/config/activation değişmedi.
+- M5-PARENT-CANCEL-SCOPE: COMPLETED; readonly scope review GPT5.6
+  `ses_ef6a9455effeaAKX0qTTfT5DnW` PASS, yeni Critical/Important yok.
+  Doğal sonraki implementation grubu: collection parent durable request → commit
+  sonrası signal → owned drain → atomic general Cancel settlement; single flow,
+  retry/recovery ve production dispatch aktivasyonu kapsam dışında.
+  Kullanıcı kararları alındı; yetkili PRODUCT_SPEC571/ARCHITECTURE748 kaydı kabul edildi:
+  drain sonrası queued/aktif child → cancelled; mevcut failed durum/hata nedenleri
+  ve completed child/çıktılar korunur; gerçek N/C/F, yeni cancelled sayacı yok.
+  Tüm child completion'ları commit edilmiş fakat parent success henüz commit
+  edilmemişken Cancel marker commit ederse parent completed olur (children kazanır).
+  Başarı terminali önce commit edilmişse geç Cancel reddi aynen korunur.
+  F>=1 olan failure-race için kilitli durable Cancel/failure önceliği değişmedi.
+  Kod/test/docs değişmedi; kaynak read ve git status doğrulandı; test/full gates yok.
+- M5-PARENT-DURABLE-PERSISTENCE: COMPLETED/ACCEPTED. GPT6.1 implementer
+  `ses_ef6ba8fc2ffebi9S2W5p210gnM`: migration0006 nullable Cancel marker,
+  caller-owned request (STAGED/ALREADY_REQUESTED/REJECTED) ve dar failure settlement;
+  marker-aware claim/forward/progress/completion CAS, gerçek failure exception,
+  stable aggregate errors ve atomic Activity/C/N/F. Targeted7 pytest275/mypy9 PASS.
+  GPT5.6 reviewer `ses_ef6b0de05ffeRBkj1Dh7BHkXyV` PASS; yeni findings yok.
+  Tekrarlanan Ruff E501 için resolver `ses_ef6b1a70bffe5XzJUFcnpveAkK`
+  diagnose-first; Mechanical Worker `ses_ef6af3d80ffeIT8fRBSCrIQhPo` yalnız test
+  decorator sarımı yaptı, scoped Ruff9 PASS. Lead format/helper/migration read ve
+  scoped stat/status doğruladı. Saf format sonrası pytest/mypy yeniden koşulmadı.
+  İlk required-read truncation/permission engeli Lead tam kabul metnini sağlayınca
+  açıldı; bu orchestration failure implementation sayacına girmedi.
+  Runtime/API/retry/recovery/dispatch activation YOK; single-only guard korunur.
+- V01-SECURITY-PATHWAY-DOC: DOCUMENTED / REVIEW PASS; scoped whitespace check BLOCKED.
+  GLM5.3High implementer `ses_ef6bba4b6ffeZgYUQ6Daysptv0`: ARCHITECTURE §59
+  M9 sonrası numarasız Release Security Hardening / Audit stage (dokuz bounded
+  workstream + read-only audit/independent triage/fix routing/release blocker policy);
+  PRODUCT_SPEC §35 kısa release-gate referansı. M0–M9 scope/sırası korunur.
+  GPT6.1 reviewer `ses_ef6b94084ffemrXqZmKoUO1UUD` içerik PASS; yeni findings yok.
+  Lead scoped literal diff/read PASS, status doğrulandı; diff-check permission denied,
+  worker'ın hatalı denied retry'ı implementation failure sayılmadı; tekrar yok.
+  Doc lint NOT CONFIGURED; test/full gates/audit çalışmadı. Security stage PLANNED /
+  NOT STARTED: feature/polish tamamlandıktan, M9 sonundan sonra ve final v0.1
+  acceptance öncesi; ilk audit task'ı başlatılmadı. Docs validation tamamen kapalı değil.
+- PARENT-DESIGN-R2: COMPLETED/ACCEPTED/RESOLVED. Mechanical Worker Flash
+  `ses_ef6c049f4ffeBsJCKabq2Ba0GP`: yalnız ARCH748/750 NEXT ve planned acceptance,
+  tüm marker-aware claim/forward/progress/completion CAS yolları + failure exception
+  hizalandı. Canonical required reads ve üç predeclared check (diff-check/read/status)
+  PASS; code/tests/migration yok. GPT5.6 reviewer `ses_ef6be0d74ffeBQj9qqbWn846VK`
+  R2 ve parent-design group PASS; R1 unchanged. Gerçek görev contract akışı tamamlandı;
+  ayrıntılı latency/token/runtime benchmark üretilmedi.
+- PARENT-DESIGN-R1: COMPLETED/ACCEPTED/RESOLVED. GPT6.1 implementer
+  `ses_ef6c46feefferIDn2BhjARfZ4v`; ARCH739/746/748/750: actual child rows N>0,
+  yalnız completed/failed, F>=1, C+F=N dar primitive predikatı; ineligible tüm
+  transaction rollback ve drain önkoşulu/kabul vakaları açık. GPT5.6 reviewer
+  `ses_ef6c26f58ffeLSS6ZGXKYG1xMO` PASS; scoped ARCH diff-check/read/status PASS.
+  Docs-only: migration/kod/test çalışması yok; R2 unchanged OPEN.
+- WF-MECHANICAL-CONTRACT: COMPLETED/ACCEPTED. Kullanıcı teknik ID `fast-worker`
+  kalmasını onayladı; görünen rol Mechanical Worker, Flash varsayılanı korunur.
+  Yalnız .opencode/agents/lead.md ve fast-worker.md: altı maddelik delegation
+  manifesti + required-read/exact-change/all-checks/report/stop sözleşmesi.
+  GLM5.3High implementer `ses_ef6d52815ffeBP53TDrz0upRjP`; ilk review iki eksik
+  contract maddesi buldu, tek bounded GLM rework sonrası GPT6.1 reviewer
+  `ses_ef6d0fabfffeioeUo63yPfs6Op` PASS/KAPALI. Scoped diff-check/grep/read PASS;
+  Lead final literal diff ile permissions/model/ID unchanged doğruladı.
+  Config validator configured değil. Reload sonrası readonly smoke
+  `ses_ef6cb1247ffewkuCW0p5thCuyY` PASS: Lead yeni manifesti, child yeni execution
+  contract'ı yüklü bağlamında görüyor; model override olmadan runtime bağlamı
+  zai-coding-plan/glm-5.3-flash. İki exact read + git status, child edit yok.
+  Bu context/call kanıtıdır; ham provider log veya gerçek-task davranış benchmark'ı
+  değildir. Sonraki gerçek mekanik görevlerde execution/stop davranışı izlenir.
+- M5-PARENT-LIFECYCLE-DESIGN: DOC DESIGN ACCEPTED (R1/R2 sonrası); NOT IMPLEMENTED.
+  GPT6.1 implementer `ses_ef70336aaffeYKbiUKqKW7PgyM`: yalnız ARCHITECTURE §19
+  nullable durable Cancel marker + shared writer boundary/CAS tasarımı eklendi.
+  Tasarım task'ı docs-only idi; docs diff-check PASS. GPT5.6 review iki Important
+  buldu; R1/R2 ile resolved. Durable internal slice artık yukarıda kabul edildi;
+  parent runtime entegrasyonu henüz başlamadı.
+- M5-TERMINAL-DECISIONS: COMPLETED/ACCEPTED. Kullanıcı kararları PRODUCT_SPEC §17
+  ve ARCHITECTURE §19/20/59'a kaydedildi; fast-worker
+  `ses_ef70b42c5ffe4Mrzcd1blfqPlJ`, reviewer `ses_ef705b524ffeiFw8g6eoANVRXe` PASS.
+  Docs-only diff check PASS; production activation/lifecycle uygulanmadı.
+- WF-ROUTING-MATRIX: COMPLETED/ACCEPTED; implementer
+  `ses_ef71d7993ffel7EP6TXS6nV2WV` GPT-6.1, reviewer
+  `ses_ef71b39fbffeFUXUFfFJIvEBkl` GPT-5.6 PASS. Yalnız lead/implementer/
+  fast-worker/reviewer prompt ve description değişti; izin/default model/rol sayısı
+  ve /continue değişmedi. Lead scoped ve staged diff doğrulaması PASS.
+- WF-ROUTING-RELOAD: COMPLETED (loaded-prompt/call smoke PASS). Kullanıcı reload
+  bildirdi; ana Lead bağlamında yeni matris ve tool açıklamaları mevcut. Readonly
+  implementer `ses_ef71268aaffebzaJNaTguyuJXG` explicit GLM5.3#high çağrısı PASS,
+  loaded Your Model metadata Z.AI/glm-5.3; reviewer `ses_ef711e01fffeWpHQqDrwTg35IR`
+  explicit GPT6.1 çağrısı PASS, loaded metadata openai/gpt-6.1-sol. Child rollerinin
+  yenilenen talimatları mevcut. Bunlar child raporlarıdır; ham provider log kanıtı
+  değildir. #high variant metadata'da görünmez, yalnız requested olarak doğrulandı.
+- M5-PREP-1, M5-DECISION-1, M5-DOC-1: COMPLETED/ACCEPTED/RESOLVED.
+- DRM-FUTURE-DOC: COMPLETED — fast-worker `ses_ef935b0edffeAVP6PgOO64IWi9`
+  yalnız PRODUCT_SPEC §33 backlog item ekledi. Lead source read consistency PASS;
+  implementation/support garantisi yok, §3 no-circumvention kuralı korunuyor.
+- M5-1 ve M5-1-R1: ACCEPTED/COMPLETED. Snapshot item ID + raw slot order,
+  validated selectable URL, truthful totals/known-empty count ve legacy uyumu.
+  Mevcut 25 flat-entry retrieval window selected200 cap'ten ayrıdır.
+- M5-2: ACCEPTED/COMPLETED. Migration0005 parent/child/profile persistence,
+  caller-owned atomic stage ve owner-scoped source-order queries.
+  Legacy single structural1/0/0; synthetic child/Library mutation yok.
+- M5-3: ACCEPTED/COMPLETED. Owned/unexpired snapshot selection, max200,
+  parent+children+Activity atomic create/read; single DTO counters null.
+  Native original_best_available default (SQL NULL), video positive max_height.
+  Conversion profiles henüz desteklenmiyor. Collection queued kalır; single-only
+  claim filtresi LIMIT öncesi uygulanır; frontend collection Download disabled.
+- M5-4A implementer `ses_ef9411a8fffeYnGuJOg2gi7DqK`: COMPLETED / ACCEPTED.
+  Validated single-child metadata probe, no-playlist/skip-download bounded command;
+  backend-only stream normalization ve native selected+companion resolver.
+  Video height/width/FPS/source order ranking; audio extractor worst-to-best sıra.
+  Ceiling için unknown height dışlanır; codec'ler arası bitrate kalite vaadi yok.
+  Targeted117 PASS, scoped5 Ruff/mypy PASS; review üç Important buldu.
+  Collection dispatch/runner/Library/frontend bu task'ta değiştirilmedi.
+- M5-4A-R1 fast-worker `ses_ef93291bdffeLlUSwaSjRGKekQ`: COMPLETED/RESOLVED.
+  normalize_source_formats explicit has_drm=true formatları eler; false/missing
+  ve kalan kaynak sırası korunur. Public normalize_formats/R2/R3 değişmedi.
+  Audio/video/companion/all-DRM regresyonları eklendi; targeted97 PASS,
+  scoped2 Ruff/mypy PASS; independent scoped acceptance PASS.
+- M5-4A-R2 implementer `ses_ef92ce61dffeAckM1OJ9xZmlIh`: COMPLETED/RESOLVED.
+  Label eksenleri bağımsız pozitif/finite integer doğrulanır; zero/int-limit/overflow
+  unknown; keyfî resolution cap yok. Explicit numeric fallback önceliği ve valid
+  single-label identity/dedup korunur. Normalizer/resolver targeted130 PASS,
+  scoped3 Ruff/mypy PASS; independent scoped acceptance PASS.
+- M5-4A-R3 implementer `ses_ef923a0cbffeLvGFtIfR7Ruhqg`: COMPLETED/RESOLVED.
+  Probe owned/shield cleanup repeated cancellation boyunca reap tamamlar; ilk
+  iptal korunur, normal cleanup iptali yutulmaz. Shared kill exit race tolerates,
+  always waits. Controlled repeated-cancel/race/idempotence + real process testleri.
+  İlk targeted koşu fake exit-code hatasıyla FAIL; düzeltme sonrası170 PASS,
+  scoped2 Ruff/mypy PASS. R3 scoped review PASS, group R4 nedeniyle REWORK.
+- M5-4A-R4 fast-worker `ses_ef91b3ab8ffeSvjyTyxlkHYjZj`: COMPLETED/RESOLVED.
+  Backend numeric sanitizer temsil edilemeyen integer alanlarını unknown yapar;
+  downstream float overflow engellenir, stream/source order ve public parser korunur.
+  Yedi numeric alan + sibling/fallback/ceiling regresyonları; targeted139 PASS,
+  scoped3 Ruff/mypy PASS. R4 ve M5-4A group independent acceptance PASS.
+- M5-4B-DESIGN implementer `ses_ef90ebb67ffey7UusExMpLg4xS`: COMPLETED/ACCEPTED.
+  Yalnız ARCHITECTURE.md teknik notu: parent başına bir global slot/sıralı children,
+  committed completion C/N yüzde, child staging/catalog identity ve atomic completion.
+  Guard-preserving runner foundation sonraki bounded task olarak tanımlandı;
+  production execution/control/recovery/queue activation uygulanmadı.
+- M5-4B-FOUNDATION implementer `ses_ef82cf3deffeXA5Yx17pGDjJtQ`:
+  COMPLETED / ACCEPTED. Sequential selected/companion download+merge
+  prepared_media iç sınırına çıkarıldı; single lifecycle/progress/placement/catalog
+  caller'da kaldı. Attempt hooks/helpers drain ve native plan controlled testleri;
+  collection dispatch/CLI/queueguard değişmedi. Scoped Ruff/mypy PASS;
+  Foundation code review ve R1 sonrası targeted168 PASS; acceptance PASS.
+- M5-4B-FOUNDATION-R1 fast-worker `ses_ef823943dffe6GWCE6mw1cOz7K`:
+  COMPLETED/RESOLVED. Catalog startup migration assertion0004->0005; schema/FK
+  garantileri korunur. Yalnız test tek satır; scoped Ruff/mypy PASS.
+- M5-4B-PERSISTENCE implementer `ses_ef815db3dffepOqi4vjIAkg0Pu`:
+  COMPLETED/ACCEPTED. Internal parent claim/owned child CAS, field-scoped pipeline
+  transition/progress ve caller-owned atomic catalog completion+C/N/F aggregates.
+  Stable child catalog identity, immutable completed ve rollback/Delete File race
+  testleri; no runner/dispatch/terminal reducer/retry/recovery activation.
+  Targeted85 PASS; scoped3 Ruff/mypy PASS; independent review PASS.
+  Repeated Ruff I001 diagnose-only resolver `ses_ef8105493ffevDqG3SArLtOugt`;
+  low-risk test import rework fast-worker `ses_ef80f5cdbffepRhnLH0qZJJLer` PASS.
+- M5-4B-CHILD-PIPELINE implementer `ses_ef77074e8ffeJlwN362JraljCW`:
+  IMPLEMENTED / ACCEPTED (R1/R2/R3 sonrası). Internal owned child pipeline ve child-specific
+  playlist/output bounds; single CLI ve queue guard korundu. Parent policy seçilmedi.
+  Placement cancellation failure resolver `ses_ef769d2a9ffe37mxTHxywmsTdw` sonrası
+  kullanıcı talebiyle implementer `ses_ef7533599ffeyTvDxA1TM7wALn` rework yaptı.
+  Final targeted198 PASS, changed6 Ruff/mypy PASS; independent review REWORK.
+  Fast-worker `ses_ef767da7effeaXhmNGmdQSTznK` çağrısı interrupted; orchestration
+  interruption implementation failure değildir; sonraki worker tree'yi inceledi.
+- CHILD-PIPELINE-R1 implementer `ses_ef77b2282ffeLuLZUgNL2yiI8o`:
+  COMPLETED/ACCEPTED/RESOLVED. place_child_final no-follow source/parent descriptors,
+  pinned-copy/prepublish identity check/descriptor-relative unlink; rejected paths
+  mutation görmez. Single place_final aynı; dispatch/runner aktivasyonu yok.
+  Targeted148 PASS, scoped2 Ruff/mypy PASS; independent safety review PASS.
+- CHILD-PIPELINE-R3 implementer `ses_ef731144effefF7aVwWyE2tkrx`:
+  COMPLETED/ACCEPTED/RESOLVED. Aynı publish gate altında thread-safe stopped signal;
+  owned to_thread helper event loop'u bloklamaz, cancel_pending stale completion'ı
+  önler. Repeated cancellation/helper drain ve publish/cancel-wins testleri;
+  targeted77 PASS, scoped2 Ruff/mypy PASS; GPT-5.6 independent review PASS.
+- CHILD-PIPELINE-R2 canary implementer `ses_ef7284c8affe2n5ryKlU8BbzBb`
+  (`zai-coding-plan/glm-5.3#high`): COMPLETED/ACCEPTED/RESOLVED.
+  Safe finite/nonnegative duration (bool/malformed/overflow unknown, zero preserved)
+  ve mevcut platform detector sonucu completion/catalog'a aktarılır. Yalnız runner
+  ve testleri; 22 yeni vaka, targeted85 PASS, scoped2 Ruff/mypy PASS.
+  GPT-6.1 first independent review ve internal child-pipeline group PASS; rework yok.
 
 ## Remaining Critical / Important Findings
 
 Critical: none.
-
 Important: none.
-WF-PERM-I1 RESOLVED (static): üç worker resource `npm test -- --run tests/*`
-ve literal targeted-test talimatı gerçek frontend/tests dizinine uyarlandı.
+M5-REVIEW-R1 resolved; current implementation/historical design statüsü hizalandı,
+reviewer ses_ef29c9d97ffe9YbAMpdWyS1mUB acceptance PASS, milestone review kapalı.
+RECOVERY-DOC-R1 resolved; docs independent review kapalı.
+SHUTDOWN-DOC-R1 resolved; tek doc review-rework sonrası acceptance kapalı.
+CHILD-PIPELINE-R1/R2/R3 resolved; internal group accepted.
+PARENT-DESIGN-R1/R2 resolved; parent-design group review kapalı.
+FOUNDATION-R1 ve M5-4A R1/R2/R3/R4 resolved; kabul kapanışları değişmedi.
 
 ## Next Bounded Task
 
-Aktif bounded task: YOK; WF-PERMISSION-V2-NORMALIZE-1 COMPLETED/ACCEPTED.
-WF-PERM-I1 fix COMPLETED/RESOLVED; scoped review KAPALI/PASS.
-Next: kullanıcı explicit commit/push talebiyle Lead Git closure (11 scoped dosya);
-sonraki ürün/milestone task kullanıcı kararını bekler. /evaluate çalıştırılmadı.
-Command native syntax/semantics ve gerçek /review routing PASS; final review
-KAPALI ve checker PASS. Kaynak değişmedi; full gates tekrar gerekmiyor.
-Kullanıcının repo dizininde debug config/agents çıktısı alındı: yedi custom agent
-native V2 ordered effective policy kaynak yüklemesi teyit edildi; configured
-deny/ASK sınırları doğru. Sınırlı yeni-session positive smoke PASS; destructive
-negative runtime probe yapılmadı, saved approvals/policies bu çıktıdan bilinmez.
-Broad shell izin ekleme veya wrapper yok; yeni /continue beklenir.
+Workflow observation review (kullanıcı talebi): BLOCKED. External transcriptler
+`/Users/minaj/Documents/Codium/tmp/example-2` ve `example-3` için reviewer
+çağrıları `ses_ef32d9976ffe9361CT1hjlgBSn` ve
+`ses_ef32ba57bffeJHs2ELiIdKlSGN` içerik üretmeden orchestration tarafından
+cancelled. İki iptal implementation failure değildir; resolver tetiklenmedi ve
+aynı reviewer/intent üçüncü kez denenmedi. Bu workflow analizi M5 code finding'i
+değildir ve aşağıdaki ürün task'ını bloke etmez; kullanıcı isterse provider/session
+erişimi düzeldikten sonra reviewer ile yeniden başlatılır.
+
+Release-security audit beklemede; doc planlama audit execution yetkisi vermez.
+Aktif worker YOK; internal CHILD-PIPELINE ve WF-ROUTING-MATRIX ACCEPTED;
+WF-MECHANICAL-CONTRACT ACCEPTED (ayrı açık kullanıcı talebi). Gerçek teknik ID
+rename ayrı düşük öncelikli config-cleanup olarak ertelendi, otomatik başlatılmaz.
+Yeni contract reload sonrası loaded-prompt/call smoke PASS; yeniden reload şartı
+yok. Gerçek görevde davranış kalitesi ayrıca gözlenecek; yapay task açılmaz.
+Parent tasarımı ve M5-PARENT-DURABLE-PERSISTENCE ACCEPTED; R1/R2 kapalı.
+Kullanıcı kalan aşama3–6'yı onayladı; internal parent runner grubu kabul edildi.
+Aktif worker YOK. M5.4B production queue binding/dispatch ve M5.5 lifecycle kabul edildi.
+M5.6 selection/native create ve progress/parent controls grupları kabul edildi.
+Next bounded task: GIT-CLOSURE — kullanıcı commit ardından push için açık talep verdi.
+GIT-CLOSURE final execution: 56 ilgili dosya staged; son dosya bu orchestration
+snapshot'tır. Önceki staging grupları canonical cached diff/status ile doğrulandı;
+exhaustive yeniden review yapılmadı, kaynak değişikliği yok; fresh gates geçerli.
+Bu snapshot commit öncesi kayıttır: 57 dosyalık son staged kapsam doğrulaması,
+tek commit ardından origin/main push yetkilidir. Commit/push sonucu Git kanıtıyla
+doğrulanır; bu pre-commit kayıt tek başına başarı iddiası değildir. Başarı halinde
+next bounded task YOK; kullanıcı talebi beklenir. Failure halinde closure açık kalır.
+Dört unrelated archive dosyası dışarıda korunur; M6 seçilmedi/başlatılmadı.
+Remaining boş, review kapalı, current tree final checker PASS → commit-ready EVET.
+Yeni production task gate freshness'i stale yapar. Audit/backlog/evaluator başlamaz.
+Checkpoint'lerde M5.x konumu açık raporlanır.
+Reload/call smoke tamamlandı; ayrı yapay smoke/implementation zinciri başlatma.
+Yapay implementation işi açma; sonraki gerçek uygun M5 görevlerinde onaylı routing
+ile 5–10 görevlik pilotu rework/acceptance üzerinden takip et; telemetry üretme.
+Routing: mechanical+low-risk Flash; bounded reasoning GLM5.3#high/GPT6.1 review;
+high-risk GPT6.1/GPT5.6 review. Checker Flash, Resolver GPT5.6, Evaluator unchanged.
+GLM en fazla bir bounded review rework; yüksek riskte GPT yolu, iki gerçek failed
+attempt sonrası resolver-first. #max fallback değil, exact IDs önceden doğrulanmış.
+Rollback: `git revert b559959` yalnız routing commit'ini geri alır; sonraki aynı
+config editlerinde conflict olabilir. Baseline parent 4d61484d88a224a5e632e25e4fc16724b7ee2e78.
+Commit yalnız .opencode/agents/{lead,implementer,fast-worker,reviewer}.md içerir;
+M5/state/archive dışarıda. Revert zamanı explicit kullanıcı talebi/izin gerekir;
+Lead revert yetkisi varsaymaz, state gerçeğe hizalanır. Push yok.
+All-failed/retry ve cancel-vs-failure ürün kararları LOCKED; bu iki ürün blocker yok.
+Production activation controls/retry/recovery/drain kabulünden sonra tamamlandı;
+collection deps olmayan legacy/test runtime single-only davranışı korunur.
+M5 final closure tamam: independent review kapalı ve fresh full gates 9/9 PASS.
+
+M5 konumu: M5-1/2/3 ve M5-4A tamamlandı; M5-4B internal foundation/persistence/
+child pipeline, parent tasarımı/persistence, Cancel lifecycle ve internal parent runner kabul edildi;
+production collection dispatch aktif ve kabul edildi. M5-5 lifecycle kabul edildi;
+M5-6 frontend bounded grupları kabul edildi; milestone/final gates kapandı.
+M5 kabul konumu:
+- M5-4B production queue binding/dispatch ve M5-5 lifecycle ACCEPTED.
+- M5-6 frontend selection/native-profile/progress, parent-only controls ACCEPTED.
+- Final: independent milestone review ve R1 rework kapalı, fresh full checker PASS.
+Conversion MAY profilleri zorunlu supported matrix olarak uydurulmaz.
 
 ## Review Status
 
-- Gerçek /review background routing smoke reviewer
-  `ses_efb77fe6fffeVH9QOYfKkai9wA` ve `ses_efb77a80dffeYYQsKxLNRsuc44`: PASS;
-  reviewer/openai gpt-5.6-sol, safe literal Git/read erişimleri çalıştı;
-  allowlist dışı diff biçimleri reddedildi. Critical/Important yok, kaynak/edit/
-  Git write/full gate yok. Son acceptance eksikliği RESOLVED; review KAPALI.
-
-- WF-PERM final reviewer `ses_efb7e633affeAGAbmTt4mVqQj0`: KAPALI/PASS,
-  Critical/Important yok. Resmi V2 commands/migrate/permissions/agents belgeleri
-  native `subagent: true` background child semantiğini doğruladı; üç command
-  agent/model referansı korunmuş. Kaynak/read/status/ls-files incelemesi;
-  scoped diff izin reddi tekrar edilmedi. Gerçek slash dispatch yapılmadı.
-- WF-PERM final checker `ses_efb7c4fb2ffePZuDAi5uCadTlU`: current tree fresh
-  9/9 full gates PASS; status öncesi/sonrası birebir aynı. Backend 498 tests,
-  mypy 65 files; frontend 117 tests/5 files; build 91 modules; contrast 20/20.
-  Üç bilinen non-blocking backend deprecation warning. Docker NOT RUN.
-  Source/config mutation yok; checker çağrısı subagent tool, slash dispatch değil.
-
-- Kullanıcı CLI kanıtı (2026-10-04, repo workdir): debug config proje opencode.json
-  ve .opencode kaynaklarını, default_agent lead ve korunmuş title modelini gösterdi.
-  debug agents yedi custom rolün native ordered permissions yüklemesini teyit etti.
-  Son eşleşme: readonly roller edit/subagent deny; workers Git write deny;
-  Lead WORK_STATE-only edit ve altı subagent; add/commit/exact push ASK;
-  amend deny, force-push/reset/restore/rebase allowlist dışı deny. Worker frontend
-  tests/* ve Checker üç M4 targeted biçimleri korunmuş. Configured rule resolution
-  PASS; bu çıktı saved approvals/hard policies veya slash commands içermiyor.
-  Managed-output önceki allow'ları son external_directory * ASK ile override
-  edilmiş: non-blocking friction gözlemi runtime kaynak listesinde teyit edildi.
-
-- Reload sonrası smoke (2026-10-04): kullanıcı reload bildirdi; yeni fast-worker
-  `ses_efb84ad73ffebMoCHYKC88hZQQ` frontend explicit workdir targeted test
-  `npm test -- --run tests/backend-status.test.tsx` PASS (1 file/2 tests).
-  Worker status/scoped diff/read PASS, test öncesi/sonrası status birebir aynı.
-  Lead normal scoped diff ve cached scoped diff PASS (cached boş/stage yok).
-  Yeni source/config edit yok; yalnız Lead bu snapshot'ı güncelledi.
-  Positive allow smoke tamam; effective config identity, deny/ASK ve slash
-  command routing kanıtı değil. Önceden denied debug çağrıları tekrarlanmadı;
-  mevcut allowlist'te opencode debug config/agents bulunmuyor.
-
-- WF-PERM-I1 fast-worker `ses_efb9368eaffep23YwiJdoVEpmq`: yalnız üç worker'da
-  resource ve body test-path düzeltildi; scoped diff-check/grep PASS.
-  frontend workdir `npm test -- --run tests/backend-status.test.tsx` PASS
-  (1 file/2 tests). Production/test kaynakları ve model/routing değişmedi.
-- WF-PERM-I1 reviewer `ses_efb90d33dffeQJsKldJ1TAkKxi`: static RESOLVED/PASS;
-  Critical/Important yok; scoped review KAPALI. Reviewer scoped diff permission
-  denied, aynı intent retry yok; güncel source/read/status ile teyit edildi.
-  Lead scoped diff-check ve altı değişen satır grep doğrulaması PASS.
-  Reload yok; targeted PASS yeni effective policy kanıtı değildir. Genel config
-  review statik bulgusu kapandı, runtime/final closure değerlendirmesi PENDING.
-
-- WF-PERM implementer `ses_efba0ca95ffemhUNdHufEe6KnC`: 10 config dosyası,
-  scoped diff-check PASS; production/test/opencode.json/model/routing aynı.
-- WF-PERM reviewer `ses_efb9a5c83ffeDAaXlDecUqo1BR`: ilk review REWORK REQUIRED;
-  WF-PERM-I1 yukarıdaki scoped re-review ile RESOLVED; Critical yok.
-- Lead scoped diff okuması PASS; frontend test-path finding teyit edildi.
-  `opencode debug config` ve `opencode debug agents` PERMISSION DENIED, process
-  başlamadı; aynı intent retry yok. Implementation failure değil, resolver yok.
-  Effective policy/command parsing/reload/smoke PENDING; full gates koşulmadı.
-- Non-blocking: external_directory `*` ASK managed-output defaults'u override
-  edip friction yaratabilir. Güvenli taşınabilir istisnalar runtime kanıtsız
-  eklenmez. Wildcard/scanner kuralları mutlak sandbox garantisi değildir.
-
-- Current M4 FINAL milestone reviewer `ses_efbb844b4ffeShrDkT6XzXXfMl`:
-  PASS/KAPALI; Critical/Important yok. Configured concurrency/multiple queue,
-  retry, restart/failure ve frontend guard/reconciliation bütünsel kabul edildi.
-  Final checker `ses_efbaa7843ffewrtNkvPC81AjY6`: 9/9 fresh gates PASS,
-  kaynak Git status checks öncesi/sonrası aynı. Milestone review KAPALI.
-- Current M4-QH-4 implementer `ses_efbb29051ffeu9R5TZ4Bw6rzAL`:
-  yalnız backend/tests/test_jobs.py; gerçek backend targeted komutlar
-  `.venv/bin/pytest tests/test_job_retry.py tests/test_jobs.py -q` PASS108
-  (3 bilinen warnings), `.venv/bin/ruff check tests/test_jobs.py` PASS,
-  `.venv/bin/mypy tests/test_jobs.py` PASS; local Ruff B023/mypy lambda düzeltildi.
-  Reviewer `ses_efbaed292ffezG2fFruueEWh2t`: ACCEPTANCE PASS; Critical/Important
-  yok; bariyer/cleanup, cap ve automatic progression yeterli, önceki assertions
-  zayıflatılmadı. Scoped diff-check PASS. QH-4 review KAPALI;
-  güncel milestone/final checker sonucu yukarıda.
-- Önceki M4 milestone reviewer `ses_efbb844b4ffeShrDkT6XzXXfMl`:
-  REWORK REQUIRED; Critical yok, Important M4-QH-4. Backend/frontend retry,
-  restart/failure davranışları ve checker izin değişimi statik kabul; somut
-  production kusuru bulunmadı. Concurrency=2 upper bound ve slot boşalınca queued
-  job progression/drain için test kanıtı eksik. Milestone review AÇIK.
-  Salt-okunur kaynak/test incelemesi; test çalıştırılmadı, kaynak değiştirilmedi.
-- Current M4-QH-3-R3 implementer `ses_efbbf99eeffeCwqJSXoEMHBTPT`:
-  NewDownloadPage.tsx + new-download.test.tsx; targeted
-  `npm test -- --run tests/new-download.test.tsx tests/activity-panel.test.tsx`
-  ilk 68 PASS/2 FAIL test timer kurulumu, düzeltme sonrası 2 files/70 tests PASS;
-  `npm run lint`, `npm run typecheck` PASS. Full tests/build çalıştırılmadı.
-  Reviewer `ses_efbbbeb6fffe1qwc9CIvNs6Gb0`: R3 scoped ve R1/R2/R3 sonrası
-  frontend bütünsel acceptance PASS, yeni Critical/Important yok. Frontend grup
-  review KAPALI; güncel milestone sonucu yukarıda. Lead kaynak/test okuması PASS;
-  Git scoped diff permission denied, aynı intent tekrarlanmadı.
-- M4-QH-3-R2 implementer `ses_efbc5782cffeNPHewvUH72mPlA`: yalnız
-  NewDownloadPage.tsx + new-download.test.tsx. Gerçek targeted komut
-  `npm test -- --run tests/new-download.test.tsx tests/activity-panel.test.tsx`
-  PASS (2 files/57 tests), `npm run lint`, `npm run typecheck` PASS.
-  Reviewer `ses_efbc2e727ffeNrp1jt1Q5AvjpZ`: scoped ACCEPTANCE PASS;
-  yeni Critical/Important yok; R2 review KAPALI (grup güncel sonucu yukarıda).
-- M4-QH-3-R1 implementer `ses_efbce16a7ffeeropt63dZos7kF`:
-  NewDownloadPage/JobProgress/new-download.test scope. İlk scoped review ters
-  yön pending Retry→Cancel riskini aynı doğal mutation koruma grubunda buldu;
-  karşılıklı UI disable+handler guard rework sonrası reviewer
-  `ses_efbcc0a10ffe5ncfPaRTYUepr7` ACCEPTANCE PASS; yeni Critical/Important yok.
-  `npm test -- --run tests/new-download.test.tsx tests/activity-panel.test.tsx`
-  PASS (2 files/44 tests), `npm run lint`, `npm run typecheck` PASS.
-  R1 scoped review KAPALI (grup güncel sonucu yukarıda).
-- M4-QH-3 implementer `ses_efbd87d39ffeNmA6P6zNTBJdZA`: frontend 4-file scope.
-  Gerçek komut `npm test -- --run tests/new-download.test.tsx tests/activity-panel.test.tsx`
-  PASS (2 files/41 tests); `npm run lint` PASS, `npm run typecheck` local test
-  type fix sonrası PASS. Full tests/build çalıştırılmadı; Lead diff-check PASS.
-  Reviewer `ses_efbd327f4ffeuw2gNDsqD0qvem`: REWORK REQUIRED, üç Important
-  R1/R2/R3; Critical yok, frontend grup review AÇIK. Lead reviewer prompt'unda
-  activity.test.tsx yanlış yazmıştı; worker exact komutu activity-panel.test.tsx
-  olarak teyit etti, targeted sonuç gerçek. Reviewer test yeniden koşmadı.
-- M4-QH-2 final backend grup reviewer `ses_efbdbe6aeffekMJ4rNE6TX25Id`:
-  ACCEPTANCE PASS; Critical/Important yok; API/domain/repository/service/queue/
-  runner ve tracked/untracked testler bütünsel incelendi. Owner isolation,
-  CAS+activity transaction, shield cancellation, helper drain, weak registry,
-  restart retry ve stored selection uyumu kabul. Grup review KAPALI;
-  frontend retry ve diğer M4 kapsamı henüz yapılmadı, milestone review AÇIK.
-  Testler yeniden koşulmadı; mevcut current-tree targeted PASS kanıtı kullanıldı.
-- M4-QH-2-R2 implementer `ses_efbe615e1ffeGOgQsSGbeCjyF5`:
-  yalnız queue_manager.py + test_job_retry.py. İlk targeted mypy test-only
-  None narrowing nedeniyle FAIL; minimal assert lock is not None rework sonrası
-  checker `ses_efbe164f7ffeNPAbPHYCxMjeGN` pytest 105 passed (3 bilinen warnings),
-  scoped Ruff/mypy PASS (6 files), source status aynı. Reviewer
-  `ses_efbdfdc9affe2Yk790bYIszH0K`: independent R2 acceptance PASS;
-  yeni Critical/Important yok, R2 kapatılabilir. R2 scoped review KAPALI;
-  backend retry grup review ve M4 milestone review AÇIK.
-- M4-QH-2-R1-T fast-worker `ses_efbfccfa6ffeOLMN10n3THq1g4`: test-only rework.
-  Activity-first subscriber observation diagnosis doğru; ilk fixture alias
-  rework 27 setup errors üretti. İkinci gerçek failure sonrası resolver
-  `ses_efbef6c69ffeXbswToKfoV5uwW` registration kök nedenini teşhis etti;
-  düşük riskli explicit re-export fix fast-worker ile uygulandı.
-  Checker `ses_efbe9ba94ffebrrnC64DRNPLUe`: targeted pytest 97 passed (3 bilinen
-  deprecation warnings), scoped Ruff PASS, mypy PASS (6 files); source aynı.
-  Reviewer `ses_efbe80566ffeYp3cpkba2B3nMe`: independent acceptance PASS;
-  assertion anlamı korunmuş, R1 kapanabilir, yeni Critical/Important yok.
-  R1 review KAPALI; R2 ve backend retry grup review AÇIK.
-- Reload sonrası checker `ses_efc02ce0effe06ifA61OnKHR1I`: targeted acceptance
-  FAIL; pytest 3 failed/94 passed, Ruff 12 F811, mypy PASS (6 source files).
-  Önce/sonra source Git status aynı. Runtime exact izin etkinliği doğrulandı;
-  wrapper/fallback/full suite yok. R1 statik review kaydı test FAIL'i kapatmaz.
-- WF-M4-TARGETED-PERM implementer `ses_efc08237cffe1fGea6jW3nuaiF`:
-  yalnız checker.md, model/routing ve production değişmedi. Reviewer
-  `ses_efc05dc78ffeNiHlmxuY6v8ia6`: statik PASS, yeni Critical/Important yok;
-  config grup review KAPALI. Lead scoped diff-check PASS. Automated YAML/matcher
-  komutu permission denied: çalıştırılmadı; sonradan reload sonrası targeted
-  komutların gerçek çalışması runtime izin etkinliğini doğruladı.
-- M4-QH-2-R1 reviewer `ses_efc118012ffebZSlH8zX0mkomo`: source statik review
-  PASS; ardından test_job_retry.py doğrudan read ile bağımsız test-code review
-  PASS. Critical/Important yeni bulgu yok; R1 statik kapanmış görünüyor ancak
-  dinamik validation eksikliği nedeniyle durable finding verification-pending.
-  Lead scope/read ve scoped Git diff-check PASS. Targeted test/Ruff/mypy
-  çalıştırılmadı; önceki permission-denied intent tekrarlanmadı, full suite yok.
-- M4-QH-2 reviewer `ses_efc18937fffe3DU4D39sXm0KwD`: REWORK REQUIRED;
-  R1 cancellation safety ve R2 lock registry Important; Critical yok.
-  Salt-okunur statik inceleme; targeted testler çalışmadı. Grup review AÇIK.
-- M4-QH-2 checker `ses_efc1a4634ffeTpcW4ADBCsMn5K`: TARGETED VALIDATION
-  BLOCKED. Backend `.venv/bin/pytest tests/test_job_retry.py tests/test_jobs.py -q`,
-  scoped Ruff ve scoped mypy permission denied; PASS/FAIL yok. Kaynak ağacı
-  öncesi/sonrası aynı. Full suite/wrapper fallback yapılmadı. İzin sorunu
-  implementation failure değildir; resolver tetiklemez.
-- M4-QH-1 Lead scope/spec incelemesi PASS: yalnız merkezi retryability seti ve
-  targeted test kanıtı değişti. Checker `ses_efc292a0cffeKL8vKeCg7V5iCm`:
-  kaynak ağacı değiştirmeden backend pytest 460 passed (2 bilinen deprecation
-  warning), full backend ruff PASS, mypy PASS (64 source files). İzin politikası
-  targeted komutları reddettiği için izinli backend süper-kümeleri çalıştırıldı;
-  bu milestone-close/final checker değildir. M4 milestone review AÇIK.
-- Lead Git/shell izin config review `ses_efd6ec75effepHFr1KeHdQ4Fej`:
-  ilk tur Important (geniş `git diff/log/show/fetch` wildcard allow'ları)
-  → daraltma sonrası re-review BULGU KAPANDI; yeni Critical/Important yok.
-  Statik doğrulama; canlı policy testi yok, reload caveat'i geçerli.
-  Daraltma implementer usage limit nedeniyle fast-worker fallback
-  `ses_efd45200cffe05OabEmLVJIrPC` ile yapıldı (provider hatası sınıfı).
-- Milestone 3 independent final review `ses_efd8db662ffepOGemDgl30Nmpn`:
-  ACCEPTANCE PASS; Critical/Important yok; milestone review KAPALI.
-  Reviewer Git tool izni reddedildi; mevcut sources/migration/tests'i
-  salt-okunur doğrudan inceledi. Lead current Git status/diff scope'u gördü.
-- M3-LIB-7 independent re-review `ses_efd912f53ffecMMnngWSN6MKnG`:
-  ACCEPTANCE PASS; Critical/Important yok; frontend grup review KAPALI.
-  R1/R2, shared guard/cache generation, router regressions, confirmation ve
-  DELETE/GET hata ayrımı kabul edildi. Reviewer Git tool izni reddedildi;
-  kod/test okuması ile inceledi, Lead scoped diff-check PASS. Milestone
-  final milestone review ve checker aşağıdaki fresh kayıtla tamamlandı.
-- M3-LIB-6 current-tree final grup review `ses_efdc610c1ffeQSf3z6fiYyShj6`:
-  ACCEPTANCE PASS; Critical/Important yok; grup review KAPALI.
-- M3-LIB-6 independent final grup review `ses_efdf9e962fferBUdpoEpKG84DT`:
-  tarihsel REWORK REQUIRED; R5/R6 scoped kabul ile kapandı.
-  Reviewer macOS case-insensitive alias reproduksiyonunu ve blocking FIFO
-  open nedenini kod üzerinden bildirdi; bu çağrıda dinamik repro yapılmadı.
-- R6 independent scoped review `ses_efde081afffe20SqY531Y27HgK`:
-  ACCEPTANCE PASS; Critical/Important yok. Gerçek writersız FIFO'nun
-  nonblocking fstat reddi, syscall öncesi hang guard, FD temizliği, unlink
-  yokluğu ve API sonrası bağımsız SQLite transaction/lock-release yeterli.
-- R5 independent scoped review `ses_efde8974bffeU3tbz7mk7le4fL`:
-  ACCEPTANCE PASS; Critical/Important yok. Same-entry case/cross-storage,
-  cross-owner reference block, missing lexical fallback ve DTO caller uyumu
-  yeterli. Inode eşleşmesi konservatif; yeni hardlink ürün davranışı yok.
-- R1 independent scoped review `ses_efe18e62effeMjIPRiCUwWj3bT`:
-  ACCEPTANCE PASS; Critical/Important yok. Writer lock/identity protokolü,
-  gerçek waiting insert ve completion rollback test kanıtı yeterli bulundu.
-- R2 independent scoped review `ses_efe10cc13ffezq2FWTOSt39sXT`:
-  ACCEPTANCE PASS; Critical/Important yok. Frozen startup alias/canonical
-  replay, same-inode substitution ve FD cleanup testleri yeterli bulundu.
-  Alias check/replay TOCTOU canlı link'i takip etmediği için Important değil;
-  belgelenmiş POSIX same-parent verify/unlink residual race değişmedi.
-- R3 independent scoped review `ses_efe08ce27ffegji8v21po05957`:
-  ACCEPTANCE PASS; Critical/Important yok. Dar typed-error eşlemesi,
-  programming-error propagation, errno API testleri ve rollback/FD cleanup
-  yeterli; target preparation STORAGE_ERROR davranışı korundu.
-- R4 independent scoped review `ses_efdfe36e5ffeoOXDThw0RLW9NK`:
-  ACCEPTANCE PASS; Critical 0 / Important 0. Native primary/extended code,
-  code-message precedence, four pre-unlink phases, rollback ve post-unlink
-  consistency davranışı kabul edildi. Grup final onayı değildir.
-- WF-R1-PERMISSION-MIN: mekanik, iki exact allow kuralı ve operational
-  not; Lead scoped diff incelemesi PASS, independent review gerekmedi.
-- WF-IMPLEMENTER-MODEL-6.1: tek model satırı değişikliği; Lead scoped diff
-  incelemesi/diff-check PASS, independent review gerekmedi. Kullanıcı reload
-  bildirdi; yeni worker model kimliğini göremedi, runtime teyidi yok.
-- WF-R1-RUN-BAN-REMOVE: mekanik tek satır config düzeltmesi; Lead scoped
-  diff incelemesi/diff-check PASS, independent review gerekmedi.
-
-Kapanmış task'lar (açık Critical/Important finding YOK): M2; workflow
-task'ları WF-EVAL-1, WF-EVAL-APPEND-1, WF-SIMPLIFY-1, GIT-POLICY-1,
-WF-CONTRAST-PERM-1, WF-TELEMETRY-FREEZE-1, WF-LEAD-ROUTING-1,
-WF-WORK-STATE-SIMPLIFY-1, WF-LEAD-MODEL-6.1, WF-IMPLEMENTER-MODEL-6.1
-ve WF-R1-RUN-BAN-REMOVE;
-UI-01, UI-02, UI-A11Y-1,
-UI-A11Y-2, UI-03;
-FORMAT-UX-1; M6-DOC-ARTWORK-1; M3-LIB-1..5.
+M5-INDEPENDENT-MILESTONE-REVIEW reviewer `ses_ef29c9d97ffe9YbAMpdWyS1mUB`
+GPT5.6: PASS/KAPALI; R1 RESOLVED, Critical/Important none. Integrated production/
+test review ve docs-status rework acceptance tamam; scoped whitespace PASS.
+Test/full gate reviewer tarafından koşmadı; ayrı current-tree final checker 9/9 PASS.
+M5-6-COLLECTION-PROGRESS-CONTROLS reviewer `ses_ef2a04618ffeieIjZ25NUek2ft`
+GPT5.6: PASS/KAPALI, Critical/Important yok. Beş dosya, untracked kaynaklar ve
+REST/SSE/control yarışları incelendi; scoped diff-check PASS. Reviewer test tekrar
+koşmadı; worker targeted86/lint/typecheck PASS. M5 independent milestone review kapalı.
+M5-6-SELECTION-FLOW reviewer `ses_ef2bbac5affeY2kN8jf46mWgCE` GPT6.1:
+ilk Important duplicate-create R1, resolver teşhisi + tek GLM review-rework sonrası
+R1 RESOLVED/PASS/KAPALI; Critical/Important yok. Untracked test doğrudan okundu;
+reviewer test/full gates koşmadı. Final worker targeted70 + lint/typecheck PASS.
+M5-4B-QUEUE-BINDING reviewer `ses_ef2d1d85fffeD6G1WUB7Ij2WrX` GPT5.6:
+PASS/KAPALI; Critical/Important yok. Altı dosya scoped canonical diff, ilgili
+runner/lifecycle ve untracked test kaynakları incelendi; whitespace PASS.
+Reviewer test/full gates tekrar koşmadı; implementer targeted765/fresh Ruff/mypy PASS.
+Bu kabul backend queue-binding içindir, M5 milestone/final checker kapanışı değildir.
+M5-5-ORDERLY-SHUTDOWN reviewer `ses_ef318d952ffej7Chl6Njvgya5I` GPT5.6:
+PASS/KAPALI; Critical/Important yok. Dört dosya kaynak ve ilgili lifecycle tests
+salt-okunur incelendi; reviewer gate tekrar çalıştırmadı. Lead kaynak/status doğruladı.
+Normal Uvicorn shutdown admission varsayımı kabul edildi; milestone final checker yok.
+SHUTDOWN-DOC-R1 / M5-5-SHUTDOWN-DECISIONS-DOC reviewer
+`ses_ef3352391ffeubX8oAu0M8YQk2` GPT5.6: ilk REWORK ordering, tek Mechanical
+rework sonrası PASS/KAPALI/R1 RESOLVED; Critical/Important yok. Direct source read,
+önceki denied diff retry yok; worker scoped whitespace/post-read/status PASS.
+Bu docs kabulü; shutdown implementation/test kabulü değil.
+M5-5-COLLECTION-STARTUP-RECOVERY reviewer `ses_ef353d838ffe4pSihvgzcKbXaL`
+GPT5.6: PASS/KAPALI, Critical/Important yok. Actual source/test4files readonly review;
+test tekrar koşmadı. Final targeted669/scoped7 PASS; Lead direct current source/status
+doğruladı. Full checker yok; scoped hazır yorumu authoritative commit-ready değildir.
+RECOVERY-DOC-R1 / M5-5-RECOVERY-DECISIONS-DOC reviewer
+`ses_ef376e944ffeZ9r6IXjnTk3bZI` GPT5.6: PASS/KAPALI, R1 resolved, yeni
+Critical/Important yok. Direct docs/status read; denied diff retry yok. Worker
+scoped whitespace PASS; Lead hedefdocs read PASS. Tests/final checker yok.
+M5-5-RECOVERY-SCOPE reviewer `ses_ef39d2e23ffe32AvB6akg771ld` GPT5.6:
+SCOPE REVIEW / ilk Important RECOVERY-DOC-R1 yukarıda resolved. Eksik startup
+önceliği kullanıcı kararıyla docs'a kaydedildi; code acceptance yok. Readonly review;
+test/full gates koşulmadı. Lead §21 ve source/status read doğruladı.
+M5-5-COLLECTION-RETRY reviewer `ses_ef3ad9c75ffew03ygvUsPpqIFU` GPT5.6:
+PASS/KAPALI; Critical/Important yok. Source/test read review; actual572 ve son305
+scoped7 PASS kanıtları, reviewer test tekrar koşmadı. Lead source/helper/mapping
+read doğruladı; full checker/final gates yok, commit-ready HAYIR.
+M5-5-RETRY-ELIGIBILITY-DOC reviewer `ses_ef3d59b33ffenxvPrCazHIB3qy` GPT5.6:
+PASS/KAPALI; Critical/Important yok. Üç locked karar ve kaynak referansları tutarlı;
+direct source/status doğrulandı, denied diff retry yok. Worker scoped whitespace
+PASS; Lead hedef paragraf read PASS. Tests/full checker koşulmadı.
+M5-5-RETRY-ELIGIBILITY-SCOPE reviewer `ses_ef3e3efbbffezW4cbSUrpDtHkq`
+GPT5.6: PASS scope-readiness; Critical/Important yok. Minimum üç ürün sorusu
+kaynaklarla doğrulandı, kullanıcı kararları alındı. Readonly scoped diff izin engeli,
+retry yok; test/gates yok. Docs review artık kapalı; code acceptance pending.
+M5-PARENT-RUNNER-REMAINDER reviewer `ses_ef3e9e1b4ffeVxuEG1e2hUYlXi` GPT5.6:
+PASS/KAPALI; Critical/Important yok. Source/test readonly review; targeted gate
+tekrar koşmadı. Resolver sonrası actual final312/scoped6 PASS; Lead parent runner,
+success helper, API terminal miss read ve status PASS. Full checker NOT RUN;
+reviewer scoped commit-ready ifadesi authoritative commit-ready değildir.
+M5-PARENT-RUNNER-1/2 reviewer `ses_ef688c232ffeOrDSgphC0Yaw9d` GPT5.6:
+PASS/KAPALI; Critical/Important yok. İki yeni dosya tamamen doğrudan okundu;
+scoped diff permission denied, retry yok. Worker152/scoped2 PASS; reviewer test
+tekrar çalıştırmadı. Bu yalnız aşama1/2 scoped acceptance; full runner/M5 kapanmadı.
+M5-PARENT-CANCEL-LIFECYCLE reviewer `ses_ef6931843ffeDoBOVhZ50YIuuX` GPT5.6:
+PASS/KAPALI; Critical/Important yok. Source/test readonly review; test/Ruff/mypy
+tekrar çalıştırmadı. Worker targeted326/scoped7 PASS; Lead scoped tracked diff ve
+untracked helper/new-test read doğruladı. Final checker/full gates koşulmadı.
+M5-PARENT-CANCEL-DECISIONS-DOC reviewer `ses_ef6a051f4ffeWv3SOCnXaesBiP` GPT5.6:
+PASS/KAPALI; Critical/Important yok. Kaynak/read/status doğrulandı; scoped diff
+permission denied, retry yok. Worker scoped whitespace gate PASS; Lead hedef
+PRODUCT569/571 ve ARCH746/748 okuması PASS. Tests/full checker koşulmadı.
+M5-PARENT-CANCEL-SCOPE reviewer `ses_ef6a9455effeaAKX0qTTfT5DnW` GPT5.6:
+PASS scope-readiness; Critical/Important yok. Kaynak read ile minimum iki ürün
+kararı doğrulandı ve kullanıcıdan alındı. Scoped diff permission denied, retry yok.
+Bu code acceptance değil; kararların docs review'u artık yukarıda kapalı.
+M5-PARENT-DURABLE-PERSISTENCE GPT5.6 reviewer `ses_ef6b0de05ffeRBkj1Dh7BHkXyV`:
+PASS/KAPALI; Critical/Important yok. Son Ruff düzeltmesi yalnız parametrize sarımı;
+resolver/Mechanical/Lead read ile mantık değişmediği doğrulandı. Reviewer test
+çalıştırmadı; worker targeted275/mypy9 ve son scoped Ruff9 PASS. Full checker yok.
+V01-SECURITY-PATHWAY-DOC GPT6.1 reviewer `ses_ef6b94084ffemrXqZmKoUO1UUD`:
+documentation content PASS/KAPALI; Critical/Important yok. Reviewer scoped diff
+izin engelli; Lead literal scoped diff/read doğruladı. Scoped whitespace gate
+BLOCKED (permission), audit review veya release acceptance değildir. ARCH2049
+"once" fresh gate rerun gereğini kaldırmaz: failed gate veya sonraki tree değişimi
+olursa release kabulünden önce yeniden fresh doğrulama gerekir.
+PARENT-DESIGN-R2 reviewer `ses_ef6be0d74ffeBQj9qqbWn846VK` GPT5.6:
+PASS/KAPALI; R2 ve parent-design group kabul edildi, yeni Critical/Important yok.
+Uzun acceptance kuyruğu targeted grep ile reviewer tarafından doğrulandı;
+Lead ARCH748-750 read PASS. Reviewer tests/full checker koşmadı.
+R1 reviewer `ses_ef6c26f58ffeLSS6ZGXKYG1xMO` PASS/KAPALI; R1 unchanged.
+WF-MECHANICAL-CONTRACT reviewer `ses_ef6d0fabfffeioeUo63yPfs6Op` (GPT6.1):
+PASS/KAPALI, WF Critical/Important yok; ilk execution/manifest omissions tek GLM
+review-rework ile resolved. Reviewer dosyaları okudu; denied diff retry yok.
+Lead final scoped diff PASS. M5 completion/commit-ready değil.
+Parent-design ilk review bulguları R1/R2 resolved; güncel group acceptance yukarıda.
+M5-TERMINAL-DECISIONS: reviewer `ses_ef705b524ffeiFw8g6eoANVRXe` PASS/KAPALI;
+Critical/Important yok. Lead ARCH711-718 okuması PASS. Docs-only, tests/full checker
+koşulmadı; commit-ready ilanı yok. Önceki source full gates korunur.
+WF-ROUTING-MATRIX: reviewer `ses_ef71b39fbffeFUXUFfFJIvEBkl` PASS/KAPALI;
+Critical/Important yok. Lead scoped/staged diff ile yalnız dört dosya ve permissions/
+default models unchanged doğruladı. Checker diff izni yok; bağımsız reviewer ve Lead
+bu kanıtı sağladı. Config validator configured değil. Reload loaded-prompt/call
+smoke PASS; provider request/variant kesin kanıtı yok (yukarıdaki sınırlar).
+R2 reviewer `ses_ef7248eebffeDMI4jPJhYio2Vz` (`openai/gpt-6.1-sol`):
+FIRST PASS/KAPALI; R2 ve internal child-pipeline group PASS, Critical/Important yok.
+Reviewer tests tekrar koşmadı; tracked diff izin reddi retry yok, untracked source/test
+read ile review; baseline two-file scope bağımsız karşılaştırması yapılamadı.
+Lead metadata aktarımı/source helper grep doğrulaması PASS; worker scope raporu2file.
+CHILD-PIPELINE-R3 reviewer `ses_ef72e47f7ffePUBQ5nCkvoyUiN` (GPT-5.6): PASS/KAPALI;
+yeni Critical/Important yok. Lead runner source okuması PASS.
+CHILD-PIPELINE ilk review bulguları R2/R3 ile resolved; group acceptance KAPALI.
+CHILD-PIPELINE-R1 reviewer `ses_ef7760130ffebbCYp4I8PFcBkN`: PASS/KAPALI;
+Critical/Important yok; storage prerequisite resolved. Lead literal scoped diff PASS.
+Reviewer test koşmadı. Internal pipeline implementation/review COMPLETED.
+Residual risk: same-parent stat/unlink micro-window, pinned inode in-place write;
+namespace ownership hardlink provenance garantisi değil. App-controlled staging
+trust modelinde kabul; dış writer izinleri değişirse yeniden değerlendirilir.
+M5-4B-PERSISTENCE reviewer `ses_ef8083fd5ffeOSn3hKIehdusVJ`: PASS/KAPALI;
+Critical/Important yok. Caller transaction/lock/catalog invariants ve tests kabul.
+Lead repo literal diff ve yeni service source okuması PASS; reviewer test koşmadı.
+M5-4B-FOUNDATION-R1 reviewer `ses_ef8213d65ffe1yq61WubXtiNQK`: PASS/KAPALI;
+R1 resolved, foundation acceptance PASS. Critical/Important yok; önceki code PASS
+ve fresh targeted168 PASS ile foundation review kapanır. Lead test literal tek-satır
+diff PASS; reviewer test tekrar koşmadı. M5 milestone closure değildir.
+M5-4B-DESIGN reviewer `ses_ef9091b4effe0oXfxEAXp82XXi`: PASS/KAPALI;
+Critical/Important yok. Doc-only adopted technical contracts uygulanabilir;
+ürün soruları açık, execution acceptance değil. Lead scoped architecture diff PASS.
+M5-4A reviewer `ses_ef9153142ffexvSVx1h2N832by`: R4 SCOPED PASS ve
+foundation group PASS/KAPALI; Critical/Important yok. R1/R2/R3/R4 resolved.
+Lead literal scoped diff/helper ve yeni test152–234 okuması PASS; scope korundu.
+Reviewer test tekrar koşmadı. Bu M5 milestone closure/final commit-ready değildir.
+M5-3 reviewer `ses_ef9467651ffe2cMaoBZtN0gsWg` PASS/KAPALI;
+M5-2 `ses_ef9688ee3ffe4Qd47Av0F70EDY`, M5-1/R1
+`ses_ef97dec13fferlfiitmDPX6sYF` PASS/KAPALI. M5 milestone review KAPALI.
+M5-3 resolver snapshot TOCTOU gözlemi finding değil: production analysis mutation
+yolu yok; gelecekte mutation eklenirse contract yeniden değerlendirilir.
 
 ## Current Working Tree / Gate Freshness
 
-- Current WF config tree final checker: FRESH/PASS, 9/9;
-  `ses_efb7c4fb2ffePZuDAi5uCadTlU` 2026-10-04. Remaining boş; reload sonrası
-  positive smoke ve effective configured resolution PASS. Actual /review dispatch
-  PASS; negative destructive probes/saved approvals bilinmiyor (non-blocking).
-  backend Ruff/mypy PASS (65 files), pytest 498 PASS; frontend lint/typecheck
-  PASS, tests 117 PASS (5 files), build PASS (91 modules), node syntax PASS,
-  contrast 20/20 PASS. Status unchanged; sadece ignored cache/build çıktısı.
-  On agent/command dosyası modified; WORK_STATE Lead orchestration update.
-  Production source değişmedi. M4 gate kanıtı workflow runtime closure değildir.
-- Historical authoritative source gate kaydı: M4 final source tree FRESH/PASS.
-  Checker `ses_efbaa7843ffewrtNkvPC81AjY6`, 2026-10-04; 9/9 gates:
-  backend `.venv/bin/ruff check .` PASS, `.venv/bin/mypy app tests` PASS (65 files),
-  `.venv/bin/pytest` PASS (498 tests, 3 non-blocking deprecation warnings).
-  frontend `npm run lint`, `npm run typecheck` PASS; `npm test -- --run` PASS
-  (5 files/117 tests); `npm run build` PASS (91 modules);
-  `node --check scripts/check-contrast.mjs` PASS; `npm run check:contrast` PASS
-  (20/20, 2 themes). Docker NOT RUN, Docker-related değişiklik yok.
-  Checks öncesi/sonrası source Git status aynı; untracked test_job_retry.py dahil,
-  dört unrelated archive artifact korundu. Yalnız ignored cache/build çıktı.
-  Son task read-only review/checker + Lead WORK_STATE snapshot güncellemesi;
-  production/test/config değişmedi. Sonraki source değişikliği kaydı STALE yapar.
-  Aşağıdaki eski gate/task kanıtları current kaydı değildir.
-- Current frontend M4-QH-3 scope: frontend/src/api/jobs.ts,
-  frontend/src/features/new-download/JobProgress.tsx,
-  frontend/src/pages/NewDownloadPage.tsx, frontend/tests/new-download.test.tsx.
-  Son R3 task yalnız page/test değiştirdi. Targeted 70 tests + frontend lint/
-  typecheck PASS; production source değişti, full gates CURRENT TREE için STALE.
-  Full suite/build ve milestone-close checker henüz çalıştırılmadı.
-- Production tree M3-LIB-6 değişikliklerini içeriyor. Genel scope:
-  PRODUCT_SPEC.md, ARCHITECTURE.md, backend/app/api/v1/library.py,
-  backend/app/domain/library.py, backend/app/main.py,
-  backend/app/repositories/library.py,
-  backend/app/services/library_service.py,
-  backend/app/services/storage_service.py,
-  backend/tests/test_library_api.py, backend/tests/test_storage_utils.py
-  (önceki M3 dosyalarıyla overlap olabilir).
-- Önceki full gates M3 final tree için FRESH idi; M4-QH-1 production source
-  değişikliği nedeniyle CURRENT TREE için STALE.
-  Checker `ses_efd8a573fffeeUWxtXZG1GiA0W`: 9/9 PASS, kaynak dosyalar
-  checks öncesi/sonrası değişmedi; tracked/untracked kaynaklar korundu.
-- Backend workdir: `.venv/bin/ruff check .` PASS;
-  `.venv/bin/mypy app tests` PASS (64 source files);
-  `.venv/bin/pytest` PASS (454 passed, 2 bilinen non-blocking deprecation
-   warnings: Starlette/httpx ve sqlite datetime adapter; 22.24s).
-- Frontend workdir: `npm run lint`, `npm run typecheck` PASS;
-  `npm test -- --run` PASS (5 files, 75 tests);
-  `npm run build` PASS (91 modules);
-  `node --check scripts/check-contrast.mjs` PASS;
-  `npm run check:contrast` PASS (20/20, 2 themes).
-- Docker NOT RUN (Docker-related değişiklik yok; non-blocking).
-  Ignored build/cache outputs production source değişikliği değildir.
-  Backend `.venv/bin/...` executable'ları kullanılır; bare ruff/python
-  PATH'te yok. Runtime implementer model kimliği ayrıca teyit edilmedi.
-  Sonraki production source değişikliği bu kaydı current tree için STALE yapar.
-- M4-QH-1 scope: backend/app/domain/jobs.py, backend/tests/test_jobs.py.
-  Checker backend süper-küme kontrolleri: pytest 460 passed, 2 bilinen
-  deprecation warning; ruff PASS; mypy PASS (64 source files). Frontend/full
-  milestone gates çalıştırılmadı; final gate freshness STALE kalır.
-- M4-QH-2 ek scope: backend/app/api/v1/jobs.py, backend/app/repositories/jobs.py,
-  backend/app/services/job_service.py, backend/app/services/queue_manager.py,
-  backend/app/services/job_runner.py, backend/tests/test_job_retry.py (untracked).
-  Targeted pytest/Ruff/mypy BLOCKED; bu source değişikliği sonrası gate kaydı
-  STALE. Scope statik incelendi; kaynak diff-check/test PASS kanıtı yok.
-- M4-QH-2-R1 bu çağrı scope: backend/app/services/job_service.py,
-  backend/tests/test_job_retry.py. Lead scoped diff-check PASS; independent
-  source/test statik review PASS. Targeted runtime validation BLOCKED; full
-  gates current tree için STALE kalır. R2 implementation yapılmadı.
-- Son bounded config task scope: .opencode/agents/checker.md;
-  production/test kaynaklarına dokunulmadı. Statik review/diff-check PASS;
-  otomatik parsing/matching yok; runtime etkinlik reload sonrası doğrulandı. Önceki production
-  değişikliklerinin current-tree full gate kaydı STALE olmaya devam eder.
-- Current R1-T scope: backend/tests/test_job_retry.py (test-only değişiklik).
-  Targeted pytest tests/test_job_retry.py + tests/test_jobs.py: 97 passed,
-  3 bilinen deprecation warnings; scoped Ruff ve mypy (6 files) PASS.
-  Independent review/diff-check PASS; final full gates STALE kalır.
-- Current R2 scope: backend/app/services/queue_manager.py,
-  backend/tests/test_job_retry.py. Production weak registry değişikliği önceki
-  full gate kanıtını current tree için STALE tutar. Targeted pytest 105 passed,
-  scoped Ruff/mypy PASS (6 files), independent scoped review ve diff-check PASS.
-  Frontend/full suite/final gates çalıştırılmadı.
-- M3-LIB-7 scope: frontend/src/api/library.ts,
-  frontend/src/features/library/LibraryDetail.tsx,
-  frontend/src/pages/LibraryPage.tsx, frontend/tests/library.test.tsx.
-  R2 rework implementer `ses_efd98396effeMDF5FeCCy3u3hY`: frontend `npm run lint`,
-  `npm run typecheck`, `npm test -- --run tests/library.test.tsx tests/app.test.tsx`
-  (45/45), `npm run build` PASS; scoped diff-check PASS (worker/Lead).
-  Bu rework Page/library.test değiştirdi; API sözleşmesi değişmedi.
-  CSS değişmedi; contrast/full suite bu adımda koşulmadı. Backend değişmedi.
-- Bounded workers yalnız targeted test çalıştırır; open findings varken
-  milestone checker yoktur/çalıştırılmaz.
+CURRENT TREE full gates FRESH/PASS — M5-FINAL-CHECKER, 2026-10-05,
+checker ses_ef28ac368ffeWNE6XgeqhrLLLm. Test/production/config kaynakları ön/son
+status karşılaştırmasında değişmedi; sonraki tek delta Lead WORK_STATE orchestration.
+Repo /Users/minaj/Documents/Codium/downloader/backend:
+- `.venv/bin/ruff check .` PASS
+- `.venv/bin/mypy app tests` PASS (84 source files)
+- `.venv/bin/pytest` PASS (1466 tests, 4 non-blocking deprecation warnings)
+Repo /Users/minaj/Documents/Codium/downloader/frontend:
+- `npm run lint` PASS
+- `npm run typecheck` PASS
+- `npm test -- --run` PASS (147 tests / 7 files)
+- `npm run build` PASS (93 modules)
+- `node --check scripts/check-contrast.mjs` PASS
+- `npm run check:contrast` PASS (20/20 representative checks)
+Docker-related dosya değişmedi; Docker/real-network smoke çalıştırılmadı.
+Aşağıdaki bounded-task gate kayıtları tarihsel kaynak kanıtıdır; eski STALE/
+pending ifadeleri current freshness'i belirlemez. Yukarıdaki fresh final checker yetkilidir.
+Son progress/controls source delta frontend api/jobs.ts, pages/NewDownloadPage.tsx,
+features/new-download/JobProgress.tsx, yeni CollectionProgress.tsx ve
+tests/collection-progress.test.tsx. Frontend
+`npm test -- --run tests/collection-progress.test.tsx tests/new-download.test.tsx tests/collection-selection.test.tsx`
+86 PASS; npm run lint/typecheck PASS, scoped diff-check PASS. Build/full suites/final
+checker yok. Production source değiştiği için önceki full gates current tree için STALE.
+Son selection-flow source delta frontend api/analysis.ts, api/jobs.ts,
+pages/NewDownloadPage.tsx, features/new-download/AnalysisResult.tsx ve yeni
+CollectionSelection.tsx; tests/new-download.test.tsx ve yeni collection-selection.test.tsx.
+Frontend `npm test -- --run tests/new-download.test.tsx tests/collection-selection.test.tsx`
+70 PASS; `npm run lint`/`npm run typecheck` PASS. Build/full tests/final checker yok;
+production source değişikliği full gate kaydını STALE tutar. Backend/config/CSS/archive korunur.
+Son queue-binding delta: app/services/queue_manager.py, app/repositories/jobs.py,
+app/main.py, tests/test_collection_jobs.py, tests/test_collection_dispatch.py (new),
+tests/test_collection_shutdown.py. Backend targeted dispatch/jobs/repository/parent/
+cancel/retry/recovery/shutdown/single-retry/jobs/catalog pytest765 PASS; scoped
+Ruff/mypy bu tree üzerinde fresh PASS. Source değişikliği önceki full gates'i STALE
+yapar; full suite/final checker NOT RUN, gerçek ağ smoke yok. Config/docs/archive korundu.
+Son orderly shutdown delta: app/services/queue_manager.py, job_service.py,
+collection_persistence.py, tests/test_collection_shutdown.py (new); Lead WORK_STATE.
+Backend targeted pytest657 PASS; scoped Ruff/mypy PASS (implementer raporu).
+44 shutdown testi; 3 deprecation warning. Full suite/final checker NOT RUN;
+önceki full gates production değişikliği nedeniyle STALE. Docs/config/archive korundu.
+Son startup recovery actual delta:
+- backend/app/repositories/jobs.py
+- backend/app/services/collection_persistence.py
+- backend/app/services/queue_manager.py
+- backend/tests/test_collection_recovery.py (new)
+Final backend `.venv/bin/pytest tests/test_collection_recovery.py tests/test_collection_persistence.py tests/test_collection_jobs.py tests/test_job_retry.py tests/test_collection_cancel.py tests/test_collection_parent_runner.py tests/test_collection_retry.py tests/test_library_catalog.py -q`: 669 PASS.
+Scoped7 `.venv/bin/ruff check` ve `.venv/bin/mypy`: app/repositories/jobs.py
+app/services/collection_persistence.py app/services/queue_manager.py tests/test_collection_recovery.py
+tests/test_collection_persistence.py tests/test_collection_jobs.py tests/test_job_retry.py — PASS.
+Production edits full gates kaydını STALE yapar; full suite/final checker yok.
+Preexisting docs/config/archive ve diğer M5 değişiklikleri korundu.
+Son recovery docs task PRODUCT_SPEC §17 ve ARCHITECTURE §19/21 değiştirdi;
+Lead WORK_STATE snapshot güncelledi. Scoped diff-check/read/status PASS; production/
+test/config değişmedi. Targeted/full gates yok; önceki Retry572/305 scoped gates
+tarihsel source kanıtı, current whole-tree fresh final checker değildir.
+Son collection Retry task literal delta:
+- backend/app/domain/jobs.py
+- backend/app/repositories/jobs.py
+- backend/app/services/collection_persistence.py
+- backend/app/services/job_service.py
+- backend/app/services/job_mapping.py
+- backend/tests/test_collection_retry.py (new)
+- backend/tests/test_collection_jobs.py
+Backend `.venv/bin/pytest tests/test_collection_retry.py tests/test_collection_persistence.py tests/test_collection_jobs.py tests/test_job_retry.py tests/test_collection_cancel.py tests/test_collection_parent_runner.py tests/test_library_catalog.py -q`: 572 PASS.
+Son test-only spy fix sonrası `.venv/bin/pytest tests/test_collection_retry.py -q`: 305 PASS.
+Scoped `.venv/bin/ruff check` ve `.venv/bin/mypy` yukarıdaki7 actual dosya PASS.
+Full suite/final checker NOT RUN; source edits full gates kaydını STALE yapar.
+Önceden var olan doc/config/archive/diğerM5 kaynaklar korundu; Brew güncellemesi
+M5 gate kanıtı üretmez, gerçek network/extractor smoke henüz doğrulanmadı.
+
+Önceki Retry docs task PRODUCT_SPEC §17 ve ARCHITECTURE §19 locked karar paragraflarını
+değiştirdi; Lead WORK_STATE orchestration snapshot güncelledi. Scoped whitespace/read/
+status PASS, production/test/config değişmedi; targeted/full gates çalıştırılmadı.
+Önceki parent runner312/scoped6 kaydı tarihsel
+aynı source tree kanıtıdır; current whole-tree fresh final checker değildir.
+Son runner remainder literal delta:
+- backend/app/services/collection_parent_runner.py
+- backend/app/services/collection_persistence.py
+- backend/app/services/job_service.py
+- backend/tests/test_collection_parent_runner.py
+- backend/tests/test_collection_persistence.py
+Final backend `.venv/bin/pytest tests/test_collection_parent_runner.py tests/test_collection_child_runner.py tests/test_collection_cancel.py tests/test_collection_persistence.py tests/test_collection_jobs.py tests/test_job_retry.py tests/test_library_catalog.py -q`: 312 PASS.
+Scoped `.venv/bin/ruff check` ve `.venv/bin/mypy`: app/services/collection_parent_runner.py
+app/services/collection_persistence.py app/services/job_service.py tests/test_collection_parent_runner.py
+tests/test_collection_cancel.py tests/test_collection_persistence.py — her ikisi6 dosya PASS.
+Mechanical son rework source blank-line/test assertion/import only; final gates bu
+current task source için koşuldu. Önceki full gates source edits nedeniyle STALE;
+full suite/final checker yok. Preexisting docs/config/archive/diğer M5 değişiklikleri korundu.
+
+Önceki runner aşama1/2 delta yalnız iki yeni dosya:
+- backend/app/services/collection_parent_runner.py
+- backend/tests/test_collection_parent_runner.py
+Lead WORK_STATE snapshot güncelledi; preexisting bütün değişiklikler korundu.
+Backend `.venv/bin/pytest tests/test_collection_parent_runner.py tests/test_collection_child_runner.py tests/test_collection_cancel.py tests/test_collection_jobs.py -q`: 152 PASS.
+`.venv/bin/ruff check app/services/collection_parent_runner.py tests/test_collection_parent_runner.py` PASS;
+aynı iki dosya `.venv/bin/mypy` PASS. Son worker değişikliği yalnız docstring.
+İki mevcut deprecation uyarısı; full gates/final checker çalıştırılmadı.
+
+Önceki Cancel lifecycle task literal delta:
+- backend/app/services/collection_persistence.py
+- backend/app/services/job_service.py
+- backend/app/services/queue_manager.py
+- backend/tests/test_collection_cancel.py (new)
+Lead WORK_STATE snapshot güncelledi; önceden var olan doc/config/archive ve M5
+değişiklikleri korundu. Production source değişti: önceki full gates STALE.
+Backend `.venv/bin/pytest tests/test_collection_cancel.py tests/test_collection_persistence.py tests/test_collection_jobs.py tests/test_collection_child_runner.py tests/test_job_retry.py tests/test_jobs.py tests/test_library_catalog.py -q`: 326 PASS.
+Scoped Ruff/mypy: app/services/collection_persistence.py app/services/job_service.py
+app/services/queue_manager.py tests/test_collection_cancel.py tests/test_collection_persistence.py
+tests/test_collection_jobs.py tests/test_job_retry.py — her iki gate7 dosya PASS.
+Full suite/final checker NOT RUN; current M5 commit-ready HAYIR.
+Son M5 task literal dosyaları:
+- backend/migrations/versions/0006_collection_cancel_request.py (new)
+- backend/app/models/jobs.py
+- backend/app/domain/jobs.py
+- backend/app/repositories/jobs.py
+- backend/app/services/collection_persistence.py
+- backend/tests/test_collection_migration.py
+- backend/tests/test_collection_persistence.py
+- backend/tests/test_collection_repository.py
+- backend/tests/test_library_catalog.py (head assertion0005→0006 only)
+Backend targeted `.venv/bin/pytest tests/test_collection_migration.py tests/test_collection_persistence.py tests/test_collection_repository.py tests/test_collection_jobs.py tests/test_collection_child_runner.py tests/test_job_retry.py tests/test_library_catalog.py -q`: 275 PASS.
+Scoped9 mypy PASS; pureformat sonrası scoped9 Ruff PASS. Full suite NOT RUN.
+Lead scoped tracked stat/read ve status doğruladı; untracked dosyalar stat'a dahil
+değildir, kaynak read/reviewer kanıtı kullanıldı. Paralel doc/config/archive korundu.
+
+Release-security pathway task delta: yalnız ARCHITECTURE §59 ve PRODUCT_SPEC §35;
+Lead WORK_STATE orchestration update. Önceden var olan ve paralel M5 doc/state
+değişiklikleri korundu; current authoritative R2 resolved snapshot yeniden okundu.
+Security-doc task sırasında paralel migration0006 görüldü; security scope'u dışında
+idi. Migration artık ayrı M5 persistence task'ında yukarıdaki kanıtla doğrulandı.
+Security-doc task production/config/source test değiştirmedi; fresh full gates NOT RUN;
+önceki whole-tree final gate kaydı stale kalır. Scoped diff-check NOT RUN/denied.
+
+M5-4A task değişen dosyalar:
+- backend/app/integrations/ytdlp.py
+- backend/app/services/analysis_normalizer.py
+- backend/app/services/collection_profile_resolver.py (new/untracked)
+- backend/tests/test_ytdlp_adapter.py
+- backend/tests/test_collection_profile_resolver.py (new/untracked)
+- ARCHITECTURE.md teknik notu; Lead WORK_STATE orchestration update.
+Önceki M5 product/architecture/API/domain/model/repository/service/test değişiklikleri,
+untracked migration0005/collection jobs/migration/repository testleri korundu.
+Unrelated untracked dört `.opencode/archive/_porcelain_probe_empty.md`,
+`_porcelain_probe_long.md`, `_porcelain_probe_target.md`, `_recovery_p_art.md` korundu.
+
+Last verified source full gates: PASS — checker `ses_ef71a0d9fffetvM31o9IZzoma0`, 2026-10-05.
+9/9: backend Ruff, mypy app tests (77 files), pytest802; frontend lint/typecheck,
+test117/build91modules; contrast script syntax ve contrast20/20 PASS.
+Checker öncesi/sonrası source status aynı; ardından yalnız Lead state güncellemesi
+ve dört config dosyasının isolated commit closure'u yapıldı. Sonraki docs/state
+editleri nedeniyle bu kayıt aynı bütün working tree için fresh final checker değildir;
+ardından durable persistence production source değişti. Parent design/persistence
+review kapalı; current final checker NOT RUN.
+WF-MECHANICAL-CONTRACT config edit sonrası current tree full gate kaydı fresh
+değildir. Yalnız scoped config checks + bağımsız review PASS; full gates NOT RUN.
+Önceki child task backend/app/services/collection_child_runner.py ve backend/tests/test_collection_child_runner.py;
+Lead WORK_STATE update. Son targeted backend:
+`.venv/bin/pytest tests/test_collection_child_runner.py tests/test_collection_persistence.py tests/test_library_catalog.py -q`
+PASS85; changed2 Ruff/mypy PASS. Ardından yukarıdaki fresh full checker PASS.
+Real extractor/network doğrulaması yok; fake binaries/fixtures kullanıldı.
+Last verified full gates WF checker `ses_efb7c4fb2ffePZuDAi5uCadTlU`, 2026-10-04:
+9/9 PASS, backend pytest498/mypy65; frontend117tests/build91/contrast20.
+Bu eski tree kanıtıdır; current fresh checker yukarıdadır. Docker değişmedi/NOT RUN.
 
 ## Commit-Ready
 
-Commit-ready: EVET (WF-PERMISSION-V2-NORMALIZE-1): remaining findings boş,
-final review KAPALI/PASS ve current-tree final checker 9/9 FRESH/PASS.
-Gerçek /review dispatch smoke PASS; production/test/config değişmedi.
-Kullanıcı commit/push explicit yetkisi mevcut; Lead yalnız 11 scoped dosyayı
-tek tek stage edip cached diff doğrulamasıyla tek workflow commit ve normal
-push yapacak; dört untracked archive artifact kapsam DIŞINDA kalır.
-M4 ACCEPTED/COMPLETED ve committed: `3bf1fcc feat: harden download queue with
-safe retry support`, Lead git log/status ile doğrulandı. Yeni stage/commit/push yok.
-Önceki M3 Git closure (2026-10-04): 38 ilgili dosya tek tek stage edildi;
-staged status ve no-ext-diff/no-textconv cached diff doğrulandı.
-Commit `e49d843 feat: add library catalog with safe delete file actions`
-oluşturuldu; `git push origin HEAD` PASS (cff1571..e49d843).
-Önceki workflow commit'i `4c68448` da push edildi; main/origin/main eşit.
-Bu closure anında production source değişmemiş ve M3 gate kaydı geçerliydi;
-M4-QH-1 sonrası artık current-tree kaydı değildir. M4 closure `3bf1fcc` ile tamamlandı.
-`.opencode/WORK_STATE.md` local modified; dört
-`.opencode/archive/_*.md` geçici artifact untracked ve kapsam DIŞINDA.
+Release-security pathway doc task commit-ready: HAYIR — scoped diff-check izin
+engelli, current tree final checker yok; audit NOT STARTED ve release kabulü yok.
+WF-ROUTING-MATRIX scoped commit-ready: EVET (remaining boş, closed review,
+fresh final checker PASS); commit b559959 tamamlandı. Staged yalnız dört config
+dosyası doğrulandı; M5/state/archive stage edilmedi, push yok.
+M5 commit-ready: EVET — remaining boş, bounded ve independent milestone review kapalı;
+current-tree final checker 9/9 PASS, M5 ACCEPTED/COMPLETED.
+Bu readiness commit/stage/push yetkisi değildir; işlem yapılmadı. Unrelated archive
+dosyaları amaçlı commit scope'undan ayrı korunur. Sonraki source değişikliği full
+gate freshness kaydını stale yapar; yeni milestone/worker başlatılmadı.
 
-Commit-ready ancak şu ÜÇ koşul BİRLİKTE sağlanırsa EVET olur: remaining
-findings boş + review closed + current-tree final checker/full gates PASS.
+## Product Decisions / Standing Policies
 
-## Historical Archive Status
-
-- `.opencode/archive/WORK_STATE_HISTORY_2026-10-03.md`, pre-compaction
-  append-style WORK_STATE için semantic/historical recovery note olarak
-  TAMAMLANDI; exact historical replica değildir.
-- Note, yaklaşık 313 satırlık eski state'in doğrulanmış son current facts'ini
-  ve forensic provenance kaynaklarını korur: Git base
-  `HEAD:.opencode/WORK_STATE.md` ile pre-compaction diff artifact'i
-  `/Users/minaj/.local/share/opencode/tool-output/tool_10149fe850023GrKm90sJpmIY7`.
-- Kullanıcı kararıyla byte-for-byte reconstruction yapılmadı; doğrulanamayan
-  metin tahmin edilmedi. Archive preservation follow-up KAPALI.
-- Archive kaydı current finding/task durumunu belirlemez; yukarıdaki
-  authoritative current snapshot geçerlidir.
-
-## Standing Policies / Known Non-Blocking Follow-ups
-
-- Telemetry frozen: normal workflow task/milestone telemetry append yok;
-  evaluator yalnız explicit kullanıcı talebiyle historical frozen veriyi
-  read-only analiz eder.
-- Commit/push yalnız explicit kullanıcı talebiyle; destructive/
-  history-rewriting Git işlemleri yasaktır.
-- Non-blocking backlog gözlemleri (tek madde; aktif task/finding yapma):
-  cancel 404 code `analysis_not_found` → `job_not_found` adayı;
-  queue_manager `_cancel_events` cleanup; future multi-user'da SSE replay
-  owner scope; generic 422 body'sindeki `analysis_id:null`.
+- Max200 SELECTED items/job, source-total cap değil. Select All mevcut analiz
+  edilmiş/seçilebilir items only; unseen/overcap sessiz seçim yok, büyük-source limit mesajı.
+- Collection-level Audio/Video+profile default Original/BestAvailable; per-child
+  source-aware native heterogeneous çıktı, video ceiling/no upscale/quality-first.
+  Explicit conversion yalnız new-job selected children; existing Library reprocess,
+  per-item profile/per-child CancelRetry UI out. MP3/M4A/Opus/FLAC MAY; WAV future.
+- Mixed completed+failed parent failed/partial_failure, actual counters ve completed
+  outputs korunur; new partial-success state yok. All-failed parent failed,
+  stable all_children_failed semantics; child reasons/counters korunur. Retry yalnız
+  retry-eligible failed/cancelled/incomplete child varsa aktif; completed tekrarlanmaz.
+  Cancel request terminalization transaction öncesi kalıcıysa parent cancelled;
+  failure terminal önce commit edildiyse failed kalır, sonraki Cancel üstüne yazmaz.
+  In-memory event timing karar kaynağı değildir. Bu kararlar LOCKED (2026-10-05).
+- Lead yalnız WORK_STATE orchestration state yazar; production/test/docs/config
+  uygun implementation worker'a devredilir. Kullanıcı onaylı routing: yalnız
+  mechanical VE low-risk fast-worker; bounded reasoning GLM High implementer,
+  high-risk GPT6.1 implementer. Low-risk tek başına Flash gerekçesi değildir;
+  kalıcı routing config b559959 ile kabul edildi.
+- Bounded task targeted tests only; final closure fresh full gates. Telemetry frozen;
+  evaluator yalnız explicit frozen tarihsel read-only analiz talebiyle.
+- Same-path Delete File shared reference block; only sole reference+confirmation
+  fiziksel silme. Delete-all-references kapsam dışı; ürün kararı resolved.
+- Historical recovery note `.opencode/archive/WORK_STATE_HISTORY_2026-10-03.md`
+  completed, exact replica değil; archive preservation follow-up kapalı.
+- Non-blocking backlog aktif değil: cancel404code, _cancel_events cleanup,
+  futuremultiuser SSE owner scope, generic422 analysis_id:null.
+- Explicit future backlog: authorized DRM licensing/decryption post-v0.1 araştırma;
+  resmî provider-supported yol, geçerli lisans ve save/download izni, feasibility
+  değerlendirmesi gerekli. DRM circumvention/key extraction/bypass yok; aktif M5 değil.

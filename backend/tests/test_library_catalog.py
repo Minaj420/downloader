@@ -169,7 +169,7 @@ class TestLibraryMigration:
 
         assert version_row is not None
         assert {"library_items", "media_files"} <= tables
-        assert version_row[0] == "0004"
+        assert version_row[0] == "0006"
         assert {
             "id",
             "owner_id",

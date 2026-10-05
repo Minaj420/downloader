@@ -1,13 +1,13 @@
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.api.dependencies import get_actor
 from app.domain.actors import Actor
-from app.domain.jobs import JobError
-from app.models.jobs import ActivityEvent
+from app.domain.jobs import CollectionProfile, JobError
+from app.models.jobs import ActivityEvent, DownloadJob
 from app.repositories import activity
 from app.services.job_mapping import job_to_dto
 from app.services.job_service import APP_LIBRARY_DESTINATION, JobService
@@ -17,9 +17,32 @@ router = APIRouter(tags=["jobs"])
 
 
 class CreateJobRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     analysis_id: str = Field(min_length=1, max_length=32)
-    variant_id: str = Field(min_length=1, max_length=128)
+    variant_id: str | None = Field(default=None, min_length=1, max_length=128)
+    item_ids: list[str] | None = Field(default=None, min_length=1, max_length=200, strict=True)
+    collection_mode: Literal["audio", "video"] | None = None
+    collection_profile: CollectionProfile | None = None
     destination: str = APP_LIBRARY_DESTINATION
+
+    @model_validator(mode="after")
+    def validate_choice(self) -> "CreateJobRequest":
+        if self.variant_id is not None:
+            if any(key in self.model_fields_set for key in (
+                "item_ids", "collection_mode", "collection_profile"
+            )):
+                raise ValueError("Single variant and collection selection are exclusive")
+        elif self.item_ids is None or self.collection_mode is None:
+            raise ValueError("Collection selection and mode are required")
+        return self
+
+
+async def _job_response(service: JobService, actor: Actor, record: DownloadJob) -> Any:
+    items = (
+        await service.list_job_items(actor, record.id)
+        if record.job_type == "collection" else None
+    )
+    return job_to_dto(record, items).model_dump(mode="json")
 
 
 def _error_response(exc: JobError) -> JSONResponse:
@@ -63,10 +86,13 @@ async def create_job(
             analysis_id=request.analysis_id,
             variant_id=request.variant_id,
             destination=request.destination,
+            item_ids=request.item_ids,
+            collection_mode=request.collection_mode,
+            collection_profile=request.collection_profile,
         )
     except JobError as exc:
         return _error_response(exc)
-    return job_to_dto(record).model_dump(mode="json")
+    return await _job_response(service, actor, record)
 
 
 @router.get("/jobs")
@@ -74,7 +100,7 @@ async def list_jobs(http_request: Request, actor: Actor = Depends(get_actor)) ->
     service: JobService = http_request.app.state.job_service
     records = await service.list_jobs(actor)
     return {
-        "jobs": [job_to_dto(record).model_dump(mode="json") for record in records]
+        "jobs": [await _job_response(service, actor, record) for record in records]
     }
 
 
@@ -86,7 +112,7 @@ async def get_job(
     record = await service.get_job(actor, job_id)
     if record is None:
         return _not_found_response()
-    return job_to_dto(record).model_dump(mode="json")
+    return await _job_response(service, actor, record)
 
 
 def _activity_item(event: ActivityEvent) -> dict[str, Any]:
@@ -130,7 +156,7 @@ async def cancel_job(
         record = await service.cancel_job(actor, job_id)
     except JobError as exc:
         return _error_response(exc)
-    return job_to_dto(record).model_dump(mode="json")
+    return await _job_response(service, actor, record)
 
 
 @router.post("/jobs/{job_id}/retry")
@@ -144,4 +170,4 @@ async def retry_job(
         return _error_response(exc)
     if record is None:
         return _not_found_response()
-    return job_to_dto(record).model_dump(mode="json")
+    return await _job_response(service, actor, record)

@@ -18,7 +18,6 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -43,6 +42,7 @@ from app.repositories import jobs as job_repo
 from app.services.event_bus import EventBus
 from app.services.job_mapping import job_to_dto
 from app.services.library_service import stage_media_catalog_reference
+from app.services.prepared_media import prepare_media
 from app.services.storage_service import (
     MediaFileMissingError,
     MediaFileNotRegularError,
@@ -118,12 +118,6 @@ def resolve_variant(
             (fmt for fmt in normalized.formats if fmt.kind == "audio_only"), None
         )
     return selected, companion
-
-
-def merge_container(video: NormalizedFormat, audio: NormalizedFormat) -> str:
-    if audio.audio_codec == "aac" and video.video_codec in {"h264", "hevc"}:
-        return "mp4"
-    return "mkv"
 
 
 def build_app_library_catalog(
@@ -230,7 +224,6 @@ class _JobExecution:
         self._processes = processes
         self._cancel_gate = cancel_gates.setdefault(job_id, threading.Lock())
         self._last_progress_emit = 0.0
-        self._source_url_cache: str | None = None
         self._owner_id: str | None = None
         self._helpers: set[asyncio.Task[Any]] = set()
         self._closed = False
@@ -246,7 +239,6 @@ class _JobExecution:
         record = await self._load_job()
         if record is None or record.status != JobStatus.QUEUED.value:
             return
-        self._source_url_cache = record.source_url
         self._owner_id = record.owner_id
         try:
             if not await self._transition_to_downloading():
@@ -288,35 +280,26 @@ class _JobExecution:
         )
         selected, companion = resolve_variant(normalized, record.variant_id)
 
-        staging_dir = self._deps.storage.job_staging_dir(self._job_id)
         await self._update(staging_path=self._job_id)
 
-        if selected.kind == "video_only" and companion is not None:
-            await self._check_cancelled()
-            video_file = await self._download_step(
-                "video", selected.format_id, staging_dir, step_index=0, total_steps=2
-            )
-            await self._check_cancelled()
-            audio_file = await self._download_step(
-                "audio", companion.format_id, staging_dir, step_index=1, total_steps=2
-            )
-            await self._check_cancelled()
+        async def before_merge() -> None:
             await self._set_status(
                 JobStatus.POST_PROCESSING, "Post-processing (merging video and audio)"
             )
-            merged = staging_dir / f"merged.{merge_container(selected, companion)}"
-            await self._deps.ffmpeg.merge_streams(
-                video_file,
-                audio_file,
-                merged,
-                on_process_started=self._register_process,
-            )
-            media_file = merged
-        else:
-            await self._check_cancelled()
-            media_file = await self._download_step(
-                "media", selected.format_id, staging_dir, step_index=0, total_steps=1
-            )
+
+        media_file = await prepare_media(
+            selected=selected,
+            companion=companion,
+            source_url=record.source_url,
+            staging_key=self._job_id,
+            storage=self._deps.storage,
+            downloader=self._deps.downloader,
+            ffmpeg=self._deps.ffmpeg,
+            check_cancelled=self._check_cancelled,
+            on_process_started=self._register_process,
+            progress_forwarder=self._progress_forwarder,
+            before_merge=before_merge,
+        )
 
         await self._check_cancelled()
         await self._set_status(JobStatus.FINALIZING, "Finalizing")
@@ -339,39 +322,15 @@ class _JobExecution:
         await self._complete(record, normalized, selected, placement)
         self._deps.storage.remove_staging(self._job_id)
 
-    async def _download_step(
-        self,
-        prefix: str,
-        format_id: str,
-        staging_dir: Path,
-        *,
-        step_index: int,
-        total_steps: int,
-    ) -> Path:
-        assert self._source_url_cache is not None
-        produced = await self._deps.downloader.download(
-            url=self._source_url_cache,
-            format_selector=format_id,
-            output_template=str(staging_dir / f"{prefix}.%(ext)s"),
-            on_progress=self._progress_forwarder(step_index, total_steps),
-            on_process_started=self._register_process,
-        )
-        if not produced:
-            raise JobError(
-                JobErrorCode.MALFORMED_OUTPUT,
-                detail=f"download produced no file for format {format_id}",
-            )
-        return Path(produced[0])
-
     def _progress_forwarder(
         self, step_index: int, total_steps: int
-    ) -> Callable[[DownloadProgress], None]:
-        def forward(progress: DownloadProgress) -> None:
+    ) -> Callable[[DownloadProgress], asyncio.Task[Any] | None]:
+        def forward(progress: DownloadProgress) -> asyncio.Task[Any] | None:
             if self._closed:
-                return
+                return None
             now = time.monotonic()
             if now - self._last_progress_emit < self._deps.progress_min_interval:
-                return
+                return None
             self._last_progress_emit = now
             total = progress.total_bytes or progress.total_bytes_estimate
             step_fraction = (
@@ -390,6 +349,7 @@ class _JobExecution:
                 )
             )
             self._helpers.add(task)
+            return task
 
         return forward
 
@@ -534,7 +494,9 @@ class _JobExecution:
         if self._cancel_event.is_set():
             raise JobError(JobErrorCode.CANCELLED)
 
-    def _register_process(self, process: asyncio.subprocess.Process) -> None:
+    def _register_process(
+        self, process: asyncio.subprocess.Process
+    ) -> asyncio.Task[Any] | None:
         self._processes[self._job_id] = process
         if self._cancel_event.is_set() and process.returncode is None:
             # Cancellation arrived between the pre-step gate and this
@@ -543,6 +505,8 @@ class _JobExecution:
                 ensure_process_terminated(process, _TERMINATION_GRACE_SECONDS)
             )
             self._helpers.add(task)
+            return task
+        return None
 
     async def _load_job(self) -> DownloadJob | None:
         return await _get_job(self._deps.session_factory, self._job_id)

@@ -312,6 +312,149 @@ class StorageService:
                 if current_task is not None:
                     current_task.uncancel()
 
+    async def place_child_final(
+        self,
+        child_staging_key: str,
+        adapter_output_path: Path,
+        *,
+        media_kind: str,
+        title: str,
+        cancel_requested: Callable[[], bool] | None = None,
+        publish_guard: AbstractContextManager[Any] | None = None,
+    ) -> PlacementResult:
+        """Place only a regular output owned by the backend child's staging key.
+
+        Source parents and file are pinned with no-follow descriptors. Always
+        copy from the pinned file (also on the same filesystem): portable POSIX
+        has no descriptor-based hard-link primitive. Never reopen the adapter
+        path for copying. Publication retains the single placement cancel gate
+        and skip-existing/catalog identity semantics. The worker owns all fds
+        and temporary files; repeated waiter cancellation drains it as single
+        placement does, rather than orphaning cleanup.
+
+        Parent-name swaps cannot redirect reads/unlinks. Detectable leaf swaps
+        fail closed before publication and unlink. As with PreparedMediaFile,
+        POSIX's same-parent stat/unlink micro-window remains; pinned inodes may
+        also be modified in place by a concurrent writer. This is not a claim
+        of protection against arbitrary concurrent filesystem mutation.
+        """
+        child_staging_key = self._validated_job_id(child_staging_key)
+        operation = asyncio.create_task(asyncio.to_thread(
+            self._place_child_final_sync,
+            child_staging_key, adapter_output_path, media_kind, title,
+            cancel_requested or (lambda: False), publish_guard,
+        ))
+        while True:
+            try:
+                return await asyncio.shield(operation)
+            except asyncio.CancelledError:
+                current_task = asyncio.current_task()
+                if current_task is not None:
+                    current_task.uncancel()
+
+    def _prepare_child_output(self, key: str, output: Path) -> PreparedMediaFile:
+        # Lexical containment first: resolving the untrusted output would hide
+        # traversal and symlink components. Relative paths use the same cwd
+        # interpretation as the adapter's existing Path output.
+        if ".." in output.parts or "\\" in str(output) or "\x00" in str(output):
+            raise StoragePathError("invalid child output path")
+        child_root = self._staging_root.absolute() / key
+        try:
+            parts = output.absolute().relative_to(child_root).parts
+        except ValueError as exc:
+            raise StoragePathError("output is outside child staging") from exc
+        if not parts:
+            raise StoragePathError("output must name a child file")
+        # Only configured root aliases (e.g. macOS /var) may be expanded;
+        # child and adapter-supplied parents are strictly no-follow.
+        parent_fd, _ = self._capture_root_descriptor(
+            self._staging_root, self._staging_root.resolve()
+        )
+        pinned_fd: int | None = None
+        try:
+            for component in (key, *parts[:-1]):
+                try:
+                    next_fd = os.open(
+                        component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                        dir_fd=parent_fd,
+                    )
+                except OSError as exc:
+                    raise _component_open_error(component, exc) from exc
+                os.close(parent_fd)
+                parent_fd = next_fd
+            try:
+                pinned_fd = os.open(
+                    parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                    dir_fd=parent_fd,
+                )
+            except OSError as exc:
+                raise _final_open_error(parts[-1], exc) from exc
+            entry = os.fstat(pinned_fd)
+            if not stat.S_ISREG(entry.st_mode):
+                raise MediaFileNotRegularError(str(output))
+            return PreparedMediaFile(
+                parent_fd, pinned_fd, parts[-1], output,
+                (entry.st_dev, entry.st_ino),
+            )
+        except BaseException:
+            if pinned_fd is not None:
+                os.close(pinned_fd)
+            os.close(parent_fd)
+            raise
+
+    @staticmethod
+    def _check_child_entry(source: PreparedMediaFile) -> None:
+        entry = os.stat(
+            source.final_name, dir_fd=source._parent_fd, follow_symlinks=False
+        )
+        if not stat.S_ISREG(entry.st_mode):
+            raise MediaFileNotRegularError(str(source.resolved_path))
+        if (entry.st_dev, entry.st_ino) != source.identity:
+            raise MediaFileTargetChangedError(str(source.resolved_path))
+
+    def _place_child_final_sync(
+        self, key: str, output: Path, media_kind: str, title: str,
+        cancel_requested: Callable[[], bool],
+        publish_guard: AbstractContextManager[Any] | None,
+    ) -> PlacementResult:
+        source = self._prepare_child_output(key, output)
+        try:
+            extension = output.suffix.lstrip(".") or "bin"
+            target = self.final_target(media_kind, f"{title}.{extension}")
+            self._raise_if_cancelled(cancel_requested)
+            if target.exists():
+                return self._placement_result(target, skipped_existing=True)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            fd, name = tempfile.mkstemp(
+                prefix=f".{target.name}.", suffix=".part", dir=target.parent
+            )
+            temporary = Path(name)
+            try:
+                # fdopen owns the mkstemp descriptor even when copying fails.
+                with os.fdopen(fd, "wb") as copied:
+                    with os.fdopen(os.dup(source._pinned_fd), "rb") as original:
+                        shutil.copyfileobj(original, copied)
+                    copied.flush()
+                    if os.fstat(copied.fileno()).st_size != os.fstat(
+                        source._pinned_fd
+                    ).st_size:
+                        raise OSError("child output copy size mismatch")
+                    os.fsync(copied.fileno())
+                guard = publish_guard if publish_guard is not None else nullcontext()
+                with guard:
+                    self._raise_if_cancelled(cancel_requested)
+                    self._check_child_entry(source)
+                    try:
+                        os.link(temporary, target)
+                    except FileExistsError:
+                        return self._placement_result(target, skipped_existing=True)
+                source.delete()  # descriptor-relative identity recheck + unlink
+                return self._placement_result(target, skipped_existing=False)
+            finally:
+                temporary.unlink(missing_ok=True)
+        finally:
+            source.close()
+
     def _place_final_sync(
         self,
         source: Path,

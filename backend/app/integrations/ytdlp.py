@@ -17,7 +17,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-_PLAYLIST_ITEM_LIMIT = 25
+from app.domain.analysis import COLLECTION_ANALYSIS_WINDOW_LIMIT, AnalysisError
+from app.utils.urls import validate_media_url
 
 _PROGRESS_TEMPLATE = (
     "PROG %(progress.downloaded_bytes)s %(progress.total_bytes)s "
@@ -134,8 +135,27 @@ async def _spawn(
 
 async def _kill(process: asyncio.subprocess.Process) -> None:
     if process.returncode is None:
-        process.kill()
-        await process.wait()
+        try:
+            process.kill()
+        except ProcessLookupError:
+            pass  # The process exited between the returncode check and kill.
+    await process.wait()
+
+
+async def _kill_deferred_cancellation(
+    process: asyncio.subprocess.Process,
+) -> asyncio.CancelledError | None:
+    """Own cleanup until reaped; return the first caller cancellation to propagate."""
+    cleanup = asyncio.create_task(_kill(process))
+    cancellation = None
+    while not cleanup.done():
+        try:
+            await asyncio.shield(cleanup)
+        except asyncio.CancelledError as exc:
+            if cancellation is None:
+                cancellation = exc
+    cleanup.result()  # Retrieve failures; no detached cleanup task survives this call.
+    return cancellation
 
 
 @dataclass(slots=True)
@@ -180,7 +200,7 @@ class YtDlpAnalyzer:
         self,
         binary: str = "yt-dlp",
         timeout_seconds: float = 90.0,
-        playlist_item_limit: int = _PLAYLIST_ITEM_LIMIT,
+        playlist_item_limit: int = COLLECTION_ANALYSIS_WINDOW_LIMIT,
     ) -> None:
         self._binary = binary
         self._timeout_seconds = timeout_seconds
@@ -214,6 +234,40 @@ class YtDlpAnalyzer:
             raise map_failure(stderr.decode("utf-8", errors="replace"))
         return _parse_info_json(stdout)
 
+    async def probe_child(self, source_url: str) -> dict[str, Any]:
+        """Probe one persisted child URL, never a collection or flat preview."""
+        try:
+            url = validate_media_url(source_url)
+        except (AnalysisError, ValueError) as exc:
+            raise YtDlpError(YtDlpFailureKind.UNSUPPORTED_URL) from exc
+        process = await _spawn([
+            self._binary, "--ignore-config", "--no-warnings", "--dump-single-json",
+            "--skip-download", "--no-playlist", "--playlist-items", "1", "--", url,
+        ])
+        cancellation = None
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(), timeout=self._timeout_seconds
+            )
+        except TimeoutError:
+            raise YtDlpError(
+                YtDlpFailureKind.TIMEOUT,
+                detail=f"yt-dlp exceeded {self._timeout_seconds}s",
+            ) from None
+        except asyncio.CancelledError as exc:
+            cancellation = exc
+            raise
+        finally:
+            cleanup_cancellation = await _kill_deferred_cancellation(process)
+            if cancellation is None and cleanup_cancellation is not None:
+                raise cleanup_cancellation
+        if process.returncode != 0:
+            raise map_failure(stderr.decode("utf-8", errors="replace"))
+        info = _parse_info_json(stdout)
+        if info.get("_type") in ("playlist", "multi_video") or "entries" in info:
+            raise YtDlpError(YtDlpFailureKind.MALFORMED_OUTPUT)
+        return info
+
 
 ProcessCallback = Callable[[asyncio.subprocess.Process], None]
 
@@ -233,6 +287,7 @@ class YtDlpDownloader:
         output_template: str,
         on_progress: Callable[[DownloadProgress], None],
         on_process_started: ProcessCallback | None = None,
+        child_output: bool = False,
     ) -> list[str]:
         """Download one format and return the produced file paths."""
         command = [
@@ -253,6 +308,8 @@ class YtDlpDownloader:
             "--no-simulate",
             url,
         ]
+        if child_output:
+            command[-1:-1] = ["--playlist-items", "1", "--"]
         process = await _spawn(command)
         if on_process_started is not None:
             on_process_started(process)
@@ -281,7 +338,7 @@ class YtDlpDownloader:
                             on_progress(progress)
                     elif line.startswith("[") or not line:
                         continue
-                    elif Path(line).is_file():
+                    elif child_output or Path(line).is_file():
                         if line not in produced_files:
                             produced_files.append(line)
                 await process.wait()
@@ -299,11 +356,26 @@ class YtDlpDownloader:
         finally:
             if process.returncode is None:
                 await _kill(process)
+            if child_output and stderr_task.cancelled():
+                await asyncio.gather(stderr_task, return_exceptions=True)
+            elif child_output and not stderr_task.done():
+                await _finish_stderr_drain(stderr_task)
+                await asyncio.gather(stderr_task, return_exceptions=True)
 
         await _finish_stderr_drain(stderr_task)
         if process.returncode != 0:
             stderr = b"".join(stderr_chunks).decode("utf-8", errors="replace")
             raise map_failure(stderr)
+        if child_output:
+            # Validate the expected CLI output name, not filesystem ownership.
+            # No resolve/stat here: StorageService validates child ownership.
+            expected = Path(output_template)
+            if len(produced_files) != 1:
+                raise YtDlpError(YtDlpFailureKind.MALFORMED_OUTPUT)
+            output = Path(produced_files[0])
+            if (output.parent != expected.parent or not output.suffix
+                    or output.name != expected.name.replace("%(ext)s", output.suffix[1:])):
+                raise YtDlpError(YtDlpFailureKind.MALFORMED_OUTPUT)
         return produced_files
 
 

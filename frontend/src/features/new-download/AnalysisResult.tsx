@@ -1,12 +1,24 @@
 import type { NormalizedAnalysis, NormalizedFormat } from "../../api/analysis";
+import type { CollectionMode } from "../../api/jobs";
 import { formatFileSize, formatDuration } from "./format";
 import { platformLabel } from "./platforms";
+import { CollectionSelection } from "./CollectionSelection";
 
 interface AnalysisResultProps {
   result: NormalizedAnalysis;
   selectedVariantId: string | null;
+  /** Snapshot-scoped collection selection; empty for single media. */
+  selectedCollectionItemIds: readonly string[];
+  /** Explicit collection-level mode; null until the user chooses one. */
+  collectionMode: CollectionMode | null;
   isCreatingJob: boolean;
+  /** A pending re-analysis must not post the stale snapshot. */
+  isAnalyzing: boolean;
   onSelectVariant: (variantId: string) => void;
+  onToggleCollectionItem: (itemId: string) => void;
+  onSelectAllCollectionItems: () => void;
+  onDeselectAllCollectionItems: () => void;
+  onSelectCollectionMode: (mode: CollectionMode) => void;
   onDownload: () => void;
   onUseDetectedPlatform: (platform: string) => void;
 }
@@ -41,14 +53,31 @@ function audioLabel(format: NormalizedFormat): string {
 export function AnalysisResult({
   result,
   selectedVariantId,
+  selectedCollectionItemIds,
+  collectionMode,
   isCreatingJob,
+  isAnalyzing,
   onSelectVariant,
+  onToggleCollectionItem,
+  onSelectAllCollectionItems,
+  onDeselectAllCollectionItems,
+  onSelectCollectionMode,
   onDownload,
   onUseDetectedPlatform,
 }: AnalysisResultProps) {
   const duration = formatDuration(result.duration_seconds);
   const videoFormats = result.formats.filter((format) => format.kind !== "audio_only");
   const audioFormats = result.formats.filter((format) => format.kind === "audio_only");
+  const isCollection = result.content_type === "collection";
+  const collection = result.collection ?? null;
+  // Only the analysis-window snapshot offers real selectable items; legacy
+  // stored previews stay read-only and require re-analysis.
+  const hasSelectableWindow =
+    isCollection && collection != null && collection.selection_scope === "analysis_window";
+  const selectionPending = isCreatingJob || isAnalyzing;
+  const selectionReady = isCollection
+    ? collectionMode != null && selectedCollectionItemIds.length > 0
+    : selectedVariantId != null;
 
   return (
     <article className="analysis-result" aria-label="Analysis result">
@@ -106,26 +135,40 @@ export function AnalysisResult({
             </div>
           </header>
 
-          {result.collection && (
-            <section className="collection-preview">
-              <h3>
-                {result.collection.total_items} items
-              </h3>
-              <ul>
-                {result.collection.preview_items.map((item) => (
-                  <li key={item.source_id ?? item.position}>
-                    <span className="item-position">
-                      {String(item.position ?? 0).padStart(2, "0")}
-                    </span>
-                    <span className="item-title">{item.title ?? "Untitled"}</span>
-                  </li>
-                ))}
-              </ul>
-              {result.collection.truncated && (
-                <p className="muted-note">Only a preview is shown.</p>
-              )}
-            </section>
-          )}
+          {collection != null &&
+            (hasSelectableWindow ? (
+              <CollectionSelection
+                collection={collection}
+                selectedItemIds={selectedCollectionItemIds}
+                disabled={selectionPending}
+                onToggleItem={onToggleCollectionItem}
+                onSelectAll={onSelectAllCollectionItems}
+                onDeselectAll={onDeselectAllCollectionItems}
+              />
+            ) : (
+              <section className="collection-preview">
+                <h3>
+                  {collection.total_items} items
+                </h3>
+                <ul>
+                  {collection.preview_items.map((item) => (
+                    <li key={item.source_id ?? item.position}>
+                      <span className="item-position">
+                        {String(item.position ?? 0).padStart(2, "0")}
+                      </span>
+                      <span className="item-title">{item.title ?? "Untitled"}</span>
+                    </li>
+                  ))}
+                </ul>
+                {collection.truncated && (
+                  <p className="muted-note">Only a preview is shown.</p>
+                )}
+                <p className="muted-note">
+                  This analysis predates selectable items. Re-analyze the source
+                  to choose items for a collection download.
+                </p>
+              </section>
+            ))}
         </div>
       </section>
 
@@ -144,48 +187,95 @@ export function AnalysisResult({
           </div>
         </header>
         <div className="result-panel-body">
-          {videoFormats.length > 0 && (
+          {hasSelectableWindow && collection != null ? (
             <section className="format-group">
-              <h3>Video formats</h3>
-              <ul>
-                {videoFormats.map((format) => (
-                  <li key={format.variant_id} className="format-item">
-                    <label className="format-option">
-                      <input
-                        type="radio"
-                        name="variant"
-                        value={format.variant_id}
-                        checked={selectedVariantId === format.variant_id}
-                        onChange={() => onSelectVariant(format.variant_id)}
-                      />
-                      <span className="format-label">{videoLabel(format)}</span>
-                    </label>
-                  </li>
-                ))}
-              </ul>
+              <h3>Collection output</h3>
+              <fieldset className="destination-group">
+                <legend>Audio / Video</legend>
+                <label className="destination-option">
+                  <input
+                    type="radio"
+                    name="collection-mode"
+                    value="audio"
+                    checked={collectionMode === "audio"}
+                    disabled={selectionPending}
+                    onChange={() => onSelectCollectionMode("audio")}
+                  />
+                  Audio
+                </label>
+                <label className="destination-option">
+                  <input
+                    type="radio"
+                    name="collection-mode"
+                    value="video"
+                    checked={collectionMode === "video"}
+                    disabled={selectionPending}
+                    onChange={() => onSelectCollectionMode("video")}
+                  />
+                  Video
+                </label>
+              </fieldset>
+              <p className="muted-note">
+                One profile applies to the whole collection: Original / Best
+                Available. Each item keeps the best native result its own
+                source offers, so containers and codecs may differ between
+                items. Video quality is never upgraded or upscaled.
+              </p>
             </section>
-          )}
+          ) : isCollection ? (
+            <section className="format-group">
+              <h3>Collection output</h3>
+              <p className="muted-note">
+                Re-analyze this source to choose items and start a collection
+                download.
+              </p>
+            </section>
+          ) : (
+            <>
+              {videoFormats.length > 0 && (
+                <section className="format-group">
+                  <h3>Video formats</h3>
+                  <ul>
+                    {videoFormats.map((format) => (
+                      <li key={format.variant_id} className="format-item">
+                        <label className="format-option">
+                          <input
+                            type="radio"
+                            name="variant"
+                            value={format.variant_id}
+                            checked={selectedVariantId === format.variant_id}
+                            onChange={() => onSelectVariant(format.variant_id)}
+                          />
+                          <span className="format-label">{videoLabel(format)}</span>
+                        </label>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              )}
 
-          {audioFormats.length > 0 && (
-            <section className="format-group">
-              <h3>Audio formats</h3>
-              <ul>
-                {audioFormats.map((format) => (
-                  <li key={format.variant_id} className="format-item">
-                    <label className="format-option">
-                      <input
-                        type="radio"
-                        name="variant"
-                        value={format.variant_id}
-                        checked={selectedVariantId === format.variant_id}
-                        onChange={() => onSelectVariant(format.variant_id)}
-                      />
-                      <span className="format-label">{audioLabel(format)}</span>
-                    </label>
-                  </li>
-                ))}
-              </ul>
-            </section>
+              {audioFormats.length > 0 && (
+                <section className="format-group">
+                  <h3>Audio formats</h3>
+                  <ul>
+                    {audioFormats.map((format) => (
+                      <li key={format.variant_id} className="format-item">
+                        <label className="format-option">
+                          <input
+                            type="radio"
+                            name="variant"
+                            value={format.variant_id}
+                            checked={selectedVariantId === format.variant_id}
+                            onChange={() => onSelectVariant(format.variant_id)}
+                          />
+                          <span className="format-label">{audioLabel(format)}</span>
+                        </label>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              )}
+            </>
           )}
 
           <fieldset className="destination-group">
@@ -212,7 +302,7 @@ export function AnalysisResult({
             <button
               type="button"
               className="button-primary"
-              disabled={selectedVariantId == null || isCreatingJob}
+              disabled={!selectionReady || selectionPending}
               onClick={onDownload}
             >
               {isCreatingJob ? "Starting…" : "Download"}

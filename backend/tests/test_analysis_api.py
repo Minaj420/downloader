@@ -1,4 +1,5 @@
 import asyncio
+import json
 import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -35,6 +36,7 @@ def _insert_session(
     *,
     owner_id: str = "local",
     expires_at: datetime | None = None,
+    normalized_result_json: str | None = None,
 ) -> None:
     async def _insert() -> None:
         engine = create_async_engine(f"sqlite+aiosqlite:///{settings.state_dir / 'downloader.db'}")
@@ -47,6 +49,7 @@ def _insert_session(
                     owner_id=owner_id,
                     source_url="https://example.com/old",
                     status="completed",
+                    normalized_result_json=normalized_result_json,
                     created_at=now,
                     expires_at=expires_at or now + timedelta(hours=1),
                 )
@@ -140,6 +143,83 @@ class TestAnalyzeEndpoint:
         assert body["collection"]["total_items"] == 8
         assert len(body["collection"]["preview_items"]) == 3
         assert body["collection"]["truncated"] is True
+
+    def test_collection_snapshot_round_trip_does_not_reextract(
+        self, client: TestClient, analyzer: FakeAnalyzer, settings: Settings
+    ) -> None:
+        analyzer.result = {
+            **playlist_payload(),
+            "playlist_count": 201,
+            "entries": [
+                {"id": "duplicate", "url": "https://example.com/a", "playlist_index": 2},
+                None,
+                {"id": "duplicate", "url": "https://example.com/a", "playlist_index": 2},
+                {"url": "file:///etc/passwd"},
+            ],
+        }
+        created = client.post("/api/v1/analysis", json={"url": YOUTUBE_URL}).json()
+        collection = created["collection"]
+        assert collection["total_items"] == 201
+        assert collection["selected_item_limit"] == 200
+        assert collection["selectable_items"] == 2
+        assert collection["selection_truncated"] is True
+        analyzer.result = single_video_payload()
+        fetched = client.get(f"/api/v1/analysis/{created['analysis_id']}")
+        assert fetched.status_code == 200
+        assert fetched.json()["result"] == created
+        assert len(analyzer.calls) == 1
+
+        # A populated collection snapshot is no more visible across owners.
+        _insert_session(
+            settings, "private-collection", owner_id="someone-else",
+            normalized_result_json=json.dumps(created),
+        )
+        assert client.get("/api/v1/analysis/private-collection").status_code == 404
+
+    def test_old_stored_collection_keeps_preview_without_promoting_selection(
+        self, client: TestClient, settings: Settings
+    ) -> None:
+        old = {
+            "analysis_id": "old-collection",
+            "original_url": YOUTUBE_URL,
+            "detected_platform": "youtube",
+            "detected_platform_label": "YouTube",
+            "content_type": "collection",
+            "formats": [],
+            "collection": {
+                "total_items": 300, "truncated": True,
+                "preview_items": [{"source_id": "a", "url": "https://example.com/a"}],
+            },
+        }
+        _insert_session(settings, "old-collection", normalized_result_json=json.dumps(old))
+        response = client.get("/api/v1/analysis/old-collection")
+        assert response.status_code == 200
+        collection = response.json()["result"]["collection"]
+        assert collection["preview_items"][0]["source_id"] == "a"
+        assert collection["total_items"] == 300
+        assert collection["items"] == []
+        assert collection["selectable_items"] == 0
+        assert collection["selection_scope"] == "legacy_preview"
+        assert collection["selected_item_limit"] == 200
+        assert collection["total_items_known"] is False
+        assert collection["selection_truncated"] is True
+
+    def test_old_stored_single_payload_still_loads(
+        self, client: TestClient, settings: Settings
+    ) -> None:
+        old = {
+            "analysis_id": "old-single", "original_url": YOUTUBE_URL,
+            "detected_platform": "youtube", "detected_platform_label": "YouTube",
+            "content_type": "single",
+            "formats": [{"variant_id": "audio-aac-128", "format_id": "140",
+                         "kind": "audio_only", "ext": "m4a"}],
+        }
+        _insert_session(settings, "old-single", normalized_result_json=json.dumps(old))
+        response = client.get("/api/v1/analysis/old-single")
+        assert response.status_code == 200
+        result = response.json()["result"]
+        assert result["collection"] is None
+        assert result["formats"][0]["variant_id"] == "audio-aac-128"
 
     def test_platform_hint_is_forwarded_and_mismatch_reported(
         self, client: TestClient, analyzer: FakeAnalyzer

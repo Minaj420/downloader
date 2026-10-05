@@ -292,6 +292,10 @@ Additional conversion formats may include formats such as:
 
 Available options must be derived from the source and conversion rules.
 
+For a playlist/album job, Audio / Video mode and the output format/profile are chosen once at collection level, defaulting to `Original / Best Available`. The backend resolves that preference against each selected child's source. Original / Best Available preserves the most suitable available/native result; final containers and codecs may differ between children.
+
+Explicit conversion profiles may include MP3, M4A, Opus, or FLAC where meaningful; this is not a mandatory v0.1 supported-profile matrix. WAV is a future conversion example, not a required v0.1 profile. Conversion applies only to the selected children of that new job, never to existing Library media or files from past jobs. Existing Library bulk conversion/reprocessing is a separate future workflow. Per-item output profiles are out of scope for v0.1.
+
 The application must not imply that increasing a numeric bitrate creates quality absent from the source.
 
 FFmpeg may be used for conversion and metadata processing.
@@ -319,6 +323,8 @@ If the source maximum is 1080p:
 
 Where video and audio streams are separate, the backend may use `yt-dlp` and FFmpeg to produce the final playable media file.
 
+Collection-level video profiles such as `Best Available` or `Up to 1080p` resolve independently against each selected child's available source formats. A child below the requested ceiling uses an appropriate available quality, never upscaling. A profile is a source-aware preference, not a promise of identical quality, container, or codec across the collection.
+
 ---
 
 # 10. Playlist and Album Support
@@ -343,13 +349,19 @@ Album / Playlist
 [ Deselect All ]
 ```
 
-All items may be selected by default.
+Analyzed, selectable items may be selected by default, subject to the selection limit below.
 
 Users must be able to exclude individual items.
 
+v0.1 has a hard cap of **200 selected items per job**, enforced by the backend as well as the UI. This is not a limit of 200 total items in the source collection.
+
+`Select All` selects only the currently available, analyzed, selectable items, within that cap. It must not silently include unseen, unanalyzed, unavailable, or over-cap items. For large sources the UI must explicitly explain the v0.1 selection limit and the scope of the available selection; it must not imply that the entire source will be downloaded. Analysis retrieval and any pagination strategy remain technical design follow-ups, not requirements established here.
+
+Each collection job uses one collection-level Audio / Video mode and output format/profile as described in sections 8–9; individual output profiles are not available in v0.1.
+
 The UI should show available metadata before download when possible.
 
-Very large automatic operations such as downloading an entire channel/profile are not required in v0.1.
+Entire channel/profile bulk downloads are out of scope for v0.1.
 
 ---
 
@@ -551,6 +563,48 @@ Video DEF
 The architecture should support a configurable concurrency limit.
 
 A conservative default concurrency value may be used initially.
+
+For playlist/album jobs, preserve the real completed, failed, and total selected-item counters. A terminal mixed result with some completed children and at least one failed child has parent state `failed`; there is no new partial-success state. Completed children and their outputs remain valid and must not be repeated. Child-specific failure reasons remain inspectable; a parent `partial_failure` error code may summarize this mixed result but is not a job state.
+
+Parent Cancel cancels active child work and prevents not-started children from running, without touching completed children. Parent Retry reruns only failed, cancelled, or incomplete children; completed children are not downloaded again. Per-child Cancel / Retry UI is out of scope for v0.1. When all selected children have failed, the parent is `failed` with stable `all_children_failed` error semantics: that parent error code is stable whether the child failure reasons are homogeneous or heterogeneous, child-specific reasons and error counters remain inspectable, and neither the first/last child error nor `partial_failure` is substituted. Parent Retry is enabled only when at least one retry-eligible failed, cancelled, or incomplete child exists; the locked child retry-eligibility classification is recorded below; exact error message wording, schema migrations and new public API surface remain outside that classification. When parent cancellation races with child failure, precedence is decided by durable state only: if the Cancel request is persisted before the parent's terminalization transaction, the parent is `cancelled`; if a failure terminal was committed first, the parent remains `failed` and a later Cancel cannot supersede it. In-memory event timing is never the decision source, and completed children and their outputs remain immutable. Shutdown policy and durability/data-schema choices remain outside this product paragraph.
+
+M5 implementation status: collection dispatch, durable Parent Cancel, Retry, startup recovery and
+orderly shutdown settlement are implemented. The contracts below remain authoritative; independent
+milestone review closure and fresh full quality gates are still pending.
+
+Locked parent Cancel lifecycle decisions (implemented contract): after a durable Parent Cancel acceptance and the full attempt-owned drain, queued or active children (the active states analyzing, downloading, post_processing, finalizing) become `cancelled` in one atomic settlement; existing failed child states and reasons and the failed counter remain real, completed children, their outputs and catalog entries stay immutable, and the settlement derives the actual total/completed/failed N/C/F with no new cancelled counter. The all-completed precedence is expressly confined to all selected children completed: when every selected child's completion is already durably committed (a nonempty all-completed selected set) and the parent success terminal is not yet committed, a committing Cancel marker settles the parent as `completed`, not `cancelled` — children win — while a success terminal committed first rejects a late Cancel. This decision is not an extension of the narrow F >= 1 failure-race precedence, which stays locked: a Cancel request persisted first yields `cancelled`, a failure terminal committed first leaves the parent `failed`. NULL-marker child claim/forward/progress/completion predicates remain unchanged, no completion or catalog insert is permitted after the marker, and the marker is not cleared on success. This paragraph defines no helper design, new API, message wording, retry eligibility, or error reset.
+
+**Locked collection Retry eligibility (implemented contract).** User-locked product decisions implemented by the collection Retry lifecycle: all cancelled children are retry-eligible regardless of their persisted reason or error code. Parent Retry is permitted only on a terminal failed or cancelled collection parent; completed, queued/active and unknown/corrupt parents reject Retry. After the full old-attempt drain, old-attempt children in queued, analyzing, downloading, post_processing, or finalizing count as incomplete and are retry-eligible, and the queued state is prepared inside the same successful atomic retry/reset, not persisted as a new status. For failed children, a known persisted error code stays authoritative against the existing `job_error_code_retryable` list, which is not broadened; a missing or unknown persisted code is ineligible, and transient `JobError.retryable` never overrides the persisted code classification, so no new persisted override is introduced. Parent retry eligibility is the existence of at least one retry-eligible child, never the aggregate parent error code. Completed children and their outputs stay immutable and are never rerun, even after Library deletion; the retry settlement preserves the actual N/C counters with no new cancelled counter, and there is no requirement to reset all ineligible children or reclassify unknown/corrupt entries. This paragraph defines no API, migration, recovery, or shutdown design; recovery normalization and shutdown remain outside this contract.
+
+**Locked collection startup recovery precedence (implemented contract).** User-locked product decision implemented by collection startup recovery: when startup recovery finds a previously active locked collection parent whose full nonempty actual selected child set is already committed with statuses only completed or failed, actual settled child facts win before interruption normalization — all completed (C = N, F = 0) settles the parent `completed`; F = N settles it `failed` with stable `all_children_failed`; C > 0 with F > 0 and C + F = N settles it `failed` with `partial_failure`. This precedence is evaluated before the active→interrupted failed-child normalization and is not generated by it; cached parent counters and event timing are never decision inputs. Existing completed catalog entries and outputs and persisted failed child reasons stay immutable, and the settlement uses the actual N/C/F with no synthesized counts or fabricated partial failure. Recovery decisions are applied before new child claims; an already-terminal parent is unchanged, and a normal queued parent with a NULL marker remains queued. When a persisted Cancel marker exists on a queued/active parent, the locked Parent Cancel matrix applies unchanged (pending/queued/active children become `cancelled`, failed/completed children stay immutable, all-completed children win) and the marker is never cleared at startup. Without a marker, the existing interruption normalization stands: the interrupted active child becomes `failed` with `interrupted_by_restart`, queued children are unchanged, existing failed/completed children are preserved, and the parent becomes `failed` with `interrupted_by_restart` and real atomic N/C/F (see ARCHITECTURE §21). This paragraph records only the settled child facts precedence for user-selected locked collections; cancelled children under a NULL marker, unknown/empty/corrupt sets, terminal, durability and state handling, and auto-resume/Retry/shutdown policy stay unsupported and separately scoped.
+
+**Locked collection orderly shutdown settlement (implemented contract).** User-locked product decision recorded now with
+ARCHITECTURE §19 and the §21 note below: on a normal orderly shutdown, `queue_manager.stop()` stops new
+claims, awaits the full drain of collection attempts and ongoing API Cancel/Retry operations (including
+probes, downloader/merge processes, storage-gate helpers, callbacks, owned transactions and session
+close), and then commits collection durable settlement using the already locked startup recovery matrix
+before it returns; only after `queue_manager.stop()` returns does `engine.dispose()` close the database. No
+new recovery matrix is introduced. The settlement applies the locked branches as-is: a nonempty selected
+child set already committed with statuses only completed or failed settles from actual facts with normal
+precedence before interruption normalization (all completed (C = N, F = 0) → `completed`; F = N →
+`failed`/`all_children_failed`; C > 0 with F > 0 → `failed`/`partial_failure`); a pending actual active child
+becomes `failed`/`interrupted_by_restart` and the parent `failed`/`interrupted_by_restart` with real atomic
+N/C/F; queued siblings are unchanged; and a committed Cancel marker keeps the locked Cancel matrix authoritative
+with the marker never cleared. No callback or runtime event timing is a decision input, and no synthetic
+User Cancel marker is produced. Existing durably terminal parents stay unchanged, and completed outputs,
+catalog entries and persisted failed reasons are preserved. Unclaimed queued jobs are not interrupted
+merely by a shutdown: a queued parent without a marker remains queued, and an already committed Cancel
+obeys the existing Cancel contract — no ignore-marker behaviour is invented. The full owned drain is
+mandatory and technical, recorded per the existing pattern: the database stays open until settlement operations
+finish, and the SQL writer and lifecycle locks are held outside process/helper waits to avoid a stop-phase
+deadlock; no new coordinator API or implementation design is introduced. Existing single-job shutdown is
+unchanged; this is a collection-only decision. Not chosen and unsupported: unknown/corrupt/empty child
+sets, cancelled children under a NULL marker, any new status/API/migration, auto-resume or Retry on shutdown,
+and any new durability guarantee for SIGKILL or unbounded force-kill behaviour. If the orderly shutdown
+cannot finish or commit its settlement, no completed state is claimed and the existing full startup recovery
+applies at the next startup — this adds no timeout policy. Collection orderly shutdown settlement and
+production dispatch are implemented; milestone acceptance still requires independent review closure
+and fresh full quality gates.
 
 ---
 
@@ -925,6 +979,9 @@ Do not implement these unless the product specification is deliberately revised:
 - Plex API integration
 - explicit Plex scan triggering
 - full channel/profile downloads
+- per-item output profiles for collection jobs
+- per-child Cancel / Retry UI
+- existing Library bulk conversion/reprocessing
 - scheduled downloads
 - subscription synchronization
 - Watch Later synchronization
@@ -971,6 +1028,9 @@ Possible explicit library refresh/scan.
 ## Large Collection Workflows
 Channels, profiles, subscriptions, and other potentially very large collections.
 
+## Existing Library Conversion / Reprocessing
+Bulk conversion or reprocessing of already downloaded Library media is separate from new-job conversion. Additional conversion profiles such as WAV may be considered later.
+
 ## Scheduled Downloads
 Run defined download jobs automatically.
 
@@ -978,6 +1038,9 @@ Run defined download jobs automatically.
 Redis/Celery or another distributed job system only if actual scale/reliability needs justify it.
 
 Do not introduce this infrastructure preemptively.
+
+## Authorized DRM Licensing / Decryption Integration
+Post-v0.1 research/evaluation item only. Integration with an official, provider-supported DRM licensing/decryption path would be considered only for content the user is validly licensed to access and explicitly permitted to save/download, and only after upfront technical, legal, and provider-compatibility feasibility evaluation. No supported-provider guarantee, provider list, or implementation design is committed here. This must not become DRM circumvention, key extraction, or protection bypass; the existing no-circumvention principle remains.
 
 ---
 
@@ -1023,6 +1086,8 @@ The product is considered functionally ready for v0.1 when a user can:
 18. Remove an item from Library without deleting its file.
 19. Explicitly delete a physical file after confirmation.
 20. Restart the Docker application without losing persistent Library state.
+
+Release gate: this functional readiness is complemented by a one-time v0.1 Release Security Hardening / Audit stage (ARCHITECTURE section 59), run after Milestone 9 and before final v0.1 release acceptance; unresolved validated Critical/Important security findings block the release.
 
 ---
 

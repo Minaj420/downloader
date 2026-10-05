@@ -1,6 +1,7 @@
 import type { ActivityEvent } from "../../api/activity";
 import type { Job, JobStatus } from "../../api/jobs";
-import { isActiveJob } from "../../api/jobs";
+import { canRetryJob, isActiveJob } from "../../api/jobs";
+import { CollectionProgress, type ItemsLoadStatus } from "./CollectionProgress";
 import { ActivityPanel } from "./ActivityPanel";
 import type { ActivityLoadStatus } from "./activity";
 import { formatFileSize, formatDuration } from "./format";
@@ -15,6 +16,7 @@ interface JobProgressProps {
   activityEvents: ActivityEvent[];
   activityLoadStatus: ActivityLoadStatus;
   onRefreshActivity: () => void;
+  itemsLoadStatus: ItemsLoadStatus;
 }
 
 const STATUS_LABELS: Record<JobStatus, string> = {
@@ -44,8 +46,14 @@ export function JobProgress({
   activityEvents,
   activityLoadStatus,
   onRefreshActivity,
+  itemsLoadStatus,
 }: JobProgressProps) {
-  const percent = Math.min(Math.max(job.progress.percent, 0), 100).toFixed(0);
+  const collection = job.job_type === "collection";
+  const value = Math.min(Math.max(job.progress.percent, 0), 100);
+  // Never round an incomplete collection up to 100%.
+  const percent = collection
+    ? String(Math.min(Number(value.toFixed(1)), value < 100 ? 99.9 : 100))
+    : value.toFixed(0);
   const speed = speedLabel(job.progress.speed_bytes_per_second);
   const eta = formatDuration(job.progress.eta_seconds);
   const size =
@@ -64,12 +72,12 @@ export function JobProgress({
         </span>
       </header>
 
-      {isActiveJob(job.status) && (
+      {(isActiveJob(job.status) || collection) && (
         <>
           <div
             className="progress-bar"
             role="progressbar"
-            aria-valuenow={Number(percent)}
+             aria-valuenow={collection ? value : Number(percent)}
             aria-valuemin={0}
             aria-valuemax={100}
           >
@@ -85,11 +93,13 @@ export function JobProgress({
             {speed && <span>{speed}</span>}
             {eta && <span>ETA {eta}</span>}
           </p>
-          <button type="button" className="button-danger" onClick={onCancel} disabled={isRetrying || isCancelling}>
+          {isActiveJob(job.status) && <button type="button" className="button-danger" onClick={onCancel} disabled={isRetrying || isCancelling}>
             {isCancelling ? "Cancelling…" : "Cancel"}
-          </button>
+          </button>}
         </>
       )}
+
+      {collection && <CollectionProgress job={job} loadStatus={itemsLoadStatus} />}
 
       {job.status === "completed" && (
         <p className="job-result" role="status">
@@ -105,7 +115,7 @@ export function JobProgress({
         <p className="job-result">Download cancelled.</p>
       )}
 
-      {job.status === "failed" && job.error?.retryable && (
+      {canRetryJob(job) && (
         <button type="button" className="button-secondary" onClick={onRetry} disabled={isRetrying || isCancelling}>
           {isRetrying ? "Retrying…" : "Retry"}
         </button>

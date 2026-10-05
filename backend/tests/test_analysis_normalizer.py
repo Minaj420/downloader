@@ -1,11 +1,154 @@
 import re
 from typing import Any
 
+import pytest
+
 from app.domain.analysis import NormalizedAnalysis
-from app.services.analysis_normalizer import build_normalized_analysis, normalize_formats
+from app.services.analysis_normalizer import (
+    build_normalized_analysis,
+    normalize_collection,
+    normalize_formats,
+)
 from tests.yt_dlp_samples import playlist_payload, single_video_payload
 
 _VARIANT_ID_MAX_LENGTH = 128  # API/DB limit for variant ids
+
+
+def test_collection_identity_uses_snapshot_and_uncompacted_source_order() -> None:
+    raw = {
+        "entries": [
+            {"url": "https://example.com/a", "playlist_index": 7},
+            None,
+            {"id": "duplicate", "url": "https://example.com/b", "playlist_index": 7},
+            {"id": "duplicate", "url": "https://example.com/b", "playlist_index": "bad"},
+        ],
+        "playlist_count": 4,
+    }
+    collection = normalize_collection(raw, analysis_id="snapshot-a")
+    assert collection is not None
+    assert [item.source_order for item in collection.items] == [1, 2, 3, 4]
+    assert [item.position for item in collection.items] == [7, 2, 7, 4]
+    assert [item.source_id for item in collection.items] == [None, None, "duplicate", "duplicate"]
+    assert [item.selectable for item in collection.items] == [True, False, True, True]
+    assert collection.items[1].unavailable_reason == "unavailable"
+    ids = [item.item_id for item in collection.items]
+    assert len(set(ids)) == 4
+    assert all(re.fullmatch(r"item-[0-9a-f]{64}", item_id) for item_id in ids)
+    assert normalize_collection(raw, analysis_id="snapshot-a") == collection
+    other = normalize_collection(raw, analysis_id="snapshot-b")
+    assert other is not None
+    assert set(ids).isdisjoint(item.item_id for item in other.items)
+    assert [item.position for item in collection.preview_items] == [7, 7, 3]
+
+
+@pytest.mark.parametrize(
+    "url",
+    [None, "source-id", "/relative", "//example.com/a", "file:///etc/passwd",
+     "ftp://example.com/a", "https://", "https://[invalid", "--exec=command"],
+)
+def test_collection_unsafe_urls_are_not_selectable(url: str | None) -> None:
+    collection = normalize_collection({"entries": [{"url": url}]}, analysis_id="snapshot")
+    assert collection is not None
+    assert collection.selectable_items == 0
+    assert collection.items[0].url is None
+    assert collection.items[0].unavailable_reason == "invalid_url"
+
+
+@pytest.mark.parametrize("availability", ["private", "needs_auth", "unavailable"])
+def test_collection_unavailable_entries_with_urls_are_not_selectable(availability: str) -> None:
+    collection = normalize_collection(
+        {"entries": [{"url": "https://example.com/a", "availability": availability}]},
+        analysis_id="snapshot",
+    )
+    assert collection is not None
+    assert collection.items[0].selectable is False
+    assert collection.items[0].unavailable_reason == "unavailable"
+
+
+def test_collection_url_candidates_use_existing_boundary_without_synthesis() -> None:
+    collection = normalize_collection(
+        {"entries": [{"webpage_url": "/bad", "url": " https://example.com/a "}]},
+        analysis_id="snapshot",
+    )
+    assert collection is not None
+    assert collection.items[0].url == "https://example.com/a"
+    assert collection.items[0].selectable is True
+    assert collection.preview_items[0].url == "/bad"
+
+
+@pytest.mark.parametrize("total", [25, 200, 201, 1000])
+def test_collection_source_total_is_not_the_selected_cap_or_analysis_window(total: int) -> None:
+    collection = normalize_collection(
+        {"entries": [{"url": "https://example.com/a"}] * total, "playlist_count": total},
+        analysis_id="snapshot",
+    )
+    assert collection is not None
+    assert collection.total_items == total
+    assert collection.total_items_known is True
+    assert collection.analyzed_items == collection.selectable_items == 25
+    assert collection.analysis_window_limit == 25
+    assert collection.selected_item_limit == 200
+    assert collection.selection_scope == "analysis_window"
+    assert collection.selection_truncated is (total > 25)
+    assert collection.truncated is (total > 25)
+    assert "200 selected items per job" in collection.selection_limit_message
+    assert "unseen items are not included" in collection.selection_limit_message
+    assert len(collection.preview_items) == 25
+    assert len(collection.items) == 25
+    assert "selected" not in collection.items[0].model_dump()
+
+
+def test_collection_bounded_unknown_source_total_is_a_lower_bound() -> None:
+    collection = normalize_collection(
+        {"entries": [{"url": "https://example.com/a"}] * 25}, analysis_id="snapshot"
+    )
+    assert collection is not None
+    assert collection.total_items == 25
+    assert collection.total_items_known is False
+    assert collection.selection_truncated is True
+    assert collection.truncated is True
+
+
+def test_collection_without_entries_and_without_count_is_not_a_collection() -> None:
+    assert normalize_collection({"entries": []}, analysis_id="snapshot") is None
+
+
+def test_collection_known_empty_source_count_is_zero_and_known() -> None:
+    collection = normalize_collection(
+        {"entries": [], "playlist_count": 0}, analysis_id="snapshot"
+    )
+    assert collection is not None
+    assert collection.total_items == 0
+    assert collection.total_items_known is True
+    assert collection.selection_truncated is False
+    assert collection.truncated is False
+    assert collection.items == []
+    assert collection.analyzed_items == 0
+    assert collection.selectable_items == 0
+
+
+def test_collection_positive_count_without_entries_stays_known_total() -> None:
+    collection = normalize_collection(
+        {"entries": [], "playlist_count": 3}, analysis_id="snapshot"
+    )
+    assert collection is not None
+    assert collection.total_items == 3
+    assert collection.total_items_known is True
+    assert collection.selection_truncated is True
+    assert collection.truncated is True
+
+
+@pytest.mark.parametrize(
+    "count", [None, True, False, -1, "4", 4.0, 4.5, "bad"],
+)
+def test_collection_malformed_count_stays_unknown(count: object) -> None:
+    collection = normalize_collection(
+        {"entries": [{"url": "https://example.com/a"}], "playlist_count": count},
+        analysis_id="snapshot",
+    )
+    assert collection is not None
+    assert collection.total_items == 1
+    assert collection.total_items_known is False
 
 
 def assert_label_variant_id(variant_id: str) -> tuple[str, str]:
@@ -239,6 +382,60 @@ def test_resolution_string_only_sources_stay_distinct_and_ordered() -> None:
     assert by_id["video-1080"].label == "1080p"
     assert by_id["video-720"].label == "720p"
     assert by_id["video-480"].label == "480p"
+
+
+@pytest.mark.parametrize("label, height, width", [
+    ("0p", None, None),
+    ("1920x0", None, 1920),
+    ("0x1080", 1080, None),
+    ("0x0", None, None),
+    ("9" * 5000 + "p", None, None),
+    ("9" * 400 + "p", None, None),
+    ("1920x" + "9" * 5000, None, 1920),
+    ("1920x" + "9" * 400, None, 1920),
+    ("9" * 5000 + "x1080", 1080, None),
+    ("9" * 400 + "x1080", 1080, None),
+    ("1080.5p", None, None),
+    ("1e309p", None, None),
+    ("-1080p", None, None),
+])
+def test_label_axes_are_safe_positive_and_independent(
+    label: str, height: int | None, width: int | None,
+) -> None:
+    raw = [{"format_id": "label", "vcodec": "h264", "acodec": "aac",
+            "resolution": label}]
+    formats = normalize_formats(raw)
+    assert len(formats) == 2
+    assert all((fmt.height, fmt.width) == (height, width) for fmt in formats)
+    choice = formats[1]
+    if height is not None:
+        assert choice.variant_id == f"video-{height}"
+        assert choice.label == f"{height}p"
+    elif width is not None:
+        assert choice.variant_id == f"video-width-{width}"
+        assert choice.label == f"{width}px wide"
+    else:
+        assert_label_variant_id(choice.variant_id)
+        assert choice.label == label
+    assert normalize_formats(raw) == formats
+
+
+def test_label_width_only_identity_remains_distinct_from_positive_height() -> None:
+    raw = [
+        {"format_id": "width", "vcodec": "h264", "resolution": "1080x0"},
+        {"format_id": "height", "vcodec": "h264", "resolution": "1080p"},
+        {"format_id": "same-height", "vcodec": "h264", "resolution": "1920x1080"},
+    ]
+    formats = normalize_formats(raw)
+    assert [fmt.variant_id for fmt in formats] == [
+        "video-best", "video-1080", "video-width-1080",
+    ]
+    assert formats[1].height == 1080
+    assert formats[1].label == "1080p"
+    assert formats[2].height is None
+    assert formats[2].width == 1080
+    assert formats[2].label == "1080px wide"
+    assert normalize_formats(list(reversed(raw))) == formats
 
 
 def test_resolution_string_collapses_with_numeric_same_resolution() -> None:

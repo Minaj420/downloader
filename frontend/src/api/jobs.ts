@@ -37,6 +37,22 @@ export interface JobErrorBody {
   retryable: boolean;
 }
 
+export interface JobItem {
+  id: string;
+  item_id: string;
+  source_order: number;
+  source_id: string | null;
+  source_url: string;
+  title: string | null;
+  playlist_index: number | null;
+  track_number: number | null;
+  disc_number: number | null;
+  status: JobStatus;
+  progress: JobProgress;
+  final_path: string | null;
+  error: JobErrorBody | null;
+}
+
 export interface Job {
   id: string;
   analysis_id: string;
@@ -52,13 +68,50 @@ export interface Job {
   updated_at: string;
   started_at: string | null;
   completed_at: string | null;
+  // Collection jobs (M5): absent/null on legacy single-job responses.
+  job_type?: "single" | "collection";
+  collection_mode?: CollectionMode | null;
+  collection_profile?: CollectionProfile | null;
+  total_items?: number | null;
+  completed_items?: number | null;
+  failed_items?: number | null;
+  items?: JobItem[] | null;
 }
 
-export interface CreateJobRequest {
+export function canRetryJob(job: Job): boolean {
+  return Boolean(job.error?.retryable && (job.status === "failed" ||
+    (job.job_type === "collection" && job.status === "cancelled")));
+}
+
+export type CollectionMode = "audio" | "video";
+
+/** Native source-aware preference; not a conversion or quality promise. */
+export interface CollectionProfile {
+  kind: "original_best_available";
+  max_height?: number | null;
+}
+
+/** Existing single-format request: analysis plus one variant id. */
+export interface CreateSingleJobRequest {
   analysis_id: string;
   variant_id: string;
   destination: "app_library";
 }
+
+/**
+ * Collection request: backend snapshot item ids, an explicit collection-level
+ * mode and an optional native profile. Mutually exclusive with `variant_id`
+ * on the backend wire; no synthetic ids or URLs are ever sent.
+ */
+export interface CreateCollectionJobRequest {
+  analysis_id: string;
+  item_ids: string[];
+  collection_mode: CollectionMode;
+  collection_profile?: CollectionProfile | null;
+  destination: "app_library";
+}
+
+export type CreateJobRequest = CreateSingleJobRequest | CreateCollectionJobRequest;
 
 export function useCreateJob() {
   return useMutation({

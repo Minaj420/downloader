@@ -13,11 +13,15 @@ still carries a real raw yt-dlp ``format_id`` for job execution.
 
 import hashlib
 import re
+from math import isfinite
 from typing import Any
 
 from app.domain.analysis import (
+    COLLECTION_ANALYSIS_WINDOW_LIMIT,
+    AnalysisError,
     CollectionInfo,
     CollectionItem,
+    CollectionSelectionItem,
     MediaFormatKind,
     NormalizedAnalysis,
     NormalizedFormat,
@@ -27,6 +31,7 @@ from app.domain.platforms import (
     has_platform_mismatch,
     platform_label,
 )
+from app.utils.urls import validate_media_url
 
 PREVIEW_ITEM_LIMIT = 25
 
@@ -93,6 +98,19 @@ def _optional_int(value: object) -> int | None:
     return int(number) if number is not None else None
 
 
+def _collection_count(value: object) -> int | None:
+    """Non-negative integer source total; ``0`` is a known count.
+
+    Unlike ``_optional_int`` (which treats every non-positive value as
+    unknown), a source-reported ``playlist_count`` of ``0`` is real
+    information: an empty collection. Bools, negatives, floats and other
+    malformed values stay unknown.
+    """
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
 def _optional_str(value: object) -> str | None:
     if isinstance(value, str) and value:
         return value
@@ -126,6 +144,19 @@ def _source_resolution(value: object) -> str | None:
     return label
 
 
+def _positive_label_axis(text: str) -> int | None:
+    """Keep exact positive axes only when numeric conversion remains finite.
+
+    This is a representation safety check, not a supported resolution cap.
+    Invalid axes must not establish height-ceiling compliance.
+    """
+    try:
+        value = int(text)
+        return value if value > 0 and isfinite(value) else None
+    except (ValueError, OverflowError):
+        return None
+
+
 def _parse_resolution_label(
     label: str | None,
 ) -> tuple[int | None, int | None]:
@@ -140,10 +171,10 @@ def _parse_resolution_label(
     text = label.strip().lower()
     match = _RESOLUTION_WIDTH_X_HEIGHT.fullmatch(text)
     if match:
-        return int(match.group(2)), int(match.group(1))
+        return _positive_label_axis(match.group(2)), _positive_label_axis(match.group(1))
     match = _RESOLUTION_HEIGHT_P.fullmatch(text)
     if match:
-        return int(match.group(1)), None
+        return _positive_label_axis(match.group(1)), None
     return None, None
 
 
@@ -552,6 +583,54 @@ def _deduplicate(
     return result
 
 
+def _usable_source_number(key: str, value: object) -> bool:
+    """Representation-safety gate for one source numeric metadata field.
+
+    Same finite-conversion pattern as ``_positive_label_axis``: booleans,
+    non-numbers, non-finite and non-positive values are unusable, and an
+    integer too large to convert to ``float`` (``10**400``) is unusable too
+    — ``isfinite``/``float`` raise ``OverflowError`` for it and so would
+    ``_optional_number`` downstream. Height/width must additionally be
+    whole. This is a representation check, not a quality cap: every
+    representable positive value keeps its exact source meaning.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        finite = isfinite(value)
+    except OverflowError:
+        return False
+    if not finite or value <= 0:
+        return False
+    return key not in ("height", "width") or value == int(value)
+
+
+def normalize_source_formats(raw_formats: object) -> list[NormalizedFormat]:
+    """Backend-only streams in extractor preference order, without UI collapse.
+
+    Explicitly DRM-flagged source streams (``has_drm is True``) are not
+    native-eligible; ``has_drm`` false or missing stays eligible. No DRM
+    circumvention is attempted or implied (PRODUCT_SPEC.md §3). Unusable
+    numeric metadata is removed field-locally; the stream itself stays.
+    """
+    if not isinstance(raw_formats, list):
+        return []
+    formats: list[NormalizedFormat] = []
+    for entry in raw_formats:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("has_drm") is True:
+            continue
+        clean = entry.copy()
+        for key in ("height", "width", "fps", "abr", "tbr", "filesize", "filesize_approx"):
+            if not _usable_source_number(key, clean.get(key)):
+                clean.pop(key, None)
+        parsed = _parse_format(clean)
+        if parsed is not None:
+            formats.append(parsed)
+    return formats
+
+
 def normalize_formats(raw_formats: object) -> list[NormalizedFormat]:
     if not isinstance(raw_formats, list):
         return []
@@ -563,16 +642,59 @@ def normalize_formats(raw_formats: object) -> list[NormalizedFormat]:
     return _deduplicate(parsed)
 
 
-def normalize_collection(raw_info: dict[str, Any]) -> CollectionInfo | None:
+def _collection_item_url(entry: dict[str, Any]) -> str | None:
+    # Do not synthesize URLs from source IDs, relative paths or extractor keys.
+    for key in ("webpage_url", "url"):
+        candidate = _optional_str(entry.get(key))
+        if candidate is not None:
+            try:
+                return validate_media_url(candidate)
+            except (AnalysisError, ValueError):
+                continue
+    return None
+
+
+def normalize_collection(
+    raw_info: dict[str, Any], *, analysis_id: str
+) -> CollectionInfo | None:
     entries = raw_info.get("entries")
     if not isinstance(entries, list):
         return None
-    entries = [entry for entry in entries if isinstance(entry, dict)]
     if not entries and raw_info.get("playlist_count") is None:
         return None
 
+    items: list[CollectionSelectionItem] = []
+    for source_order, raw_entry in enumerate(
+        entries[:COLLECTION_ANALYSIS_WINDOW_LIMIT], start=1
+    ):
+        entry = raw_entry if isinstance(raw_entry, dict) else {}
+        url = _collection_item_url(entry)
+        unavailable = not isinstance(raw_entry, dict) or entry.get("availability") in (
+            "private", "premium_only", "subscriber_only", "needs_auth", "unavailable"
+        )
+        digest = hashlib.sha256(
+            f"downloader/collection-item/v1\x00{analysis_id}\x00{source_order}".encode()
+        ).hexdigest()
+        items.append(
+            CollectionSelectionItem(
+                item_id=f"item-{digest}",
+                source_order=source_order,
+                source_id=_optional_str(entry.get("id")),
+                url=url,
+                title=_optional_str(entry.get("title")),
+                duration_seconds=_optional_number(entry.get("duration")),
+                position=_optional_int(entry.get("playlist_index")) or source_order,
+                selectable=url is not None and not unavailable,
+                unavailable_reason=(
+                    "unavailable" if unavailable else "invalid_url" if url is None else None
+                ),
+            )
+        )
+
+    # Preserve the existing read-only preview (including its source metadata).
+    preview_entries = [entry for entry in entries if isinstance(entry, dict)]
     preview: list[CollectionItem] = []
-    for index, entry in enumerate(entries[:PREVIEW_ITEM_LIMIT]):
+    for index, entry in enumerate(preview_entries[:PREVIEW_ITEM_LIMIT]):
         preview.append(
             CollectionItem(
                 source_id=_optional_str(entry.get("id")),
@@ -585,13 +707,23 @@ def normalize_collection(raw_info: dict[str, Any]) -> CollectionInfo | None:
             )
         )
 
-    raw_count = _optional_int(raw_info.get("playlist_count"))
+    raw_count = _collection_count(raw_info.get("playlist_count"))
     total_items = max(raw_count or 0, len(entries))
+    total_known = raw_count is not None and raw_count >= len(entries)
+    selection_truncated = total_items > len(items) or (
+        not total_known and len(entries) >= COLLECTION_ANALYSIS_WINDOW_LIMIT
+    )
     return CollectionInfo(
         title=_optional_str(raw_info.get("title")),
         total_items=total_items,
         preview_items=preview,
-        truncated=total_items > len(preview),
+        truncated=total_items > len(preview) or selection_truncated,
+        items=items,
+        selection_scope="analysis_window",
+        analyzed_items=len(items),
+        selectable_items=sum(item.selectable for item in items),
+        total_items_known=total_known,
+        selection_truncated=selection_truncated,
     )
 
 
@@ -634,7 +766,9 @@ def build_normalized_analysis(
         thumbnail_url=_first_thumbnail(raw_info),
         content_type="collection" if is_collection else "single",
         formats=[] if is_collection else normalize_formats(raw_info.get("formats")),
-        collection=normalize_collection(raw_info) if is_collection else None,
+        collection=(
+            normalize_collection(raw_info, analysis_id=analysis_id) if is_collection else None
+        ),
         platform_hint=platform_hint,
         platform_mismatch=has_platform_mismatch(platform_hint, detected),
     )

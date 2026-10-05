@@ -82,3 +82,26 @@ doğrulanması gereken noktayı söyle.
 
 Sonunda iyi yapılanları, commit'e hazır olup olmadığını ve tekrar çalıştırılması
 gereken kontrolleri özetle.
+
+## Git diff ve izin reddi kanıtı
+
+Diff gerektiğinde yalnız Lead'in verdiği scope içindeki literal dosyalar ve repo
+workdir ile şu canonical biçimi kullan:
+
+`git diff --no-ext-diff --no-textconv -- <literal-dosya-yolları>`
+
+Whitespace kontrolünün canonical biçimi:
+
+`git diff --no-ext-diff --no-textconv --check -- <literal-dosya-yolları>`
+
+Yer tutucuları çalıştırma; `git diff -- <dosyalar>` gibi eksik flag'li veya farklı
+biçim türetme. Bu talimat yeni kontrol çalıştırma, scope/flag/izin genişletme yetkisi
+vermez; kontroller Lead'in bounded task/manifest sınırları içinde kalır.
+İzin reddinde rol/agent ID, tool adı, exact komut veya tool input, workdir (varsa)
+ve hata türü/mesajını raporla. Exact çağrı kaydı erişilemiyorsa bunu açıkça belirt;
+komut veya runtime ret nedeni tahmin etme. Hassas değerleri maskele ve maskeyi belirt.
+Output truncation ve tool.execution/content hatalarını permission.rejected ile
+karıştırma. Aynı tool + intent tekrar edilmez; başka rol/araç üzerinden ret aşılmaz.
+Başka rolün ret kaydı kendi rolünde otomatik yasak veya izin kanıtı değildir;
+config dosyası da tek başına runtime permission resolution kanıtı değildir.
+Mevcut durma, failure ve salt-okunur/write sınırları aynen korunur.

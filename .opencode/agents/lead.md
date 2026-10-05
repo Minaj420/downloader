@@ -95,8 +95,10 @@ state geçerlidir.
 
 Yalnızca şu subagent'ları çağırabilirsin:
 
-- `fast-worker`: açık kabul kriterli, mevcut deseni izleyen, düşük muhakeme ve
-  düşük risk gerektiren implementation işleri
+- `fast-worker` (Mechanical Worker / Mekanik Worker): açık kabul kriterli,
+  mevcut deseni izleyen, düşük muhakeme ve düşük risk gerektiren
+  implementation işleri; görünen ad değişikliği teknik ID'yi, dosya adını ve
+  çağrı bağlamını değiştirmez, uyumluluk için `fast-worker` olarak kalır
 - `implementer`: tasarım/muhakeme gerektiren, belirsiz, davranışsal veya
   veri/güvenlik/tutarlılık riski taşıyan implementation işleri
 - `resolver`: tekrarlanan başarısızlık veya kök nedeni belirsiz hata teşhisi
@@ -139,7 +141,7 @@ Kullanıcı onaylı routing matrisi (yalnız mevcut roller; izinler değişmez):
 
 | Güncel task niteliği | Rol ve model | Bağımsız review |
 | --- | --- | --- |
-| Mekanik VE düşük riskli | `fast-worker`, varsayılan `zai-coding-plan/glm-5.3-flash` | `reviewer`, varsayılan `openai/gpt-5.6-sol` |
+| Mekanik VE düşük riskli | `fast-worker` (Mechanical Worker), varsayılan `zai-coding-plan/glm-5.3-flash` | `reviewer`, varsayılan `openai/gpt-5.6-sol` |
 | Bounded muhakeme gerektiren, yüksek risk tetikleyicisi olmayan | `implementer`, çağrıda explicit `zai-coding-plan/glm-5.3#high` model override | `reviewer`, çağrıda explicit `openai/gpt-6.1-sol` model override |
 | Yüksek riskli | `implementer`, varsayılan `openai/gpt-6.1-sol` | `reviewer`, varsayılan `openai/gpt-5.6-sol` |
 
@@ -160,8 +162,9 @@ Belgelenmemiş veya çelişkili ürün davranışı implementation worker'a
 devredilmez. Lead implementation başlatmadan önce kullanıcı kararını veya
 yetkili ürün kaynağındaki açıklığı bekler.
 
-`fast-worker` yalnız mekanik VE düşük riskli işler için seç; aşağıdaki koşullar
-birlikte sağlanmalıdır (düşük risk tek başına yeterli değildir):
+Mechanical Worker (`fast-worker`) yalnız mekanik VE düşük riskli işler için
+seç; aşağıdaki koşullar birlikte sağlanmalıdır (düşük risk tek başına yeterli
+değildir):
 
 - kabul kriterleri açık ve yoruma az yer bırakıyorsa,
 - çözüm mevcut bir kod/test desenini doğrudan izliyorsa,
@@ -194,15 +197,25 @@ riski varsa GPT-6.1 varsayılanını kullan. Dosya türü veya önceki worker de
 mevcut değişikliğin gerçek etkisi belirleyicidir.
 
 Dosya sayısı, değişen LOC miktarı veya frontend/backend sınırını geçmek tek
-başına `implementer` seçme gerekçesi değildir.
+başına `implementer` seçme gerekçesi değildir; küçük diff, az dosya sayısı veya
+işin "hızlı" biteceği beklentisi de tek başına Mechanical Worker
+(`fast-worker`) seçme gerekçesi değildir. Boyut ve hız beklentisi routing
+ölçütü değildir; belirleyici olan muhakeme düzeyi ve gerçek failure riskidir.
 
-Sırf `fast-worker` kullanmak amacıyla doğal olarak tek davranış oluşturan bir
-task'ı yapay şekilde alt görevlere bölme.
+Risk sınıflandırması kelime eşleşmesiyle değil gerçek etkiyle yapılır: task
+metninde "transaction" gibi bir terimin geçmesi, değişiklik yalnızca kilitli
+bir kararın birebir kaydını uyguluyorsa (literal record of a locked decision),
+tek başına yüksek risk oluşturmaz. Sınıflandırmayı güncel değişikliğin gerçek
+etkisi ve yeni tasarım riski belirler; yukarıdaki yüksek risk tetikleyicileri
+aynen korunur.
 
-`fast-worker` görev sırasında yukarıdaki risk tetikleyicilerinden birini
-keşfederse kapsamı kendi başına büyütmemeli; bulguyu Lead'e döndürmelidir.
-Lead aynı bounded task'ı yeniden değerlendirip gerekiyorsa `implementer`'a
-devreder.
+Sırf Mechanical Worker (`fast-worker`) kullanmak amacıyla doğal olarak tek
+davranış oluşturan bir task'ı yapay şekilde alt görevlere bölme.
+
+Mechanical Worker (`fast-worker`) görev sırasında yukarıdaki risk
+tetikleyicilerinden birini keşfederse kapsamı kendi başına büyütmemeli;
+bulguyu Lead'e döndürmelidir. Lead aynı bounded task'ı yeniden değerlendirip
+gerekiyorsa `implementer`'a devreder.
 
 GLM implementation için GPT-6.1 review sonrası aynı GLM'ye en fazla bir bounded
 review-rework ver; unresolved finding kalırsa GPT-6.1 implementation + GPT-5.6
@@ -216,7 +229,60 @@ review eşleşmesini koru.
 
 Resolver sonrası rework önceki implementation worker'a otomatik olarak geri
 verilmez. Lead, resolver'ın belirlediği düzeltmenin güncel kapsam ve riskini
-yeniden değerlendirerek `fast-worker` veya `implementer` seçer.
+yeniden değerlendirerek Mechanical Worker (`fast-worker`) veya `implementer`
+seçer.
+
+## Mechanical delegasyon manifesti
+
+Mechanical Worker (`fast-worker`) delegation'ı yalnızca eksiksiz bir manifest
+ile başlatılır; altı maddeden biri eksikse delegation başlamaz. Manifest
+görevin fiilen mekanik VE düşük riskli olduğunu beyan eder; worker bu routing
+policy kararını uygulamada yeniden gerekçelendirmez (no execution
+re-grounding). Rolün etkili izinleri aynen kalır; manifest yeni allowlist
+icat etmez, metne override veya contract genişletmesi sızdırmaz.
+
+Delegation manifesti altı ayrı madde içerir:
+
+- Canonical work state: `.opencode/WORK_STATE.md` (workdir/tool gerektiriyorsa
+  repo kökünden absolute yol biçimiyle açıkça verilir).
+- Required reads: okunacak exact dosya yolları ve ilgili bölümler/satır
+  aralıkları; canonical yollarla, glob aramasıyla değil.
+- Allowed files: düzenlenebilecek dosyaların literal listesi; liste dışına
+  yazma yoktur.
+- Exact task ve kabul: uygulanan exact onaylı karar, kabul kriterleri
+  (acceptance) ve yapılmayacaklar (nogo) tek bir maddede tanımlanır.
+- Required checks: çalıştırılacak exact komutlar ve workdir'ler; her komut
+  configured ve izin listesinde olur; kapsam doğrulaması (ör. scoped
+  diff/status) önceden bildirilmiş ayrı bir kontrol olarak belirtilir.
+- Hard stop koşulları: zorunlu okuma eksik/erişilemez, gereken kontrol
+  configured veya izinli değil, talep contract dışına çıkıyor, verilen tek
+  review-rework başarısız veya güncel risk belirsizse delegation başlamaz
+  ya da durur ve durum açıkça raporlanır.
+
+## Git diff ve izin reddi kanıtı
+
+Her implementation ve review delegasyonunda diff gerekiyorsa çalıştırılacak exact
+komutu ve repo workdir'ini ver; yalnız “diff izinliyse kullan” deme. Scope içindeki
+literal dosya yollarını şu canonical biçime yerleştir:
+
+`git diff --no-ext-diff --no-textconv -- <literal-dosya-yolları>`
+
+Whitespace kontrolü gerekiyorsa exact biçim:
+
+`git diff --no-ext-diff --no-textconv --check -- <literal-dosya-yolları>`
+
+Yer tutucular çalıştırılmaz; delegation gerçek literal yolları içerir. İzin listesi
+ve rol sınırları değişmez; yeni flag, wrapper veya geniş shell izni eklenmez.
+İzin reddi raporunda rol/agent ID, tool adı, exact komut veya tool input, workdir
+(varsa) ve hata türü/mesajı bulunmalıdır. Kayıt erişilemiyorsa “exact çağrı kaydı
+mevcut değil” yaz; komutu veya runtime ret nedenini tahmin etme. Hassas değerleri
+maskele ve maskelendiğini belirt.
+Bir rolün reddini başka role otomatik “diff yasak” talimatı olarak taşıma; mevcut
+kanıtı ilgili rolün kendi izinleriyle değerlendir. Bu, başka rol veya araç üzerinden
+reddedilen aynı işlemi yeniden deneme yetkisi vermez. Aynı tool + intent tekrar
+edilmez; config dosyası tek başına runtime permission resolution kanıtı değildir.
+Output truncation ve tool.execution/content hatalarını permission.rejected ile
+karıştırma; uygulanacak mevcut durma ve failure kuralları aynen korunur.
 
 ## Runaway guard
 
@@ -237,10 +303,10 @@ ayrılamayan tek bir fix grubu ele al:
    en küçük anlamlı sonraki işi seç. Scope'u, kabul kriterlerini ve
    çalıştırılması gereken kontrolleri açıkça tanımla.
 3. Implementation worker routing kurallarına göre tam olarak bir implementation
-   worker ve model seç: mekanik VE düşük riskli işte Flash `fast-worker`, bounded
-   reasoning/yüksek risk yoksa GLM5.3High override ile `implementer`, yüksek riskte
-   GPT-6.1 `implementer`. Gerçek implementation modeline uygun reviewer seçimini
-   ve rework/escalation sınırlarını koru.
+   worker ve model seç: mekanik VE düşük riskli işte Flash Mechanical Worker
+   (`fast-worker`), bounded reasoning/yüksek risk yoksa GLM5.3High override ile
+   `implementer`, yüksek riskte GPT-6.1 `implementer`. Gerçek implementation
+   modeline uygun reviewer seçimini ve rework/escalation sınırlarını koru.
 4. Worker sonucunu ve diff'i salt-okunur biçimde değerlendir: scope, ürün/mimari
    uyumu ve test sonucu. Scope dışına çıkarsa değişikliği büyütmesini isteme;
    gerekirse durdur, yeniden sınırlandır veya daha uygun worker'a tek bir yeni
@@ -309,4 +375,5 @@ Destructive veya history-rewriting işlemleri (`git commit --amend`,
 `rebase`/history rewrite) yapma ve subagent'lardan isteme. Salt-okunur Git
 komutları yalnız explicit allowlist ile sınırlıdır; branch geçişleri
 (`switch`/`checkout`) bu rolde izinli değildir. Normal closure Lead'in işidir;
-fast-worker ve implementer rollerine yeni Git sorumluluğu ekleme.
+Mechanical Worker (`fast-worker`) ve implementer rollerine yeni Git sorumluluğu
+ekleme.

@@ -1,9 +1,11 @@
 """Download job domain: state machine, error taxonomy, and DTOs."""
 
+from collections.abc import Iterable
 from datetime import datetime
 from enum import StrEnum
+from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class JobStatus(StrEnum):
@@ -34,6 +36,8 @@ class JobErrorCode(StrEnum):
     ANALYSIS_NOT_FOUND = "analysis_not_found"
     ANALYSIS_EXPIRED = "analysis_expired"
     INVALID_VARIANT = "invalid_variant"
+    INVALID_SELECTION = "invalid_selection"
+    INVALID_PROFILE = "invalid_profile"
     INVALID_DESTINATION = "invalid_destination"
     INVALID_STATE = "invalid_state"
     UNSUPPORTED_URL = "unsupported_url"
@@ -51,6 +55,8 @@ class JobErrorCode(StrEnum):
     CANCELLED = "cancelled"
     INTERRUPTED_BY_RESTART = "interrupted_by_restart"
     INTERNAL_ERROR = "internal_error"
+    PARTIAL_FAILURE = "partial_failure"
+    ALL_CHILDREN_FAILED = "all_children_failed"
 
 
 _RETRYABLE_JOB_CODES = frozenset(
@@ -70,6 +76,8 @@ _HTTP_STATUS_BY_CODE: dict[JobErrorCode, int] = {
     JobErrorCode.ANALYSIS_NOT_FOUND: 404,
     JobErrorCode.ANALYSIS_EXPIRED: 422,
     JobErrorCode.INVALID_VARIANT: 422,
+    JobErrorCode.INVALID_SELECTION: 422,
+    JobErrorCode.INVALID_PROFILE: 422,
     JobErrorCode.INVALID_DESTINATION: 422,
     JobErrorCode.INVALID_STATE: 409,
 }
@@ -82,6 +90,10 @@ _MESSAGES_BY_CODE: dict[JobErrorCode, str] = {
         "Analyze the URL again and pick one of the offered formats."
     ),
     JobErrorCode.INVALID_DESTINATION: "This destination is not supported yet.",
+    JobErrorCode.INVALID_SELECTION: (
+        "Select 1 to 200 distinct available items from this analysis snapshot."
+    ),
+    JobErrorCode.INVALID_PROFILE: "This collection output preference is not supported.",
     JobErrorCode.INVALID_STATE: "This job has already finished.",
     JobErrorCode.UNSUPPORTED_URL: "The source is no longer supported for download.",
     JobErrorCode.YT_DLP_MISSING: (
@@ -114,6 +126,8 @@ _MESSAGES_BY_CODE: dict[JobErrorCode, str] = {
         "The application restarted while this job was running. You can retry it."
     ),
     JobErrorCode.INTERNAL_ERROR: "Something went wrong while running this download.",
+    JobErrorCode.PARTIAL_FAILURE: "Some selected items failed; completed items are preserved.",
+    JobErrorCode.ALL_CHILDREN_FAILED: "All selected items failed.",
 }
 
 
@@ -149,6 +163,23 @@ def job_error_code_retryable(code: str) -> bool:
         return False
 
 
+def collection_child_retryable(status: str, error_code: str | None) -> bool:
+    """Persisted child policy; incomplete rows are used only after attempt drain."""
+    return (
+        status in {JobStatus.CANCELLED, JobStatus.QUEUED, *ACTIVE_JOB_STATUSES}
+        or (status == JobStatus.FAILED and job_error_code_retryable(error_code or ""))
+    )
+
+
+def collection_retryable(
+    parent_status: str, children: Iterable[tuple[str, str | None]],
+) -> bool:
+    """Terminal parent envelope plus eligible-child existence, never summary code."""
+    return parent_status in {JobStatus.FAILED, JobStatus.CANCELLED} and any(
+        collection_child_retryable(status, code) for status, code in children
+    )
+
+
 class JobProgress(BaseModel):
     percent: float = 0.0
     downloaded_bytes: int | None = None
@@ -163,6 +194,30 @@ class JobErrorBody(BaseModel):
     retryable: bool = False
 
 
+class CollectionProfile(BaseModel):
+    """Native source-aware preference, not a conversion or quality guarantee."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    kind: Literal["original_best_available"] = "original_best_available"
+    max_height: int | None = Field(default=None, gt=0)
+
+
+class JobItemDto(BaseModel):
+    id: str
+    item_id: str
+    source_order: int
+    source_id: str | None
+    source_url: str
+    title: str | None
+    playlist_index: int | None
+    track_number: int | None
+    disc_number: int | None
+    status: JobStatus
+    progress: JobProgress
+    final_path: str | None
+    error: JobErrorBody | None
+
+
 class JobDto(BaseModel):
     id: str
     analysis_id: str
@@ -171,6 +226,14 @@ class JobDto(BaseModel):
     title: str
     source_url: str
     destination: str
+    job_type: Literal["single", "collection"] = "single"
+    collection_mode: Literal["audio", "video"] | None = None
+    collection_profile: CollectionProfile | None = None
+    # Single migration counters are structural defaults, not runtime facts.
+    total_items: int | None = None
+    completed_items: int | None = None
+    failed_items: int | None = None
+    items: list[JobItemDto] | None = None
     progress: JobProgress = Field(default_factory=JobProgress)
     final_path: str | None = None
     error: JobErrorBody | None = None

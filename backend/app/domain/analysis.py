@@ -8,6 +8,10 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+COLLECTION_SELECTED_ITEM_LIMIT = 200
+# Retrieval budget, not a source-total or selected-item cap.
+COLLECTION_ANALYSIS_WINDOW_LIMIT = 25
+
 
 class MediaFormatKind(StrEnum):
     VIDEO_ONLY = "video_only"
@@ -160,11 +164,33 @@ class CollectionItem(BaseModel):
     position: int | None = None
 
 
+class CollectionSelectionItem(CollectionItem):
+    """Snapshot-scoped choice; source metadata is never its identity."""
+
+    item_id: str
+    source_order: int
+    selectable: bool = False
+    unavailable_reason: Literal["invalid_url", "unavailable"] | None = None
+
+
 class CollectionInfo(BaseModel):
     title: str | None = None
     total_items: int
     preview_items: list[CollectionItem] = Field(default_factory=list)
     truncated: bool = False
+    # Old persisted previews remain readable, but are not promoted to choices.
+    items: list[CollectionSelectionItem] = Field(default_factory=list)
+    selection_scope: Literal["analysis_window", "legacy_preview"] = "legacy_preview"
+    analysis_window_limit: int = COLLECTION_ANALYSIS_WINDOW_LIMIT
+    analyzed_items: int = 0
+    selectable_items: int = 0
+    selected_item_limit: int = COLLECTION_SELECTED_ITEM_LIMIT
+    total_items_known: bool = False
+    selection_truncated: bool = True
+    selection_limit_message: str = (
+        "v0.1 allows at most 200 selected items per job. Only selectable items "
+        "in this analysis snapshot are available; unseen items are not included."
+    )
 
 
 class NormalizedAnalysis(BaseModel):

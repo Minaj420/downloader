@@ -13,6 +13,7 @@ from app.database import create_engine_and_sessionmaker, run_migrations
 from app.integrations.ffmpeg import FFmpegProcessor
 from app.integrations.ytdlp import YtDlpAnalyzer, YtDlpDownloader
 from app.services.analysis_service import AnalysisService, URLAnalyzer
+from app.services.collection_child_runner import ChildRunnerDeps
 from app.services.event_bus import EventBus
 from app.services.job_runner import RunnerDeps
 from app.services.job_service import JobService
@@ -32,24 +33,33 @@ def create_app(settings: Settings | None = None, analyzer: URLAnalyzer | None = 
         plex_video_root=resolved_settings.plex_video_dir,
     )
     bus = EventBus()
+    child_analyzer = YtDlpAnalyzer(
+        binary=resolved_settings.yt_dlp_binary,
+        timeout_seconds=resolved_settings.analysis_timeout_seconds,
+    )
+    downloader = YtDlpDownloader(
+        binary=resolved_settings.yt_dlp_binary,
+        timeout_seconds=resolved_settings.download_timeout_seconds,
+    )
+    ffmpeg = FFmpegProcessor(
+        binary=resolved_settings.ffmpeg_binary,
+        timeout_seconds=resolved_settings.ffmpeg_timeout_seconds,
+    )
     queue_manager = QueueManager(
         session_factory=session_factory,
         deps=RunnerDeps(
             session_factory=session_factory,
-            downloader=YtDlpDownloader(
-                binary=resolved_settings.yt_dlp_binary,
-                timeout_seconds=resolved_settings.download_timeout_seconds,
-            ),
-            ffmpeg=FFmpegProcessor(
-                binary=resolved_settings.ffmpeg_binary,
-                timeout_seconds=resolved_settings.ffmpeg_timeout_seconds,
-            ),
+            downloader=downloader,
+            ffmpeg=ffmpeg,
             storage=storage,
             bus=bus,
             progress_min_interval=resolved_settings.progress_min_interval_seconds,
         ),
         concurrency=resolved_settings.download_concurrency,
         poll_interval_seconds=resolved_settings.queue_poll_interval_seconds,
+        collection_deps=ChildRunnerDeps(
+            session_factory, child_analyzer, downloader, ffmpeg, storage,
+        ),
     )
     job_service = JobService(session_factory, queue_manager, bus)
 
@@ -84,11 +94,7 @@ def create_app(settings: Settings | None = None, analyzer: URLAnalyzer | None = 
     app.state.library_service = LibraryService(session_factory, storage)
 
     app.state.analysis_service = AnalysisService(
-        analyzer=analyzer
-        or YtDlpAnalyzer(
-            binary=resolved_settings.yt_dlp_binary,
-            timeout_seconds=resolved_settings.analysis_timeout_seconds,
-        ),
+        analyzer=analyzer or child_analyzer,
         session_factory=session_factory,
     )
 
