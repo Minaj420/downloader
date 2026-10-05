@@ -347,6 +347,87 @@ commit-ready durumunu değiştirmez. Model/routing değişiklikleri ve
 raporlardaki routing önerilerinin uygulanması yalnız kullanıcının açık onayıyla
 yapılır; öneriler varsayılan olarak provisional'dır.
 
+## /autopilot çalışma sözleşmesi
+
+Bu sözleşme yalnızca kullanıcının açık `/autopilot` çağrısıyla opt-in olarak
+işler; `/continue` kendiliğinden autopilot'a dönüşmez ve `/continue` bölümündeki
+tek-task + checkpoint sonrası durma semantiği aynen korunur. Amaç, mevcut
+primary Lead session'da, API runner olmadan, kullanıcı onaylı tek kapsam
+içinde en fazla üç bounded task veya ayrılamayan fix grubunu seri biçimde
+yürütmektir. Bu bir prompt çalışma sözleşmesidir; deterministic runner, cost
+timer veya runtime enforcement değildir. Üst-seviye talimatlar ve bu dosyadaki
+izin, routing, failure, quality ve Git guard hükümleri sözleşmeyle genişletilmez
+veya gevşetilmez.
+
+Başlangıç ve yeniden çağrı ön koşulları:
+
+- `/autopilot` invocation'ında (command `$ARGUMENTS`) veya WORK_STATE'te
+  explicit kullanıcı onaylı tek kapsam ve bounded görev tanımı/kuyruğu aranır.
+  Bulunamazsa görev uydurma; kullanıcıya soru sor veya kısa checkpoint ile dur.
+- İlk seçimden ve HER task geçişinden önce canonical `.opencode/WORK_STATE.md`
+  ve `git status --short` tekrar okunur. Beklenmeyen concurrent tree delta
+  görülürse task seçme; durable blocked/open checkpoint ver ve dur.
+- Run state'i WORK_STATE'te compact tutulur: run status, onaylı kapsam,
+  planned/remaining task kimlikleri, completed task sayısı, en fazla 3 sınırı
+  ve next task/stop reason. State'i yalnız Lead yazar.
+- Yeniden `/autopilot` çağrısı üç-görev bütçesini otomatik reset etmez.
+  Suspended run devamında kalan bütçe kullanılır; fresh run explicit yeni
+  kullanıcı onayı ister.
+
+Task seçimi ve yürütme (task'lar seri; aynı doğal davranış yapay bölünmez):
+
+1. Active milestone'da remaining Critical/Important finding varsa sıradaki
+   task finding'dir. Finding yoksa onaylı kapsam içindeki bir sonraki doğal
+   bounded task, onay sınırları ve kabul kriterleri açıkça tanımlanarak
+   seçilebilir. Kapsam dışına çıkma; M6/yeni milestone/backlog seçme; açık
+   finding varken yeni feature/milestone, milestone-close checker veya
+   commit-ready ilan etme; kapsam dışı/yüksek risk kullanıcı sınırını aşarsa
+   dur.
+2. Her task için tam olarak bir uygun implementation worker ve gerçek model,
+   mevcut Implementation worker routing matrisine göre seçilir; targeted
+   checks ve gereken bağımsız review aynı hükümlere tabidir. Review
+   rework/failure/escalation ve resolver kuralları yeniden tanımlanmaz;
+   mevcut bölümler aynen uygulanır. Gerekli review kapanmadan sonraki task'a
+   geçilmez; retry/rework üç-görev bütçesini delinmez.
+3. Task kabulü, Lead'in worker çıktısını, scoped diff'i (Git diff ve izin
+   reddi kanıtı bölümündeki canonical biçimlerle) ve state'i salt-okunur
+   doğrulamasıyla yapılır. Doğrulama başarısızsa completion ilan etme; task'ı
+   terminal durumu gerçeğe göre blocked/open bırak ve dur.
+4. Kabul edilen her task sonrası compact state güncellenir ve doğrulanır;
+   production source değiştiyse önceki full gate kaydı STALE işaretlenir.
+   Kullanıcıya kısa ara checkpoint verilebilir; guardlar uygunsa onaylı
+   sıradaki task için kullanıcının yeni `/continue` veya `/autopilot`
+   çağrısı beklenmeden devam edilir. Bu devam yalnız /autopilot sözleşmesi
+   içindir; /continue checkpoint sonrası durma kuralı değişmez.
+
+Bütçe, limit ve durdurma:
+
+- `steps: 24` hard limit değişmez; step 20'ye yaklaşırken yeni deneme zinciri
+  başlatma (Runaway guard). Yeni zincir gerekiyorsa compact checkpoint ver ve
+  kullanıcıyı bilgilendir.
+- Üç görev veya onaylı kapsam tamamlanınca kısa final özet ver ve dur.
+  Autopilot kapsamında commit/push, yeni milestone seçimi, otomatik evaluator
+  ve audit yok.
+- Şu durumlardan herhangi biri durable blocked/open checkpoint + stop ile
+  sonuçlanır: belgelenmemiş/çelişkili ürün davranışı veya kullanıcı kararı
+  gereken soru; permission-denied (aynı tool + intent başka rol/araçla da
+  retry edilmez); gereken kontrolün configured/izinli olmaması; source/state
+  doğrulama başarısızlığı; uygun fallback olmayan provider/quota/auth/
+  availability failure; aynı task'ta iki gerçek failed attempt sonrası
+  resolver-first akışının güvenle bitmemesi; scope/budget/step sınırı aşımı;
+  beklenmeyen concurrent tree delta. Mevcut Failure sınıflandırması ve
+  provider fallback kuralları gevşetilmez; stop reason WORK_STATE'e yazılır.
+
+Quality gate ilişkisi:
+
+- Her task'ta full gates çalıştırılmaz; bounded worker'lar targeted checks
+  çalıştırır. Commit-ready yalnız mevcut üç koşulla ilan edilir (remaining
+  boş, review kapalı, current tree final checker PASS). M5 source kabulü
+  historical kabul olarak kalır; yeni command/config tree için autopilot
+  final-ready iddiası üretmez.
+- Command/config dosyasının yazılmış olması runtime reload, command aktivasyonu
+  veya gerçek model resolution kanıtı değildir; bu kanıtlar iddia edilmez.
+
 ## Git closure (Lead)
 
 Kullanıcı açıkça commit/stage istediğinde normal Git closure'u Lead kendisi
