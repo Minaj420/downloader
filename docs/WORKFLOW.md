@@ -1,7 +1,7 @@
 # Geliştirme Workflow'u
 
 Bu dosya ajan workflow'unun tek kaynağıdır. Claude Code'daki `/devam` skill'i ve
-opencode'daki yedek `lead` (`/continue`) aynı döngüyü buradan uygular. Genel
+opencode'daki `lead` (`/continue`) aynı döngüyü buradan uygular. Genel
 çalışma kuralları `AGENTS.md`'de, güncel durum kökteki `STATE.md`'dedir.
 
 - Birincil: Claude Code'da `/devam` veya `/devam 3`. Worker'lar arka planda
@@ -13,7 +13,7 @@ opencode'daki yedek `lead` (`/continue`) aynı döngüyü buradan uygular. Genel
   üzerinden çalıştırır; ekran en son `/devam` oturumunu kendisi açar ve yeni iş
   başlayınca ona geçer (oturum başlıkları `devam:` veya `gates` ile başlamalı).
   Sunucu kapalıysa da çalışır; oturumlar sonradan `opencode` → oturum listesinde görülür.
-- Yedek: `opencode` TUI'sini aç (varsayılan ajan `lead`) ve `/continue` yaz.
+- Tercih edilen (kullanıcı değişiklikleri opencode'da izler): `opencode` TUI'sini aç (varsayılan ajan `lead`) ve `/continue` yaz.
   Lead etkileşimlidir: soru sorabilir, commit/push için onay ister.
 
 ## Roller ve modeller
@@ -21,14 +21,14 @@ opencode'daki yedek `lead` (`/continue`) aynı döngüyü buradan uygular. Genel
 | Rol | Nerede / model | Görev |
 | --- | --- | --- |
 | Orkestratör (birincil) | Claude Code, `/devam` | İş seçer, iş tanımı yazar, devreder, review eder, STATE günceller |
-| Orkestratör (yedek) | opencode `lead`, `openai/gpt-6.1-sol`, `/continue` | Claude limiti dolduğunda aynı döngü |
+| Orkestratör (opencode) | opencode `lead`, `openai/gpt-6.1-sol`, `/continue` | Aynı döngü; önemli işlerde `scripts/claude-review.sh` ile Claude review |
 | `implementer` | opencode, `openai/gpt-6.1-sol` | Muhakeme veya risk gerektiren uygulama |
 | `fast-worker` | opencode, `openai/gpt-6-luna` | Mekanik ve düşük riskli uygulama |
 | `checker` | opencode, `openai/gpt-6-luna` | Full quality gate'leri çalıştırır, dosya değiştirmez |
-| `reviewer` | opencode, `openai/gpt-5.6-sol` | Salt-okunur review (yedek akışta veya Claude'un yazdığı işlerde) |
+| `reviewer` | opencode, `openai/gpt-5.6-sol` | Salt-okunur review (küçük işler, Claude yokken veya Claude'un yazdığı işlerde) |
 
 Review her zaman mümkün olduğunca **çapraz aile**dir: GPT'nin yazdığını Claude,
-Claude'un yazdığını GPT inceler. Yedek akışta (Claude yokken) `reviewer`
+Claude'un yazdığını GPT inceler. Claude kullanılamadığında `reviewer`
 kullanılır ve bu durum STATE'e "aynı aile review" olarak not edilir.
 
 ## Döngü (bir iş)
