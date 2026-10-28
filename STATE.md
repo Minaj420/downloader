@@ -9,6 +9,8 @@ Son güncelleme: 2026-10-29
 - Workflow Faz 1 tamam: Z.ai kaldırıldı; `/devam` (Claude Code) + yedek
   `/continue` (opencode). opencode ajan izinleri artık gerçekten uygulanıyor (eski `permissions:`
   listesi opencode tarafından yok sayılıyordu). Çapraz review (gpt-5.6-sol) bulguları giderildi.
+- İlk `/devam` uçtan uca çalıştı (fast-worker/gpt-6-luna, canlı izleme ile):
+  `collection_parent_runner.py` bayat docstring'i düzeltildi, review'da bulgu yok.
 - M6 — Metadata ve isimlendirme: PLANLAMA. Implementation başlamadı.
 
 ## Sıradaki iş
@@ -16,9 +18,10 @@ Son güncelleme: 2026-10-29
 Kural: `/devam` her işi review + kontrollerden sonra otomatik commit eder; push yalnız
 kullanıcı "push et" deyince.
 
-1. İlk `/devam` denemesi (mekanik, zararsız): `backend/app/services/collection_parent_runner.py`
-   modül docstring'i bayat ("production dispatch remains guarded", "No retry/reset/recovery");
-   dispatch, retry ve recovery artık var. Yalnız docstring düzeltilir.
+1. Manuel smoke test (M6'dan önce): uygulamayı Podman ile çalıştırıp README'deki listenin
+   1–4. maddeleri (gerçek yt-dlp/FFmpeg: tek ses, birleştirme gerektiren video, küçük playlist).
+   Kullanıcı tarayıcıdan dener, Claude yönlendirir; sonuçlar buraya yazılır.
+2. Ardından M6 ürün kararları (aşağıda), gerçek yt-dlp çıktısı görülerek.
 
 ## Açık kararlar (M6, kullanıcı verecek)
 

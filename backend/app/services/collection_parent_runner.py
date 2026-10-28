@@ -1,9 +1,10 @@
-"""Internal sequential parent attempt; production dispatch remains guarded.
+"""Sequential parent attempt dispatched in production by QueueManager.
 
 Caller registers ONE parent slot and supplies its event/gate/process registry.
 Keep that slot through child drain, definite transaction outcomes and publication.
 Never acquire the lifecycle lock: Cancel holds it while awaiting this attempt.
-No retry/reset/recovery/shutdown classification is introduced here.
+Retry/reset/recovery/shutdown classification lives in job_service,
+collection_persistence and queue_manager, not in this module.
 """
 
 import asyncio
