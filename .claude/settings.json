@@ -2,6 +2,7 @@
   "permissions": {
     "allow": [
       "Bash(opencode run:*)",
+      "Bash(curl -s -o /dev/null http://127.0.0.1:4096)",
       "Bash(python3 -I .claude/skills/devam/summarize.py:*)",
       "Bash(mkdir -p tmp/devam)",
       "Bash(git status:*)",

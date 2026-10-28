@@ -22,8 +22,12 @@ metinse kapsamı daraltan talimat.
    İş tanımını `tmp/devam/<kisa-ad>.md` dosyasına yaz (`tmp/` git'e girmez).
    Kontrol komutlarını worker için `backend/` veya `frontend/` workdir'iyle yaz.
 
-3. **Devret.** WORKFLOW §4'e göre `implementer` veya `fast-worker` seç. Repo kökünden,
-   `run_in_background: true` ile çalıştır ve tamamlanma bildirimini bekle:
+3. **Devret.** WORKFLOW §4'e göre `implementer` veya `fast-worker` seç.
+   Kullanıcı canlı izlemek için `opencode serve --port 4096` açmış olabilir:
+   `curl -s -o /dev/null http://127.0.0.1:4096` başarılıysa aşağıdaki **tüm** `opencode run`
+   çağrılarına `--attach http://127.0.0.1:4096 --dir <repo-kökü-mutlak-yol>` ekle
+   (kullanıcı `opencode attach http://127.0.0.1:4096` ile oturumu canlı görür); değilse ekleme.
+   Repo kökünden, `run_in_background: true` ile çalıştır ve tamamlanma bildirimini bekle:
 
    ```bash
    opencode run --agent <implementer|fast-worker> --format json --title "devam: <kisa-ad>" \
