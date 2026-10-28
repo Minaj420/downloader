@@ -10,7 +10,8 @@ opencode'daki yedek `lead` (`/continue`) aynı döngüyü buradan uygular. Genel
 - Canlı izleme: `scripts/izle.sh` (tarayıcı için `scripts/izle.sh web`). Script
   `opencode serve --port 4096` açar ve izleme ekranını bağlar; ekran kapanınca
   kendi açtığı sunucuyu kapatır. `/devam` sunucuyu görürse worker'ları onun
-  üzerinden çalıştırır; ekranda oturum listesinden çalışan işi seçersin.
+  üzerinden çalıştırır; ekran en son `/devam` oturumunu kendisi açar ve yeni iş
+  başlayınca ona geçer (oturum başlıkları `devam:` veya `gates` ile başlamalı).
   Sunucu kapalıysa da çalışır; oturumlar sonradan `opencode` → oturum listesinde görülür.
 - Yedek: `opencode` TUI'sini aç (varsayılan ajan `lead`) ve `/continue` yaz.
   Lead etkileşimlidir: soru sorabilir, commit/push için onay ister.
