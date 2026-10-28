@@ -439,6 +439,7 @@ class StorageService:
                         source._pinned_fd
                     ).st_size:
                         raise OSError("child output copy size mismatch")
+                    os.fchmod(copied.fileno(), 0o644)
                     os.fsync(copied.fileno())
                 guard = publish_guard if publish_guard is not None else nullcontext()
                 with guard:

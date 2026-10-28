@@ -2,6 +2,7 @@ import asyncio
 import errno
 import os
 import shutil
+import stat
 import threading
 from pathlib import Path
 from typing import Any
@@ -40,6 +41,11 @@ def output(storage: StorageService) -> Path:
 
 def assert_no_temp(storage: StorageService) -> None:
     assert not list((storage.library_root / "video").glob("*.part"))
+
+
+def test_child_final_file_has_0644_permissions(storage: StorageService) -> None:
+    result = place(storage, output(storage))
+    assert stat.S_IMODE(result.final_path.stat().st_mode) == 0o644
 
 
 def test_valid_nested_output_and_catalog_identity(storage: StorageService) -> None:

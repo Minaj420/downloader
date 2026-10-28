@@ -10,6 +10,7 @@ Son güncelleme: 2026-10-29
 - Manuel smoke testi yapıldı (2026-10-29, Fedora + Podman, yt-dlp 2026.10.26, FFmpeg 7.1.5):
   1 binary'ler PASS · 2 tek ses PASS · 3 birleştirme gerektiren video PASS · 4 playlist PASS
   (seçim, sıra, sayaçlar doğru) ama dosya izni hatası doğrulandı. 5–6 (iptal, yeniden başlatma) atlandı.
+- Playlist dosya izni düzeltildi: child yerleştirme artık `0644` (önceden `0600`).
 - M6 — Metadata ve isimlendirme: PLANLAMA. Implementation başlamadı.
 
 ## Sıradaki iş
@@ -39,8 +40,6 @@ Kaynaklar: PRODUCT_SPEC §13–16, ARCHITECTURE §30–34 ve §59 Milestone 6.
 
 ## Açık bulgular
 
-- **must-fix (M7 öncesi):** playlist dosyaları `0600` izinli — smoke'ta gerçek indirmede doğrulandı
-  (tek parça/video `0644`). `storage_service.py` child yerleştirme `mkstemp` modunu koruyor.
 - should-fix: container normal kapatmada (SIGTERM) 10 sn içinde durmadı, Podman SIGKILL kullandı.
   Kuyruk boştu. Kapanış akışı incelenmeli (orderly shutdown settlement bu yola bağlı).
 - should-fix: Python 3.14'te 3 test başarısız (bkz. Son gate).
