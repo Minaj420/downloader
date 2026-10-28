@@ -31,8 +31,10 @@ metinse kapsamı daraltan talimat.
 
    ```bash
    opencode run --agent <implementer|fast-worker> --format json --title "devam: <kisa-ad>" \
-     -f tmp/devam/<kisa-ad>.md "Ekteki iş tanımını uygula ve raporla." > tmp/devam/<kisa-ad>.jsonl 2>&1
+     "Ekteki iş tanımını uygula ve raporla." -f tmp/devam/<kisa-ad>.md > tmp/devam/<kisa-ad>.jsonl 2>&1
    ```
+
+   Mesaj **`-f`'den önce** gelmeli: `-f` bir liste alır ve arkasındaki her şeyi dosya sanar.
 
    Sonra özetle: `python3 -I .claude/skills/devam/summarize.py tmp/devam/<kisa-ad>.jsonl`
    (session ID'yi not et). `STATUS: INCOMPLETE` (non-zero çıkış) ise review'a geçme:
@@ -48,7 +50,7 @@ metinse kapsamı daraltan talimat.
 
    ```bash
    opencode run --session <session-id> --agent <aynı-ajan> --format json \
-     -f tmp/devam/<kisa-ad>-fix.md "Ekteki review bulgularını düzelt ve raporla." > tmp/devam/<kisa-ad>-fix.jsonl 2>&1
+     "Ekteki review bulgularını düzelt ve raporla." -f tmp/devam/<kisa-ad>-fix.md > tmp/devam/<kisa-ad>-fix.jsonl 2>&1
    ```
 
    Tekrar review et. Hâlâ must-fix varsa dur ve kullanıcıya raporla.

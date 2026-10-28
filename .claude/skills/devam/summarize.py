@@ -24,6 +24,8 @@ def main(path: str) -> int:
             try:
                 event = json.loads(line)
             except json.JSONDecodeError:
+                if line.strip():
+                    print("OUTPUT:", line.strip()[:300])
                 continue
             session = event.get("sessionID") or session
             kind = event.get("type")
