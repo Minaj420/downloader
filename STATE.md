@@ -6,11 +6,10 @@ Son güncelleme: 2026-10-29
 ## Şu an
 
 - M0–M5 kabul edildi (M5: playlist/album; commit `d37b78f`).
-- Workflow Faz 1 tamam: Z.ai kaldırıldı; `/devam` (Claude Code) + yedek
-  `/continue` (opencode). opencode ajan izinleri artık gerçekten uygulanıyor (eski `permissions:`
-  listesi opencode tarafından yok sayılıyordu). Çapraz review (gpt-5.6-sol) bulguları giderildi.
-- İlk `/devam` uçtan uca çalıştı (fast-worker/gpt-6-luna, canlı izleme ile):
-  `collection_parent_runner.py` bayat docstring'i düzeltildi, review'da bulgu yok.
+- Workflow Faz 1 tamam: `/devam` (Claude Code) + yedek `/continue` (opencode); canlı izleme `izle`.
+- Manuel smoke testi yapıldı (2026-10-29, Fedora + Podman, yt-dlp 2026.10.26, FFmpeg 7.1.5):
+  1 binary'ler PASS · 2 tek ses PASS · 3 birleştirme gerektiren video PASS · 4 playlist PASS
+  (seçim, sıra, sayaçlar doğru) ama dosya izni hatası doğrulandı. 5–6 (iptal, yeniden başlatma) atlandı.
 - M6 — Metadata ve isimlendirme: PLANLAMA. Implementation başlamadı.
 
 ## Sıradaki iş
@@ -18,49 +17,52 @@ Son güncelleme: 2026-10-29
 Kural: `/devam` her işi review + kontrollerden sonra otomatik commit eder; push yalnız
 kullanıcı "push et" deyince.
 
-1. Manuel smoke test (M6'dan önce): uygulamayı Podman ile çalıştırıp README'deki listenin
-   1–4. maddeleri (gerçek yt-dlp/FFmpeg: tek ses, birleştirme gerektiren video, küçük playlist).
-   Kullanıcı tarayıcıdan dener, Claude yönlendirir; sonuçlar buraya yazılır.
-2. Ardından M6 ürün kararları (aşağıda), gerçek yt-dlp çıktısı görülerek.
+1. M6 ürün kararlarını kullanıcıyla netleştirmek (aşağıda); smoke testteki gerçek çıktılar elde.
+2. Kararlar sonrası M6'yı küçük işlere bölüp `/devam` ile yürütmek.
 
-## Açık kararlar (M6, kullanıcı verecek)
+## Açık kararlar (kullanıcı verecek)
 
+M6:
+- Müzik dosyaları hangi biçimde kaydedilsin? (Smoke: YouTube sesi `.webm`/Opus geldi; Plex ve
+  birçok çalar için sorunlu. Seçenekler: `.opus` olarak çıkar, M4A veya MP3'e dönüştür.)
 - Sanatçı / albüm / parça bilgisi eksikse klasör ve dosya adı ne olur?
 - Playlist parça numarası nereden gelir (kaynak sırası mı, metadata mı)?
-- Kapak görseli aday kaynağı ve güven seviyesi nasıl belirlenir?
-- Hangi container'lara metadata/kapak gömülür; gömme başarısız olursa ne olur?
+- Kaynak başlıklarındaki "(Audio)", "Official Video" gibi ekler temizlensin mi?
+- Kapak görseli aday kaynağı ve güven seviyesi; hangi biçimlere metadata/kapak gömülür?
+M9 (arayüz):
+- Video kalite etiketleri: geniş videolarda "858p, 804p, 536p..." gibi sayılar çıkıyor; bilinen
+  basamaklara (1080p/720p/480p) oturtulsun, liste kısalsın, her seçenekte boyut görünsün mü?
 
-M6 için ilk keşif: `StorageService` dosyaları `audio/` ve `video/` altına düz koyuyor;
-analiz sonucu müzik metadata/güven bilgisi taşımıyor; FFmpeg yalnız stream-copy merge yapıyor.
+Smoke'tan M6 gözlemleri: dosyalar `audio/`·`video/` altına düz konuyor; albüm adı kullanılmıyor;
+başlıktaki `:` → `_`; platform alanı boş (YouTube tanınmadı); video `.mkv` (VP9+AAC).
 Kaynaklar: PRODUCT_SPEC §13–16, ARCHITECTURE §30–34 ve §59 Milestone 6.
 
 ## Açık bulgular
 
-- should-fix: Python 3.14'te 3 test başarısız (bkz. Son gate). Faz 2'de CI 3.12'ye sabitlenirken
-  ya test 3.14 uyumlu yapılır ya da yerel geliştirme 3.12'ye alınır.
+- **must-fix (M7 öncesi):** playlist dosyaları `0600` izinli — smoke'ta gerçek indirmede doğrulandı
+  (tek parça/video `0644`). `storage_service.py` child yerleştirme `mkstemp` modunu koruyor.
+- should-fix: container normal kapatmada (SIGTERM) 10 sn içinde durmadı, Podman SIGKILL kullandı.
+  Kuyruk boştu. Kapanış akışı incelenmeli (orderly shutdown settlement bu yola bağlı).
+- should-fix: Python 3.14'te 3 test başarısız (bkz. Son gate).
+- Not: Elisa `.m4a` dosyasını dışarıdan açınca çalmadı; VLC ve GStreamer/FFmpeg sorunsuz (oynatıcı sorunu).
 
 ## Son gate
 
-- 2026-10-29, macOS: backend ruff/mypy PASS, pytest 1466 PASS (4 deprecation uyarısı);
-  frontend lint/typecheck PASS, 147 test PASS, build PASS, contrast PASS.
-- 2026-10-29, Fedora (Python 3.14, checker/gpt-6-luna): ruff/mypy PASS; pytest 1462 PASS,
-  1 skip, **3 FAIL** — `test_rejected_output_closes_all_walk_descriptors` (missing/fifo/symlink-parent):
-  testin `os.close` monkeypatch'i Python 3.14 asyncio'nun açtığı pidfd ile çakışıyor (test/ortam
-  sorunu, uygulama hatası değil; Docker 3.12). Frontend tamamı PASS (147 test). Docker yerine Podman.
-- Gerçek ağ / yt-dlp smoke testi hiç çalıştırılmadı (README'deki manuel liste).
+- 2026-10-29, macOS: backend ruff/mypy PASS, pytest 1466 PASS; frontend tamamı PASS (147 test).
+- 2026-10-29, Fedora (Python 3.14): ruff/mypy PASS; pytest 1462 PASS, 1 skip, **3 FAIL** —
+  `test_rejected_output_closes_all_walk_descriptors`: testin `os.close` monkeypatch'i 3.14 asyncio
+  pidfd'siyle çakışıyor (test/ortam sorunu; Docker 3.12). Frontend tamamı PASS.
 
 ## Bilinen riskler
 
-- **Playlist dosyaları `0600` izinli** (`storage_service.py`, `mkstemp`): Plex başka kullanıcıyla
-  çalışıyorsa okuyamaz. M7 öncesi düzeltilmeli.
 - Container root çalışıyor; yt-dlp sürümü sabit değil ve hiçbir yerde görünmüyor.
 - Dosya yerleştirme hedefte hard link desteği istiyor (bazı NAS/SMB mount'larında sorun olabilir).
-- Accepted: aynı dizinde stat/unlink mikro-penceresi (Delete File); bazı terminal parent
-  DTO'larında `error.retryable` gösterilemiyor.
-- Ertelenmiş küçük işler: cancel 404 kodu, `_cancel_events` temizliği, generic 422'de `analysis_id: null`.
+- Accepted: Delete File'da aynı dizin stat/unlink mikro-penceresi; bazı terminal parent DTO'larında
+  `error.retryable` gösterilemiyor. Ertelenmiş: cancel 404 kodu, `_cancel_events` temizliği.
 
 ## Sonraki fazlar
 
-- Faz 2 — teknik: 0600 izni, `compose.yml` `user:`, yt-dlp sürüm sabitleme + görünürlük, GitHub Actions CI.
+- Faz 2 — teknik: 0600 izni, kapanış süresi, `compose.yml` `user:`, yt-dlp sürüm sabitleme +
+  görünürlük, GitHub Actions CI (Python 3.12).
 - Faz 3 — ARCHITECTURE.md'yi bölme (referans / kararlar / tarihçe; içerik taşınır, silinmez).
 - M6 → M7 (Plex) → M8 (cihaza indirme) → M9 (cilalama) → v0.1 güvenlik denetimi.
