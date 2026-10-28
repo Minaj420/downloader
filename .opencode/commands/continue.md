@@ -1,18 +1,15 @@
 ---
-description: Ana Lead oturumunda sıradaki tek bounded işi ilerlet
+description: Yedek akış — sıradaki işi (veya N işi) docs/WORKFLOW.md döngüsüyle yürüt
 agent: lead
 model: openai/gpt-6.1-sol
 ---
 
 Türkçe cevap ver.
 
-`lead.md`'de tanımlı `/continue` çalışma döngüsünü şimdi bir kez çalıştır.
-`.opencode/WORK_STATE.md` yetkilidir (authoritative); session inference veya
-eski checkpoint özetleri onunla çelişirse durable state geçerlidir. Mevcut ana
-session bağlamını koru; yeni ve bağımsız bir orchestration session başlatma.
+`STATE.md` ve `docs/WORKFLOW.md`'yi oku ve döngüyü uygula. Argüman bir sayıysa
+en fazla o kadar iş yap (üst sınır 5); boşsa tek iş. Ek talimat varsa kapsamı
+ona göre daralt:
 
 $ARGUMENTS
 
-Bu çağrıda yalnızca bir bounded task veya birbirinden ayrılamayan tek fix
-grubu tamamla. İş bittiğinde kısa checkpoint raporu ver ve dur; önerilen
-sıradaki işi aynı çağrıda başlatma, kullanıcının yeni `/continue` çağrısını bekle.
+Bitince kısa özet ver ve dur.

@@ -670,8 +670,8 @@ Parent retry reruns only failed, cancelled, or incomplete child work; completed 
 
 M5 current implementation status: production collection dispatch, sequential child execution,
 atomic child/catalog completion, durable Cancel (migration `0006`), Retry, startup recovery and
-orderly shutdown settlement are implemented. Single behaviour is preserved. Independent milestone
-review closure and fresh full gates are still pending; historical design assignments below are not
+orderly shutdown settlement are implemented. Single behaviour is preserved. M5 passed independent
+milestone review and fresh full gates and is accepted; historical design assignments below are not
 instructions to restart completed work.
 
 The original technical follow-ups included controlled identity for missing/duplicate source IDs and stale selections, analysis retrieval, aggregate percent calculation, and child scheduling/concurrency-slot semantics. M5-1 below resolves snapshot identity and bounds retrieval; the M5-4B design note below selects aggregate-percent and slot mechanics, not additional product policy. All-failed error aggregation and cancellation-versus-failure precedence are decided product policy (PRODUCT_SPEC section 17): an all-failed parent is `failed` with stable `all_children_failed` semantics and Retry requires a retry-eligible failed/cancelled/incomplete child, and cancellation-versus-failure precedence follows durable persisted state (Cancel persisted before terminalization wins; a committed failure terminal cannot be superseded). Collection activation followed implementation of collection controls, retry, recovery and drain; the single runner's precedence is unchanged.
@@ -690,7 +690,7 @@ The child CLI also fixes `--playlist-items 1` as a defensive retrieval bound: yt
 
 ## M5-4B execution contract — implemented; original design record
 
-Status: the execution contracts below are implemented by the accepted M5 backend slices and production queue binding. The original assignment notes are retained as historical design evidence, not current next-task instructions. This records implementation status only; milestone acceptance and fresh full gates are still pending.
+Status: the execution contracts below are implemented by the accepted M5 backend slices and production queue binding. The original assignment notes are retained as historical design evidence, not current next-task instructions. M5 has since been accepted.
 
 ### Scheduling and attempt ownership
 
@@ -779,7 +779,7 @@ and this is a collection-only decision. Not chosen and unsupported: unknown/corr
 cancelled children under a NULL marker, new status/API/migration, auto-resume/Retry policy, and any
 new durability guarantee on SIGKILL or unbounded force-kill. A shutdown that cannot finish or commit
 claims nothing and falls back to the existing full startup recovery at the next start, with no new
-timeout policy. Collection orderly shutdown settlement and production dispatch are implemented; milestone acceptance and fresh full gates remain pending.
+timeout policy. Collection orderly shutdown settlement and production dispatch are implemented and accepted with M5.
 
 The following assignment and its original no-go limits describe the completed persistence-only slice, not the current production activation state.
 
@@ -2082,11 +2082,11 @@ This stage is not a new feature, not post-v0.1 scope, not a public-exposure or a
 
 Audit execution model:
 
-- The initial audit is read-only and performed by the existing reviewer role, preferably `zai-coding-plan/glm-5.3#high` (GLM-5.3 High); no new agent/role is added and the auditor applies no fixes directly.
+- The initial audit is read-only and performed by an existing reviewer role (see `docs/WORKFLOW.md`); no new agent/role is added and the auditor applies no fixes directly.
 - Every finding includes evidence, affected boundary/files, realistic preconditions and impact, severity rationale, and a proposed mitigation.
-- An auditor severity label alone is not acceptance: meaningful findings are triaged/reviewed by an independent OpenAI-model reviewer (GPT-6.1 is appropriate for a GLM audit) before any implementation.
+- An auditor severity label alone is not acceptance: meaningful findings are triaged by an independent reviewer from a different model family than the auditor before any implementation.
 - False positives are explicitly dismissed with evidence, never silently dropped.
-- Validated fixes are separate bounded implementation tasks under the normal reasoning/risk routing; high-risk fixes use a GPT-6.1 implementer with an independent GPT-5.6 reviewer.
+- Validated fixes are separate bounded implementation tasks under the normal routing and cross-family review of `docs/WORKFLOW.md`.
 - Finding dispositions are recorded, and unresolved validated Critical/Important findings are v0.1 release blockers. Fixes receive targeted re-review where the fix requires it; this is not a continuous or per-task audit.
 - Full normal gates are not run when the audit starts; the fresh configured full gates (section 55) run once at the final release gate. Use the existing configured quality gates; do not invent new validators.
 

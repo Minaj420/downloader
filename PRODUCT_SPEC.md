@@ -569,8 +569,8 @@ For playlist/album jobs, preserve the real completed, failed, and total selected
 Parent Cancel cancels active child work and prevents not-started children from running, without touching completed children. Parent Retry reruns only failed, cancelled, or incomplete children; completed children are not downloaded again. Per-child Cancel / Retry UI is out of scope for v0.1. When all selected children have failed, the parent is `failed` with stable `all_children_failed` error semantics: that parent error code is stable whether the child failure reasons are homogeneous or heterogeneous, child-specific reasons and error counters remain inspectable, and neither the first/last child error nor `partial_failure` is substituted. Parent Retry is enabled only when at least one retry-eligible failed, cancelled, or incomplete child exists; the locked child retry-eligibility classification is recorded below; exact error message wording, schema migrations and new public API surface remain outside that classification. When parent cancellation races with child failure, precedence is decided by durable state only: if the Cancel request is persisted before the parent's terminalization transaction, the parent is `cancelled`; if a failure terminal was committed first, the parent remains `failed` and a later Cancel cannot supersede it. In-memory event timing is never the decision source, and completed children and their outputs remain immutable. Shutdown policy and durability/data-schema choices remain outside this product paragraph.
 
 M5 implementation status: collection dispatch, durable Parent Cancel, Retry, startup recovery and
-orderly shutdown settlement are implemented. The contracts below remain authoritative; independent
-milestone review closure and fresh full quality gates are still pending.
+orderly shutdown settlement are implemented. The contracts below remain authoritative; M5 passed
+independent milestone review and fresh full quality gates and is accepted.
 
 Locked parent Cancel lifecycle decisions (implemented contract): after a durable Parent Cancel acceptance and the full attempt-owned drain, queued or active children (the active states analyzing, downloading, post_processing, finalizing) become `cancelled` in one atomic settlement; existing failed child states and reasons and the failed counter remain real, completed children, their outputs and catalog entries stay immutable, and the settlement derives the actual total/completed/failed N/C/F with no new cancelled counter. The all-completed precedence is expressly confined to all selected children completed: when every selected child's completion is already durably committed (a nonempty all-completed selected set) and the parent success terminal is not yet committed, a committing Cancel marker settles the parent as `completed`, not `cancelled` — children win — while a success terminal committed first rejects a late Cancel. This decision is not an extension of the narrow F >= 1 failure-race precedence, which stays locked: a Cancel request persisted first yields `cancelled`, a failure terminal committed first leaves the parent `failed`. NULL-marker child claim/forward/progress/completion predicates remain unchanged, no completion or catalog insert is permitted after the marker, and the marker is not cleared on success. This paragraph defines no helper design, new API, message wording, retry eligibility, or error reset.
 
@@ -603,8 +603,7 @@ sets, cancelled children under a NULL marker, any new status/API/migration, auto
 and any new durability guarantee for SIGKILL or unbounded force-kill behaviour. If the orderly shutdown
 cannot finish or commit its settlement, no completed state is claimed and the existing full startup recovery
 applies at the next startup — this adds no timeout policy. Collection orderly shutdown settlement and
-production dispatch are implemented; milestone acceptance still requires independent review closure
-and fresh full quality gates.
+production dispatch are implemented and accepted with M5.
 
 ---
 

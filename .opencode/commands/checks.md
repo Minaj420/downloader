@@ -1,17 +1,12 @@
 ---
-description: Projenin kalite kapılarını salt-okunur checker ile çalıştır
+description: Quality gate'leri salt-okunur checker ile çalıştır
 agent: checker
-subagent: true
+subtask: true
 ---
 
-Türkçe cevap ver.
-
-`checker.md` agent kurallarına göre projenin kalite kapılarını salt-okunur
-olarak çalıştır: exact komut listesi, öncesi/sonrası kaynak-değişim kontrolü ve
-Docker ortamını başladığı duruma döndürme kuralları checker.md'de tanımlıdır.
+Türkçe cevap ver. `checker.md` kurallarına göre gate'leri çalıştır. Kapsam
+belirtilmemişse full gate'ler:
 
 $ARGUMENTS
 
-Hiçbir problemi gizleme. Sonuçları PASS/FAIL olarak özetle; başarısız bir
-kontrol varsa komutu, kısa hata nedenini ve commit'i engelleyip engellemediğini
-belirt.
+Her komut için PASS / FAIL / NOT RUN ve test sayılarını raporla.

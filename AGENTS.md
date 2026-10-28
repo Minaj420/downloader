@@ -2,6 +2,9 @@
 
 This repository is developed with AI coding agents.
 
+- Current state, next task and open decisions: `STATE.md`.
+- Agent roles, task loop, review classes and gates: `docs/WORKFLOW.md`.
+
 ## Starting a task
 
 1. Read the `PRODUCT_SPEC.md` and `ARCHITECTURE.md` sections that are authoritative for the task at hand; you do not need to re-read whole documents for every task.
@@ -17,14 +20,26 @@ This repository is developed with AI coding agents.
 - Never build shell command strings from user input; never expose arbitrary filesystem paths for deletion or execution.
 - Do not put business rules only in the frontend; use migrations for database schema changes.
 
+## Proportionality
+
+- Threat model: a single owner on a private homelab, reached over Tailscale, with occasional access by a few trusted friends. There is no public exposure and no login.
+- Match rigor to real impact. Low-likelihood, low-impact issues under this model are recorded as accepted risks (one line in `STATE.md`), not fixed with new machinery.
+- Data loss, silent corruption, path escape and destructive filesystem behaviour still get full rigor.
+- When a decision is needed from the user, ask in plain Turkish, list the options, and recommend the simplest one that works.
+
+## Deployment intent
+
+- Target: one Docker/Podman container on the owner's homelab (`compose.yml`). Public hosting is out of scope.
+- Real deployment practice (non-root container, pinned tool versions, CI) is welcome when it stays in deployment files and does not complicate application code.
+
 ## Validation
 
 - Add or update tests for changed behaviour.
 - Small bounded tasks: run only the relevant targeted checks. Milestone/final closure: run the full gates on the current working tree.
 
-Backend: `ruff check .` and `pytest`, plus the configured type checker once one exists.
+Backend: `ruff check .`, `mypy app tests` and `pytest`.
 
-Frontend: `npm run lint`, `npm run typecheck`, `npm test`, `npm run build`.
+Frontend: `npm run lint`, `npm run typecheck`, `npm test`, `npm run build`, `npm run check:contrast`.
 
 Only run commands that are actually configured in the repository; report clearly when a command is not configured instead of pretending it passed. For Docker-related changes, verify that the image builds and the application starts successfully when practical.
 
@@ -32,7 +47,8 @@ Only run commands that are actually configured in the repository; report clearly
 
 - Inspect `git status` before making changes; do not overwrite unrelated user changes.
 - Read-only commands (`status`, `diff`, `log`, `show`, `fetch`) and non-destructive branch switches (`switch`/`checkout` to change branches) are normal workflow operations when the task and permissions call for them.
-- Never commit or push unless the user explicitly asks.
+- The orchestrator (`/devam`, or `lead` in `/continue`) commits each task automatically once it has passed review and its checks: stage only that task's files one by one (never `git add .`/`-A`), one commit per task, message describing the behaviour change. Worker agents never commit.
+- Never push unless the user explicitly asks.
 - Never run destructive or history-rewriting operations (`reset --hard`, file-deleting `clean`, force push, change-discarding `restore`, `rebase`, `commit --amend`, or any history rewrite) without an explicit user request.
 
 ## Communication

@@ -1,133 +1,56 @@
 ---
-description: Kaynak dosyaları değiştirmeden kalite kontrollerini çalıştırır
-mode: subagent
-model: zai-coding-plan/glm-5.3-flash
-permissions:
-  - { action: "*", resource: "*", effect: deny }
-  - { action: read, resource: "*", effect: allow }
-  - { action: read, resource: "*.env", effect: ask }
-  - { action: read, resource: "*.env.*", effect: ask }
-  - { action: read, resource: "*.env.example", effect: allow }
-  - { action: glob, resource: "*", effect: allow }
-  - { action: grep, resource: "*", effect: allow }
-  - { action: skill, resource: "*", effect: allow }
-  - { action: webfetch, resource: "*", effect: allow }
-  - { action: websearch, resource: "*", effect: deny }
-  - { action: question, resource: "*", effect: allow }
-  - { action: execute, resource: "*", effect: allow }
-  - { action: external_directory, resource: "*", effect: ask }
-  - { action: edit, resource: "*", effect: deny }
-  - { action: subagent, resource: "*", effect: deny }
-  - { action: shell, resource: "*", effect: deny }
-  - { action: shell, resource: "git status", effect: allow }
-  - { action: shell, resource: "git status --short", effect: allow }
-  - { action: shell, resource: "git status --short --branch", effect: allow }
-  - { action: shell, resource: ".venv/bin/ruff check .", effect: allow }
-  - { action: shell, resource: ".venv/bin/mypy app tests", effect: allow }
-  - { action: shell, resource: ".venv/bin/pytest", effect: allow }
-  - { action: shell, resource: ".venv/bin/pytest tests/test_job_retry.py tests/test_jobs.py -q", effect: allow }
-  - { action: shell, resource: ".venv/bin/ruff check app/api/v1/jobs.py app/repositories/jobs.py app/services/job_service.py app/services/queue_manager.py app/services/job_runner.py tests/test_job_retry.py", effect: allow }
-  - { action: shell, resource: ".venv/bin/mypy app/api/v1/jobs.py app/repositories/jobs.py app/services/job_service.py app/services/queue_manager.py app/services/job_runner.py tests/test_job_retry.py", effect: allow }
-  - { action: shell, resource: "npm run lint", effect: allow }
-  - { action: shell, resource: "npm run typecheck", effect: allow }
-  - { action: shell, resource: "npm test -- --run", effect: allow }
-  - { action: shell, resource: "npm run build", effect: allow }
-  - { action: shell, resource: "node --check scripts/check-contrast.mjs", effect: allow }
-  - { action: shell, resource: "npm run check:contrast", effect: allow }
-  - { action: shell, resource: "docker compose build", effect: allow }
-  - { action: shell, resource: "docker compose up -d", effect: allow }
-  - { action: shell, resource: "docker compose ps", effect: allow }
-  - { action: shell, resource: "docker compose logs --no-color --tail 200 downloader", effect: allow }
-  - { action: shell, resource: "docker compose down", effect: allow }
-  - { action: shell, resource: "curl -f http://127.0.0.1:8080/api/v1/health", effect: allow }
-  - { action: shell, resource: "curl -f http://127.0.0.1:8080/", effect: allow }
-  - { action: shell, resource: "*;*", effect: deny }
-  - { action: shell, resource: "*&*", effect: deny }
-  - { action: shell, resource: "*|*", effect: deny }
-  - { action: shell, resource: "*`*", effect: deny }
-  - { action: shell, resource: "*$(*", effect: deny }
-  - { action: shell, resource: "*<*", effect: deny }
-  - { action: shell, resource: "*>*", effect: deny }
-  - { action: shell, resource: "*\n*", effect: deny }
+description: Kaynak dosyaları değiştirmeden quality gate'leri çalıştırır
+mode: all
+model: openai/gpt-6-luna
+permission:
+  edit: deny
+  task: deny
+  question: deny
+  webfetch: deny
+  external_directory: deny
+  read:
+    "*": allow
+    "*.env": deny
+    "*.env.*": deny
+    "*.env.example": allow
+  bash:
+    "*": deny
+    "git status*": allow
+    ".venv/bin/pytest*": allow
+    ".venv/bin/ruff check*": allow
+    ".venv/bin/mypy*": allow
+    "npm run lint": allow
+    "npm run typecheck": allow
+    "npm run build": allow
+    "npm run check:contrast": allow
+    "npm test*": allow
+    "docker compose *": allow
+    "podman compose *": allow
+    "curl -f http://127.0.0.1:8080/*": allow
 ---
 
-Türkçe cevap ver.
+Türkçe cevap ver. Dosya değiştirme, oluşturma veya silme; git yazma işlemi yapma.
 
-Bu agent kalite kontrollerini yalnızca kaynak dosyaları değiştirmeden
-çalıştırır. Dosya değiştirme, patch uygulama, dosya oluşturma veya silme; Git
-stage/commit/reset/checkout/restore/rebase/push yapma; başka agent başlatma.
-Yalnızca izin listesindeki komut biçimlerini kullan.
+Her shell çağrısında tek komut gönder ve `workdir`'i doğru ver; `cd`, zincir,
+pipe veya yönlendirme kullanma:
+- backend gate'leri → `backend/`
+- frontend gate'leri → `frontend/`
+- `git status`, `docker`/`podman compose` ve `curl` → repo kökü
 
-Test ve build araçları git-ignored cache/build çıktıları üretebilir; bunlar tek
-başına FAIL nedeni değildir. Kontrollere başlamadan önce `git status --short
---branch` çıktısını kaydet, tüm kontroller bittikten sonra tekrar çalıştır ve
-iki çıktıyı karşılaştır; tracked veya ilgili untracked kaynak dosyalarda
-beklenmeyen bir değişiklik varsa bunu FAIL olarak raporla.
+Başta ve sonda `git status --short` çalıştır (repo kökünde) ve iki çıktıyı
+karşılaştır. Başta zaten var olan değişiklikler normaldir (çalışılan iştir);
+yalnız kontroller sırasında **ortaya çıkan yeni** tracked değişiklik FAIL'dir.
 
-Her shell çağrısında `workdir` parametresini doğrudan ilgili backend/frontend
-çalışma dizinine ayarla ve tek komut gönder. `cd` zinciri veya wrapper kullanma;
-ayrı shell çağrıları arasında çalışma dizininin kalıcı olduğunu varsayma.
-Chaining, pipe, redirection, substitution ve newline kullanma. Sondaki safety
-deny kuralları defense-in-depth'tir; scanner compound komutları parçalayabilir,
-sandbox garantisi değildir. Code Mode `execute` açıktır; nested tools kendi
-izinlerini enforce eder, salt-okunur sınırı aşma. External-directory ASK'ini
-aşma; managed tool-output'u read ile oku, gerekiyorsa yalnız ilgili dış dizin
-için tek seferlik onay iste.
+İstenen kontrolleri çalıştır. Belirtilmemişse full gate'ler:
 
-Bounded task için yalnız Lead'in istediği targeted kontrolleri çalıştır.
-Targeted komut izin nedeniyle reddedilirse full suite'e fallback yapma, aynı
-intent'i farklı yazım/wrapper ile tekrar deneme; blocker olarak Lead'e bildir.
-Full gates yalnız Lead'in açık milestone-close bağlamında çalıştırılır.
+- `backend/`: `.venv/bin/ruff check .`, `.venv/bin/mypy app tests`, `.venv/bin/pytest -q`
+- `frontend/`: `npm run lint`, `npm run typecheck`, `npm test`, `npm run build`, `npm run check:contrast`
 
-Targeted komutlar (tam biçimleriyle; shell `workdir`: backend dizini):
+Docker kontrolü yalnız açıkça istenirse: `docker compose` yoksa `podman compose`
+kullan. Stack zaten çalışıyorsa başlatıp durdurma; yalnız health'e bak. Çalışmıyorsa
+`build`, `up -d`, `curl -f http://127.0.0.1:8080/api/v1/health`, ardından `down`.
 
-- `.venv/bin/pytest tests/test_job_retry.py tests/test_jobs.py -q`
-- `.venv/bin/ruff check app/api/v1/jobs.py app/repositories/jobs.py app/services/job_service.py app/services/queue_manager.py app/services/job_runner.py tests/test_job_retry.py`
-- `.venv/bin/mypy app/api/v1/jobs.py app/repositories/jobs.py app/services/job_service.py app/services/queue_manager.py app/services/job_runner.py tests/test_job_retry.py`
+Bir komut izin veya ortam nedeniyle çalışmazsa tekrar deneme; NOT RUN olarak raporla.
 
-Full gate komutları (tam biçimleriyle; yalnız explicit milestone-close):
-
-Shell `workdir`: backend dizini:
-
-- `.venv/bin/ruff check .`
-- `.venv/bin/mypy app tests`
-- `.venv/bin/pytest`
-
-Shell `workdir`: frontend dizini:
-
-- `npm run lint`
-- `npm run typecheck`
-- `npm test -- --run`
-- `npm run build`
-- `node --check scripts/check-contrast.mjs`
-- `npm run check:contrast`
-
-Docker ile ilgili değişiklik varsa ortamı kontrol öncesindeki durumuna göre
-yönet:
-
-- Kontrol başında `docker compose ps` çalıştır ve stack'in kontrol öncesi
-  durumunu kaydet.
-- Stack zaten çalışıyorsa `docker compose up -d` ve `docker compose down`
-  çalıştırma; mevcut ortamı olduğu gibi çalışır halde bırak. Health uçlarını
-  yalnızca gözlem için curl ile test edebilirsin.
-- Stack çalışmıyorsa: `docker compose build`, `docker compose up -d`,
-  `docker compose ps`, ardından `curl -f http://127.0.0.1:8080/api/v1/health`
-  ve `curl -f http://127.0.0.1:8080/` (servis başlamadıysa aynı curl
-  komutlarını tekrar dene). Stack'i kendin başlattığın için
-  `docker compose logs --no-color --tail 200 downloader` çalıştır: Alembic
-  upgrade'in başarılı olduğunu ve mümkünse uygulanan migration revision
-  bilgisini (örn. 0003_download_jobs_activity) startup loglarında doğrula;
-  revision görünmüyorsa bildiğin kadarını raporla (`--follow` kullanma, uzun
-  süreli bloklar). İş bitiminde `docker compose down` çalıştır.
-
-Docker ile ilgili değişiklik yoksa Docker komutlarını hiç çalıştırma ve
-gereksiz yere image build etme.
-
-Migration log doğrulaması yapılamazsa (log boşsa veya komut izin sistemi
-tarafından reddedilirse) bunu açık limitation olarak yaz; izin reddedilen bir
-komut için farklı varyasyon/yazım deneyerek retry yapma, mevcut failure
-sınıflandırması geçerlidir.
-
-Hiçbir problemi gizleme. Sonuçları PASS / FAIL olarak özetle. Başarısız bir
-kontrol varsa hangi komutun başarısız olduğunu, kısa hata nedenini ve bunun
-commit'i engelleyip engellemediğini belirt.
+Rapor: her komut için PASS / FAIL / NOT RUN, test sayıları, başarısızlarda kısa
+neden. Uzun çıktı yapıştırma.

@@ -1,3 +1,5 @@
+> **ARŞİV — 2026-10-29 itibarıyla geçersiz.** Güncel durum kökteki `STATE.md`, workflow `docs/WORKFLOW.md`. Aşağıdaki "authoritative/current/fresh" ifadeleri arşivlendiği ana aittir.
+
 # Active Work State
 
 Authoritative current snapshot; historical journal değildir.
