@@ -7,9 +7,10 @@ opencode'daki yedek `lead` (`/continue`) aynı döngüyü buradan uygular. Genel
 - Birincil: Claude Code'da `/devam` veya `/devam 3`. Worker'lar arka planda
   `opencode run --agent <ajan>` ile etkileşimsiz çağrılır; bu ajanlarda `ask` ve
   `question` yoktur, karar gerekirse raporlarına yazarlar.
-- Canlı izleme: bir terminalde `opencode serve --port 4096`, diğerinde
-  `opencode attach http://127.0.0.1:4096`. `/devam` sunucuyu görürse worker'ları
-  onun üzerinden çalıştırır; TUI'de oturum listesinden çalışan işi seçersin.
+- Canlı izleme: `scripts/izle.sh` (tarayıcı için `scripts/izle.sh web`). Script
+  `opencode serve --port 4096` açar ve izleme ekranını bağlar; ekran kapanınca
+  kendi açtığı sunucuyu kapatır. `/devam` sunucuyu görürse worker'ları onun
+  üzerinden çalıştırır; ekranda oturum listesinden çalışan işi seçersin.
   Sunucu kapalıysa da çalışır; oturumlar sonradan `opencode` → oturum listesinde görülür.
 - Yedek: `opencode` TUI'sini aç (varsayılan ajan `lead`) ve `/continue` yaz.
   Lead etkileşimlidir: soru sorabilir, commit/push için onay ister.
