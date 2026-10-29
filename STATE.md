@@ -12,31 +12,24 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-29.
   model değişimi sessiz yapılmaz, implement resume açık --model ister.
 - Otomatik izleme: `bash scripts/claude-watch.sh --follow-latest`; en yeni logu gösterir, yeni göreve
   geçer, result sonrası bekler. Claude çağrıları `--log` kullanmalı; Ctrl+C yalnız izleyiciyi kapatır.
-- M6 başlangıç Opus görüşü alındı; requested opus / observed claude-opus-5-5 eşleşti,
-  çağrı başarılı ve izin reddi yok. Kullanıcı tercihleri PRODUCT_SPEC ve ARCHITECTURE'a işlendi;
-  M6.0 hazırlık tamamlandı (`29206a9`).
-- M6.1 tamamlandı (`d2c6667`): tekli analiz POST/GET ve saklanan JSON'da opsiyonel source_metadata;
-  yalnız açık kaynak alanları, bozuk alan izolasyonu, eski JSON uyumu. Collection parent None;
-  child probe metadata bağlantısı, frontend gösterimi, müzik adlandırma/etiket/kapak henüz yok.
-- M6.1 için Opus uygulama/test çağrısı doğrulandı: opus / claude-opus-5-5, başarı ve izin reddi yok;
-  bağımsız GPT review must-fix yok. Kaynak model adı source-only provenance için yeterli;
-  artist listeleri korunur, başlık/kanal/yükleme tarihi üzerinden metadata çıkarılmaz.
-- M6.2 tamamlandı (`8a1c303`): merkezi `final_target(..., folders=())` yol planlama ve bayt sınırlı klasör
-  temizleyici. Dosya/klasör oluşturmaz; mevcut düz yayınlama değişmedi, nested yazma aktif değil.
-  Opus ve aynı-model resume family eşleşti, izin reddi yok; tek review turunda temizleme sonrası
-  NFC düzeltildi, GPT reviewer must-fix kalmadığını doğruladı.
-- M6.3 tamamlandı: koleksiyon video adı storage içinde kalıcı source_order ile NN - Başlık.ext;
-  numara en az iki hane, seçim boşlukları korunur. Başlık/katalog metadata değişmez;
-  fresh probe/playlist_index/track_number kullanılmaz. Standalone/audio ve completed işler değişmedi.
-  Opus family eşleşti, izin reddi yok; GPT review must-fix yok, rework gerekmedi.
+- M6 Opus başlangıç/dönüşüm görüşleri alındı; M6.0 hazırlık tamam (`29206a9`).
+- M6.1 (`d2c6667`): tekli analizde opsiyonel source_metadata, eski JSON uyumu; child metadata yok.
+- M6.2 (`8a1c303`): bayt sınırlı klasör temizliği ve merkezi yol planlama; nested yazma aktif değil.
+- M6.3 (`f32facd`): koleksiyon video NN - Başlık.ext, kalıcı source_order, numaralar sıkıştırılmaz;
+  katalog başlığı/standalone/audio/completed işler değişmedi.
+- M6.4a tamamlandı: onaylanan dönüşüm kapsamı PRODUCT_SPEC ve ARCHITECTURE'a işlendi;
+  dönüşüm runtime/API/arayüzü henüz uygulanmadı. Sabit presetlerin kesin değerleri kilitlenmedi.
+- İlk Sonnet belge çağrısı Bash grep izin reddiyle başarısız kaldı. Kullanıcı devam yetkisiyle
+  mevcut çıktı incelendi; tek review turunda kalite iddiası ve fallback özeti düzeltildi.
+  Aynı model açık resume: sonnet / claude-sonnet-5-5, success=true, permission_denials=false.
+  GPT reviewer must-fix kalmadığını doğruladı; önceki başarısız çağrı başarılı sayılmadı.
 
 ## Sıradaki iş
 
-1. M6.4 dönüşüm planlama görüşü alındı (opus / claude-opus-5-5, başarılı, izin reddi yok).
-   Kullanıcı ses/video profil seti ve açık dönüşüm hata politikasını yanıtlasın; önce kod yazma.
-   Ardından M6.4a karar/spec düzeltmesi: §8 WAV future/optional matrix metni ve mimaride
-   kaynak variant_id ile çıktı profili karışımı yeni ürün gereksinimiyle eşitlenmeli.
-2. Revize sıra: M6.4b profil kalıcılığı/API → M6.4c FFmpeg adaptör → M6.4d dönüşüm kaynak seçimi/
+1. M6.4b profil kalıcılığı/API: mevcut schema/migration/readers/testleri incele ve Opus'a danış;
+   anlamlı API/kalıcı veri sözleşmesi nedeniyle uygulayıcı Opus. Eski kayıtlar Original kalmalı.
+   Dönüşüm runtime'ı hazır değilken yeni çıktı seçimini yanlış biçimde çalıştırıp completed sayma.
+2. Takip: M6.4c FFmpeg adaptör → M6.4d dönüşüm kaynak seçimi/
    pipeline+cancel/retry → M6.4e arayüz → M6.4f gerçek binary/çıktı smoke.
    M6.5 metadata/etiket pipeline bağlantısı →
    M6.6 müzik yolları/katalog → M6.7 kaynak kapak → M6.8 metadata/kapak önizleme-düzenleme →
@@ -50,14 +43,13 @@ Kural: review ve kontroller sonrası görev başına otomatik commit; push yaln�
 
 - Kullanıcı: bu bir bağımsız converter değil, dönüşüm seçenekleri sunan indirme uygulaması;
   yeni indirmede seçilen desteklenen çıktı biçimi gerektiğinde dönüştürülerek üretilmeli.
-  WAV/MP3 örnekleri istendi; somut ses/video profil seti ve kalite ayarları henüz netleşmedi.
   Original varsayılanı ile isteğe bağlı transcode ayrı: kaynak kalite kuralı transcode yasağı değil.
-  Mevcut Library veya dosya yükleyerek dönüşüm bu istekle kapsama alınmadı. Açık çıktı seçimi
-  karşılanamazsa hata/fallback ve completed davranışı henüz kararlaştırılmadı; kullanıcıya sorulmalı.
-- Onaylanmamış öneriler: Opus minimum ses Original+MP3+WAV; lead daha kapsamlı ilk set için
-  M4A/Opus/FLAC da sunuyor. Tek kalite preseti, bitrate kaydırıcısı yok; MP3 V0/WAV16bit yalnız aday.
-  Video Original+MP4(H.264/AAC uyumluluk; gerekirse transcode), açık dönüşüm başarısızsa failed ve
-  farklı biçim yayınlamama kullanıcıya önerildi; hiçbiri henüz onaylanmış ürün kararı değil.
+  Mevcut Library veya dosya yükleyerek dönüşüm bu istekle kapsama alınmadı.
+- ONAYLI ilk ses seti: Original, MP3, WAV, M4A, Opus, FLAC; her biçimde sabit kalite profili,
+  bitrate kaydırıcısı yok. Kesin codec/bitrate/preset değerleri sonraki teknik iş; henüz kilitlenmedi.
+- ONAYLI video: Original + MP4 (H.264/AAC uyumlu, gerekirse transcode). Açık dönüşüm hedefi
+  üretilemezse iş/child failed; farklı biçimde orijinal sessizce yayınlanıp completed sayılmaz.
+  Etiket/kapak hatası hazır dönüştürülmüş çıktıyı dönüşüm öncesi biçime geri düşürmemeli.
 - Teknik lead kararı: kaynak variant/kalite tercihi çıktı profilinden ayrı; seçim işte kalıcı,
   retry aynı seçimi kullanır, eski eksik profil Original olur. Şema/enum henüz kilitlenmedi.
   Ayrı converter/runner yok; mevcut FFmpeg/prepared_media/staging/storage sınırları korunacak.
@@ -99,8 +91,9 @@ Kaynaklar: PRODUCT_SPEC §13–16, ARCHITECTURE §30–34 ve §59 M6.
 
 ## Son gate
 
-- 2026-10-29 Fedora, M6.4 dönüşüm yeniden planlama: yalnız kod/spec okuma ve Opus danışma;
-  runtime/test/config değişmedi; test/full gate yok. Planlama kaydı dışında uygulama başlamadı.
+- 2026-10-29 Fedora, M6.4a: ilk çağrı izin reddiyle FAIL; kullanıcı devamından sonra tek review
+  düzeltmesi PASS, model eşleşti/izin reddi yok. Worker ve lead belge kontrolü; GPT review must-fix yok;
+  lead diff --check PASS. Kod/test/config değişmedi; belgeye özel test tanımlı değil, test/full gate yok.
 - 2026-10-29 Fedora Python 3.14.8, M6.3: worker ve lead child_storage+collection child/parent+
   storage_utils 321 PASS/3 FAIL (yalnız bilinen descriptor/pidfd testleri; deselect edilmedi).
   Aynı hata yolundaki await edilmemiş coroutine uyarısı korundu; ayrı child runner

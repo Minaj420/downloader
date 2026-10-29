@@ -385,17 +385,16 @@ source_codec: "opus"
 source_bitrate: ...
 ```
 
-Possible conversion variant:
+`variant_id` identifies only a source variant. A conversion target is a separate backend-validated output-profile concept, chosen independently of the source variant (illustrative only; the wire JSON schema, names and enumerations are not frozen):
 
 ```text
-variant_id: "audio-mp3-128"
-label: "MP3 · 128 kbps"
-kind: "audio"
-conversion: "mp3"
-target_bitrate: 128
+source selection:  variant_id = "audio-original-best"
+output choice:     output profile = one backend-known profile (e.g. MP3)
 ```
 
-The mapping between `variant_id` and actual yt-dlp/FFmpeg execution parameters must exist only on the backend.
+M6 planned (not implemented): required audio profiles are Original / Best Available (default), MP3, WAV, M4A, Opus and FLAC, each with one fixed quality profile and no bitrate slider; required video profiles are Original and MP4 (compatible). Codec/bitrate/quality parameters of each profile are a later technical design item. Current code accepts only `original_best_available` for collections.
+
+The mapping from `variant_id` and output profile to actual yt-dlp/FFmpeg execution parameters must exist only on the backend, as argument arrays.
 
 The browser must never construct shell arguments.
 
@@ -509,7 +508,9 @@ However, application-level metadata and naming rules must remain controlled by D
 
 FFmpeg processes should use argument arrays, not shell-concatenated command strings.
 
-M6 decisions (approved; planned, not implemented; PRODUCT_SPEC §8, §14): Original / Best Available keeps source quality. WebM-contained Opus audio is remuxed losslessly into `.opus`; AAC/M4A is kept; MP3/AAC re-encoding is not a default; no codec conversion matrix is defined for unknown codecs; past Library items are not reprocessed. Tagging, artwork and remux run on staged files only. If they fail, the safe original is kept and the job completes with an Activity warning; cancellation, security, storage and catalog errors are not swallowed by this fallback, and staging and storage containment boundaries are unchanged. Current code (`prepared_media.py`) only downloads and merges streams; it does no tagging, artwork or remux.
+M6 decisions (approved; planned, not implemented; PRODUCT_SPEC §8, §14): Original / Best Available keeps source quality. WebM-contained Opus audio is remuxed losslessly into `.opus`; AAC/M4A is kept; MP3/AAC re-encoding is not a default and happens only for an explicitly selected output; past Library items are not reprocessed. Tagging, artwork and remux run on staged files only. If they fail under Original, the safe original is kept and the job completes with an Activity warning; cancellation, security, storage and catalog errors are not swallowed by this fallback, and staging and storage containment boundaries are unchanged.
+
+Explicit conversion (approved; planned, not implemented): conversion runs through this FFmpeg adapter and the existing prepared_media/staging/storage boundaries; there is no separate converter or runner. An explicitly selected output that cannot be produced fails the job/child; no silent publish of the original in a different format. Optional tag/artwork failure never reverts a ready target to the pre-conversion source format. Missing/unsupported encoder error handling is later technical design; no encoder is guaranteed per FFmpeg build. MP4 (compatible) requires real H.264/AAC output (copy/remux of compatible streams, transcode otherwise). Current runtime (`prepared_media.py`, `integrations/ffmpeg.py`) only downloads and merges streams with copy; it does no conversion, tagging, artwork or remux. Historical M5 contracts that rejected conversion/accepted native-only remain a record of M5 and are superseded for new downloads by the M6 plan.
 
 ---
 
@@ -653,7 +654,7 @@ The parent tracks:
 - failed items,
 - aggregate progress.
 
-The parent also owns the collection-level Audio / Video mode and output format/profile preference. There is one preference for the job, not per-item profiles in v0.1. The backend resolves it against each child's actual source through the yt-dlp/FFmpeg integration boundaries. `Original / Best Available` chooses the most suitable available/native result, allowing heterogeneous final containers/codecs. Explicit conversion affects only this job's selected children, never existing Library or historical files. Video ceilings such as `Up to 1080p` do not upscale lower-quality sources, and conversion is not quality enhancement. MP3/M4A/Opus/FLAC are possible conversion profiles, not a mandatory supported-profile matrix; WAV is a future example.
+The parent also owns the collection-level Audio / Video mode and output format/profile preference. There is one preference for the job, not per-item profiles in v0.1. The backend resolves it against each child's actual source through the yt-dlp/FFmpeg integration boundaries. `Original / Best Available` chooses the most suitable available/native result, allowing heterogeneous final containers/codecs. Explicit conversion affects only this job's selected children, never existing Library or historical files. Video ceilings such as `Up to 1080p` do not upscale lower-quality sources, and conversion is not quality enhancement. M6 plan (approved; not implemented) supersedes the earlier optional-profile wording: MP3, WAV, M4A, Opus and FLAC audio and MP4 (compatible) video are required new-download outputs (§10, §14, §59 M6); the runtime above still accepts only the native profile.
 
 Collection analysis exposes selectable items and their source ordering. Enforce a hard maximum of 200 selected items per job, not 200 total source items. `Select All` is limited to currently available, analyzed, selectable items within the cap; unseen or over-cap items must not be silently included. Large-source UI must explain this v0.1 limit. Entire channel/profile bulk operations are out of scope.
 
@@ -2060,13 +2061,21 @@ Implement in dependency-ordered bounded tasks, preserving single-item behaviour 
 
 Approved decisions below are planned, not implemented (see §14, §31, §32, §34).
 
-- source-quality audio handling: lossless WebM/Opus → `.opus` remux, AAC/M4A kept, no default MP3/AAC re-encode, no matrix for unknown codecs, no reprocessing of past Library items
+- source-quality audio handling: lossless WebM/Opus → `.opus` remux, AAC/M4A kept, no default MP3/AAC re-encode, no reprocessing of past Library items
+- required conversion for new single and collection downloads (approved; planned, not implemented): audio Original / Best Available (default), MP3, WAV, M4A, Opus, FLAC with fixed profiles and no slider; video Original and MP4 (compatible, real H.264/AAC). One chosen output per job/collection; library conversion, file upload and per-child outputs out of scope. Failing explicit target fails the job/child; no silent original publish. Rules: source selection separate from output choice; existing FFmpeg/prepared_media/staging/storage boundary, no separate converter/runner. Sub-tasks:
+  - M6.4a decision/spec (this document update)
+  - M6.4b output-profile persistence/API: selection durable on the job, retry reuses it, missing/old profile reads as Original
+  - M6.4c FFmpeg adapter conversion support
+  - M6.4d conversion source resolution/pipeline with cancel/retry
+  - M6.4e UI
+  - M6.4f real-binary smoke with ffprobe codec/container verification
+  M6.1 source_metadata, M6.2 path planning and M6.3 video numbering stay implemented; M6.4b–f are not started and M6 is not complete.
 - artist/album paths from explicit source/user metadata only; flat audio layout when missing; source title as fallback track name
 - embedded metadata, written on staged files
 - source playlist order numbering for collection audio and playlist video names, not compacted
 - no automatic title cleanup; manual metadata/name review and editing
 - artwork preview with explicit user selection for every candidate (no silent embedding, no selection means no artwork), embedding where supported and `cover.jpg` with an album folder
-- tag/artwork/remux failure fallback to the safe original with an Activity warning; cancel/security/storage/catalog errors not swallowed
+- tag/artwork/remux failure fallback (PRODUCT_SPEC §14, ARCHITECTURE §14): under Original, a remux failure keeps the safe original with an Activity warning; when an explicitly selected target was already converted successfully, optional tag/artwork failure keeps that ready target; if the explicitly selected target cannot be produced, the job/child fails and no different original is completed; cancel/security/storage/catalog errors not swallowed
 - last separate sub-task, not started and gated on provider/rights clarification: user-triggered alternative cover search (MusicBrainz + Cover Art Archive as the first candidate, single chain, not a final choice)
 
 ## Milestone 7 — Plex Destinations

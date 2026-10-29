@@ -283,24 +283,30 @@ The preferred default should be:
 
 `Original / Best Available`
 
-Additional conversion formats may include formats such as:
+Source selection and output choice are separate. The source selection picks which available source stream is downloaded; the output choice picks the final audio format. Required first audio output set for new downloads (approved; planned, not implemented):
 
+- `Original / Best Available` (default)
 - MP3
+- WAV
 - M4A
 - Opus
-- FLAC where meaningful
+- FLAC
 
-Available options must be derived from the source and conversion rules.
+Each format uses one fixed quality profile; v0.1 has no bitrate slider. Exact codec, bitrate and quality parameters of those profiles are a later technical design item and are not decided here.
+
+Conversion is offered for compatibility, not quality. WAV and FLAC do not improve a lossy source, and a lossless target does not restore quality already lost in the source. By default `Original / Best Available` avoids unnecessary re-encoding; other output choices are not a quality increase. Copy/remux and lossless conversion can also preserve quality, while lossy re-encoding can add further loss, and no conversion restores quality already lost in the source. A different output choice does not by itself imply forced re-encoding or loss; the UI must still describe it as a conversion rather than an improvement.
 
 For a playlist/album job, Audio / Video mode and the output format/profile are chosen once at collection level, defaulting to `Original / Best Available`. The backend resolves that preference against each selected child's source. Original / Best Available preserves the most suitable available/native result; final containers and codecs may differ between children.
 
-Explicit conversion profiles may include MP3, M4A, Opus, or FLAC where meaningful; this is not a mandatory v0.1 supported-profile matrix. WAV is a future conversion example, not a required v0.1 profile. Conversion applies only to the selected children of that new job, never to existing Library media or files from past jobs. Existing Library bulk conversion/reprocessing is a separate future workflow. Per-item output profiles are out of scope for v0.1.
+Explicit conversion applies to new single and collection downloads, and only to the selected children of that new job, never to existing Library media, uploaded files, or files from past jobs. Existing Library bulk conversion/reprocessing is a separate future workflow. Per-child output profiles are out of scope for v0.1; the one chosen output applies to the whole collection.
 
 The application must not imply that increasing a numeric bitrate creates quality absent from the source.
 
 FFmpeg may be used for conversion and metadata processing.
 
-M6 decision (approved; planned, not implemented): `Original / Best Available` audio preserves source quality. Opus audio delivered inside a WebM container is remuxed losslessly into an `.opus` container; AAC/M4A is kept as-is. MP3 or AAC re-encoding is not a default behaviour. No conversion matrix is defined for unknown codecs; that is left to later technical design. Past Library items are not reprocessed.
+M6 decision (approved; planned, not implemented): `Original / Best Available` audio preserves source quality. Opus audio delivered inside a WebM container is remuxed losslessly into an `.opus` container; AAC/M4A is kept as-is. MP3 or AAC re-encoding is not a default behaviour; it happens only when the user explicitly selects a conversion output. Unsupported or unknown source codecs and missing encoders are handled in later technical design, and no encoder is guaranteed on every FFmpeg build. Past Library items are not reprocessed.
+
+Explicit conversion failure (approved; planned, not implemented): when the user explicitly selected a conversion output and that target cannot be produced, the job (or collection child) fails. The application never silently publishes or completes with the original in a different format. This is separate from the optional tag/artwork and `Original` remux fallback in §14.
 
 ---
 
@@ -325,7 +331,14 @@ If the source maximum is 1080p:
 
 Where video and audio streams are separate, the backend may use `yt-dlp` and FFmpeg to produce the final playable media file.
 
-Collection-level video profiles such as `Best Available` or `Up to 1080p` resolve independently against each selected child's available source formats. A child below the requested ceiling uses an appropriate available quality, never upscaling. A profile is a source-aware preference, not a promise of identical quality, container, or codec across the collection.
+Collection-level video profiles such as `Best Available` or `Up to 1080p` resolve independently against each selected child's available source formats. A child below the requested ceiling uses an appropriate available quality, never upscaling. A profile is a source-aware preference, not a promise of identical quality, container, or codec across the collection. This source-quality preference is distinct from the output container/codec choice below.
+
+Required first video output set for new downloads (approved; planned, not implemented):
+
+- `Original` (default): source-aware; merges stay in the existing mp4/mkv-style containers chosen for the source.
+- `MP4 (compatible)`: the result must be a real H.264/AAC MP4. Compatible streams are copied/remuxed where possible and transcoded only when needed.
+
+Explicit MKV and WebM outputs are outside the first set. Resolution/quality is limited to what the source offers, with no upscaling. For a collection, the one chosen output applies to all selected children, not per child. If an explicit MP4 selection cannot be produced, the job/child fails as described in §8. Transcoding is conversion for compatibility, not quality improvement.
 
 ---
 
@@ -359,7 +372,7 @@ v0.1 has a hard cap of **200 selected items per job**, enforced by the backend a
 
 `Select All` selects only the currently available, analyzed, selectable items, within that cap. It must not silently include unseen, unanalyzed, unavailable, or over-cap items. For large sources the UI must explicitly explain the v0.1 selection limit and the scope of the available selection; it must not imply that the entire source will be downloaded. Analysis retrieval and any pagination strategy remain technical design follow-ups, not requirements established here.
 
-Each collection job uses one collection-level Audio / Video mode and output format/profile as described in sections 8–9; individual output profiles are not available in v0.1.
+Each collection job uses one collection-level Audio / Video mode, source-quality preference and output choice as described in sections 8–9; individual output profiles are not available in v0.1.
 
 The UI should show available metadata before download when possible.
 
@@ -489,7 +502,7 @@ Alternative cover search (approved; planned, not implemented): only when the use
 
 Provider and rights status: MusicBrainz search plus Cover Art Archive is only the first provider candidate, as a single chain rather than two independent catalogs. It is not a final provider choice and no integration is complete. No new provider framework, plugin system or separate service is planned. The application will be distributed as open source; code, data and image licenses are separate, open source does not automatically mean non-commercial, and covers are not bundled with the software package. API access or a user's selection does not replace copyright permission, and rights for external preview/cache/embed are not yet verified. The research is not full legal approval. Official terms: https://musicbrainz.org/doc/MusicBrainz_API , https://musicbrainz.org/doc/About/Data_License , https://musicbrainz.org/doc/Cover_Art_Archive , https://metabrainz.org/supporters/account-type .
 
-Tag, artwork or remux processing failure (approved; planned, not implemented): the safe original is kept and the job completes with an Activity warning. Cancellation, security, storage and catalog errors are not swallowed by this fallback.
+Tag, artwork or `Original` remux processing failure (approved; planned, not implemented): the safe original is kept and the job completes with an Activity warning. Cancellation, security, storage and catalog errors are not swallowed by this fallback. This fallback never replaces an explicitly selected conversion (§8–9): if the selected target output is ready and only optional tagging/artwork fails, the target is kept and the pre-conversion source format is not restored; if the selected target cannot be produced, the job/child fails.
 
 Downloader must avoid confidently inventing metadata from ambiguous titles.
 
@@ -1044,7 +1057,7 @@ Possible explicit library refresh/scan.
 Channels, profiles, subscriptions, and other potentially very large collections.
 
 ## Existing Library Conversion / Reprocessing
-Bulk conversion or reprocessing of already downloaded Library media is separate from new-job conversion. Additional conversion profiles such as WAV may be considered later.
+Bulk conversion or reprocessing of already downloaded Library media, file-upload conversion and per-child output profiles are separate from new-job conversion and remain future work.
 
 ## Scheduled Downloads
 Run defined download jobs automatically.
