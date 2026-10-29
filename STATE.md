@@ -9,6 +9,10 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-30.
   adaptörü ve M6.4d-d1 dönüşüm çekirdeği (ikisini de Opus yazdı; GPT yok). Bu modda `/code-review high`
   ile bağımsız review yapıldı, tek düzeltme turu uygulandı (aşağıda); GPT'nin ikinci bakışı yine beklenir.
   Dönüş: `/normal-mod`, sonra OpenCode `/continue`.
+- Duraklatma noktası (2026-10-30): d1 ve review düzeltmesi commit'li (`83fbcd3`), çalışma ağacı temiz
+  (yalnız mod nedeniyle `.claude/settings.json` değişik, commit edilmez). Sıradaki iş d2 (aşağıda). Claude-only
+  modunda devam: `/devam-claude`. GPT dönünce: `/normal-mod`, ardından OpenCode `/continue`; lead önce GPT
+  review'u bekleyen M6.4c ve d1'i (`dc0142b`..`83fbcd3`) inceletir, sonra d2'ye geçer.
 - M6.4c/d1 review düzeltme turu (kullanıcı onaylı, aynı Opus session): mp4 transcode tek sayılı boyut için
   `-vf scale=trunc(iw/2)*2:trunc(ih/2)*2` (copy_video'da yok); `-id3v2_version`/`-rf64` container grubunda
   (copy_audio'da da kalır); convert argv'sine `-nostats` (merge değişmedi); convert'te 0 bayt/eksik çıktı
