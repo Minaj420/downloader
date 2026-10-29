@@ -4,13 +4,21 @@ from typing import Any, cast
 
 import pytest
 
+from app.config import Settings
 from app.domain.jobs import CollectionProfile, JobError, JobErrorCode
-from app.integrations.ffmpeg import FFmpegProcessor
+from app.integrations.ffmpeg import (
+    ConversionProfile,
+    FFmpegError,
+    FFmpegFailureKind,
+    FFmpegProcessor,
+)
 from app.integrations.ytdlp import DownloadProgress, YtDlpDownloader, YtDlpError, YtDlpFailureKind
+from app.main import create_app
 from app.services.collection_profile_resolver import NativeChildPlan, resolve_native_child
 from app.services.job_runner import _JobExecution
 from app.services.prepared_media import prepare_media
 from app.services.storage_service import StorageService
+from tests.fake_binaries import fake_ffmpeg_record
 
 
 def source(*, video_codec: str = "avc1", audio_codec: str = "mp4a.40.2") -> dict[str, Any]:
@@ -40,6 +48,8 @@ class Pipeline(YtDlpDownloader, FFmpegProcessor):
         self.started = asyncio.Event()
         self.block_progress = False
         self.process_hook: Any = lambda process: None
+        self.conversions: list[tuple[Path, bool, bool]] = []
+        self.convert_failure = False
 
     async def check(self) -> None:
         if self.cancel.is_set():
@@ -85,13 +95,28 @@ class Pipeline(YtDlpDownloader, FFmpegProcessor):
             self.cancel.set()
         on_process_started(cast(asyncio.subprocess.Process, object()))
 
-    async def run(self, plan: NativeChildPlan, key: str = "a" * 32) -> Path:
+    async def convert(
+        self, input_path: Path, output_path: Path, profile: ConversionProfile, *,
+        copy_audio: bool = False, copy_video: bool = False, on_process_started: Any = None,
+    ) -> None:
+        assert input_path.parent == output_path.parent
+        self.calls.append(("convert", profile, output_path))
+        self.conversions.append((input_path, copy_audio, copy_video))
+        on_process_started(cast(asyncio.subprocess.Process, object()))
+        if self.convert_failure:
+            raise FFmpegError(FFmpegFailureKind.FAILED, "boom")
+
+    async def run(
+        self, plan: NativeChildPlan, key: str = "a" * 32, *,
+        output: ConversionProfile | None = None, ffmpeg: FFmpegProcessor | None = None,
+    ) -> Path:
         return await prepare_media(
             selected=plan.selected, companion=plan.companion,
             source_url=f"https://example.com/{key}", staging_key=key,
-            storage=self.storage, downloader=self, ffmpeg=self,
+            storage=self.storage, downloader=self, ffmpeg=ffmpeg or self,
             check_cancelled=self.check, on_process_started=self.process_hook,
             progress_forwarder=self.forwarder, before_merge=self.before_merge,
+            output=output,
         )
 
 
@@ -256,3 +281,145 @@ async def test_callbacks_close_and_helpers_drain_even_with_repeated_cancellation
     finally:
         pipeline.release.set()
         await asyncio.gather(task, return_exceptions=True)
+
+
+def recorded(log: Path) -> list[list[str]]:
+    return [chunk.splitlines() for chunk in log.read_text().split("END\n")[:-1]]
+
+
+def tracked_helpers(pipeline: Pipeline) -> list[asyncio.Task[None]]:
+    tasks: list[asyncio.Task[None]] = []
+
+    async def helper() -> None:
+        await asyncio.sleep(0.01)
+
+    def hook(_: Any) -> asyncio.Task[None]:
+        tasks.append(asyncio.create_task(helper()))
+        return tasks[-1]
+
+    pipeline.process_hook = hook
+    return tasks
+
+
+@pytest.mark.anyio
+async def test_without_output_never_converts_and_merge_argv_is_unchanged(
+    pipeline: Pipeline, tmp_path: Path,
+) -> None:
+    log = tmp_path / "argv.log"
+    binary = fake_ffmpeg_record(tmp_path, log)
+    processor = FFmpegProcessor(binary=binary)
+    merged = await pipeline.run(resolve_native_child(source(), mode="video"), ffmpeg=processor)
+    media = await pipeline.run(resolve_native_child(source(), mode="audio"), "b" * 32)
+    staging = merged.parent
+    assert merged == staging / "merged.mp4" and media.name == "media.mp4"
+    assert recorded(log) == [[
+        "-y", "-i", str(staging / "video.mp4"), "-i", str(staging / "audio.mp4"),
+        "-c", "copy", str(merged),
+    ]]
+    assert [call[0] for call in pipeline.calls] == ["high", "audio", "status", "audio"]
+    assert not pipeline.conversions
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("profile, encoder", [
+    ("mp3", ["-c:a", "libmp3lame", "-q:a", "0", "-id3v2_version", "3", "-f", "mp3"]),
+    ("m4a", ["-c:a", "copy", "-movflags", "+faststart", "-f", "ipod"]),
+])
+async def test_audio_profile_downloads_then_converts_once(
+    pipeline: Pipeline, tmp_path: Path, profile: ConversionProfile, encoder: list[str],
+) -> None:
+    log = tmp_path / "argv.log"
+    processor = FFmpegProcessor(binary=fake_ffmpeg_record(tmp_path, log))
+    tasks = tracked_helpers(pipeline)
+    result = await pipeline.run(
+        resolve_native_child(source(), mode="audio"), output=profile, ffmpeg=processor,
+    )
+    staging = result.parent
+    assert result == staging / f"converted.{profile}"
+    assert result.read_text() == "converted-media"
+    assert [call[0] for call in pipeline.calls] == ["audio", "status"]
+    assert recorded(log) == [[
+        "-hide_banner", "-nostdin", "-y", "-i", str(staging / "media.mp4"),
+        "-map", "0:a:0", "-vn", "-sn", "-dn", *encoder, str(result),
+    ]]
+    # Download and conversion processes both went through the attempt hook.
+    assert len(tasks) == 2 and all(task.done() for task in tasks)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("codecs, merged_name, copy", [
+    ({}, "merged.mp4", True),
+    ({"video_codec": "vp9", "audio_codec": "opus"}, "merged.mkv", False),
+])
+async def test_merge_and_convert_call_hook_exactly_once(
+    pipeline: Pipeline, codecs: dict[str, str], merged_name: str, copy: bool,
+) -> None:
+    result = await pipeline.run(resolve_native_child(source(**codecs), mode="video"), output="mp4")
+    assert [call[0] for call in pipeline.calls] == ["high", "audio", "status", "merge", "convert"]
+    assert pipeline.calls[-1] == ("convert", "mp4", result)
+    assert result.name == "converted.mp4"
+    # Even an mp4 merge is remuxed (copy+copy) so faststart is applied.
+    assert pipeline.conversions == [(result.parent / merged_name, copy, copy)]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("mode, cancel_at, expected", [
+    ("audio", "audio", ["audio"]),
+    ("audio", "status", ["audio", "status"]),
+    ("video", "status", ["high", "audio", "status"]),
+    ("video", "merge_registration", ["high", "audio", "status", "merge"]),
+])
+async def test_cancel_before_convert_starts_no_conversion_and_drains(
+    pipeline: Pipeline, mode: str, cancel_at: str, expected: list[str],
+) -> None:
+    tasks = tracked_helpers(pipeline)
+    pipeline.cancel_at = cancel_at
+    profile: ConversionProfile = "mp3" if mode == "audio" else "mp4"
+    with pytest.raises(JobError) as caught:
+        await pipeline.run(resolve_native_child(source(), mode=mode), output=profile)
+    assert caught.value.code == JobErrorCode.CANCELLED
+    assert [call[0] for call in pipeline.calls] == expected
+    assert not pipeline.conversions
+    assert tasks and all(task.done() for task in tasks)
+
+
+@pytest.mark.anyio
+async def test_convert_failure_propagates_after_draining_helpers(pipeline: Pipeline) -> None:
+    tasks = tracked_helpers(pipeline)
+    pipeline.convert_failure = True
+    with pytest.raises(FFmpegError) as caught:
+        await pipeline.run(resolve_native_child(source(), mode="audio"), output="opus")
+    assert caught.value.kind == FFmpegFailureKind.FAILED
+    assert [call[0] for call in pipeline.calls] == ["audio", "status", "convert"]
+    assert len(tasks) == 2 and all(task.done() for task in tasks)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("mode, profile", [("audio", "mp4"), ("video", "flac")])
+async def test_plan_error_happens_before_any_media_io(
+    pipeline: Pipeline, tmp_path: Path, mode: str, profile: ConversionProfile,
+) -> None:
+    checks: list[None] = []
+
+    async def check() -> None:
+        checks.append(None)
+
+    pipeline.check = check  # type: ignore[method-assign]
+    with pytest.raises(JobError) as caught:
+        await pipeline.run(resolve_native_child(source(), mode=mode), output=profile)
+    assert caught.value.code == JobErrorCode.INVALID_PROFILE
+    assert not pipeline.calls and not checks
+    assert not (tmp_path / "staging" / ("a" * 32)).exists()
+
+
+@pytest.mark.anyio
+async def test_production_ffmpeg_uses_configured_conversion_timeout(settings: Settings) -> None:
+    assert Settings.model_fields["ffmpeg_conversion_timeout_seconds"].default == 3600.0
+    application = create_app(settings.model_copy(update={
+        "ffmpeg_timeout_seconds": 12.0, "ffmpeg_conversion_timeout_seconds": 42.0}))
+    try:
+        ffmpeg = application.state.queue_manager._deps.ffmpeg
+        assert ffmpeg._timeout_seconds == 12.0
+        assert ffmpeg._conversion_timeout_seconds == 42.0
+    finally:
+        await application.state.engine.dispose()

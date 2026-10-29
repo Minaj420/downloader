@@ -13,8 +13,9 @@ from typing import Any
 
 from app.domain.analysis import NormalizedFormat
 from app.domain.jobs import JobError, JobErrorCode
-from app.integrations.ffmpeg import FFmpegProcessor
+from app.integrations.ffmpeg import ConversionProfile, FFmpegProcessor, output_extension
 from app.integrations.ytdlp import DownloadProgress, YtDlpDownloader
+from app.services.conversion_plan import plan_conversion
 from app.services.storage_service import StorageService
 
 HookTask = asyncio.Task[Any] | None
@@ -40,13 +41,18 @@ async def prepare_media(
     progress_forwarder: Callable[[int, int], Callable[[DownloadProgress], HookTask]],
     before_merge: Callable[[], Awaitable[None]],
     child_output: bool = False,
+    output: ConversionProfile | None = None,
 ) -> Path:
     """Prepare one selected stream, optionally sequentially download and merge.
 
     Adapters retain subprocess ownership; registration must handle cancellation
     between the pre-step check and spawn. Hooks must return any scheduled helper
     so it cannot escape this invocation. No placement, cleanup or DB writes here.
+    With ``output`` the result is converted last; the plan is validated before
+    any media I/O and ``before_merge`` still runs once, before the first
+    post-processing step. Intermediate files stay in staging for the caller.
     """
+    plan = plan_conversion(output, selected, companion) if output is not None else None
     closed = False
     helpers: set[asyncio.Task[Any]] = set()
 
@@ -93,8 +99,23 @@ async def prepare_media(
             await check_cancelled()
             merged = staging_dir / f"merged.{merge_container(selected, companion)}"
             await ffmpeg.merge_streams(video, audio, merged, on_process_started=register)
-            return merged
-        return await download("media", selected.format_id, 0, 1)
+            if output is None or plan is None:
+                return merged
+            source = merged
+        else:
+            source = await download("media", selected.format_id, 0, 1)
+            if output is None or plan is None:
+                return source
+            await check_cancelled()
+            await before_merge()
+        await check_cancelled()
+        converted = staging_dir / f"converted.{output_extension(output)}"
+        await ffmpeg.convert(
+            source, converted, output,
+            copy_audio=plan.copy_audio, copy_video=plan.copy_video,
+            on_process_started=register,
+        )
+        return converted
     finally:
         closed = True
         if helpers:

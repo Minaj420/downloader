@@ -44,6 +44,7 @@ def create_app(settings: Settings | None = None, analyzer: URLAnalyzer | None = 
     ffmpeg = FFmpegProcessor(
         binary=resolved_settings.ffmpeg_binary,
         timeout_seconds=resolved_settings.ffmpeg_timeout_seconds,
+        conversion_timeout_seconds=resolved_settings.ffmpeg_conversion_timeout_seconds,
     )
     queue_manager = QueueManager(
         session_factory=session_factory,

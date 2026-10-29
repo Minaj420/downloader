@@ -5,8 +5,17 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-30.
 ## Şu an
 
 - Mod: Claude-only (GPT kotası bitti, 2026-10-30); lead Claude Code. Bu moddaki commit'ler: `f926a63`
-  (yalnız mod altyapısı), M6.4c (`dc0142b`). GPT review bekliyor: M6.4c FFmpeg adaptörü
-  (Opus yazdı, bu modda review edilmedi). Dönüş: `/normal-mod`, sonra OpenCode `/continue`.
+  (yalnız mod altyapısı), M6.4c (`dc0142b`), M6.4d-d1 (hash aşağıda). GPT review bekliyor: M6.4c FFmpeg
+  adaptörü ve M6.4d-d1 dönüşüm çekirdeği (ikisini de Opus yazdı, bu modda review edilmedi).
+  Dönüş: `/normal-mod`, sonra OpenCode `/continue`.
+- M6.4d Opus görüşü alındı; dört dilim: d1 ortak çekirdek (bitti) → d2 tekli runner (Sonnet) → d3 koleksiyon
+  child (Opus) → d4 API kapısı (en son; önce runner, sonra API). Kullanıcı onayı: videodan ses çıkarma yok
+  (ses modu ses akışını doğrudan indirir); dosya zaten varsa dönüşümlü iş de mevcut kopyayı tutar (Skip Existing).
+- M6.4d-d1 tamamlandı: `conversion_plan.plan_conversion` (yalnız tam codec eşleşmesinde copy; mp4 video yalnız
+  h264, ses aac; wav/flac asla copy; bilinmeyen codec transcode; uyumsuz kaynak indirme öncesi INVALID_PROFILE/
+  INVALID_VARIANT), `prepare_media(output=...)` (plan indirmeden önce, `converted.<uzantı>`, `before_merge`
+  hook'u en fazla bir kez), `ffmpeg_conversion_timeout_seconds=3600` config/main bağlı. `output=None` yolu
+  değişmedi. Runner/API kapıları aynen duruyor: dönüşüm henüz canlı işte çalışmıyor.
 - M6.4c tamamlandı: `FFmpegProcessor.convert` tek profil tablosuyla mp3/wav/m4a/opus/flac/mp4; ortak `_run`,
   başarısızlık/timeout/iptalde yalnız kendi çıktısını silme, `input==output` ve uzantı `ValueError`,
   ayrı conversion timeout (3600 sn). Aktivasyon yok; runner/config bağlanmadı, M6.4b kapısı duruyor.
@@ -35,9 +44,12 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-30.
 
 ## Sıradaki iş
 
-1. M6.4d: dönüşüm kaynak seçimi/pipeline+cancel/retry. `convert` copy_audio/copy_video kararı
-   çağıranındır (kaynak codec'ine göre); conversion timeout config/main bağlantısı burada.
-   M6.4b fail-closed kapısı yalnız bu iş doğrulanınca kalkar. Önce Opus görüşü.
+1. M6.4d-d2 (Sonnet): tekli runner. `require_runnable_output_profile` yerine fail-closed çözümleyici
+   (bilinmeyen/türle uyumsuz profil medya I/O öncesi INVALID_PROFILE), `prepare_media(output=...)` bağlantısı,
+   katalog codec/bitrate çıktıdan (`ConversionPlan.output_codec/keep_source_bitrate`; Skip Existing'de None),
+   FFmpegError eşleme (BINARY_MISSING→FFMPEG_MISSING retry yok; FAILED/TIMEOUT→POST_PROCESSING_FAILED),
+   Activity "Converting to ..." mesajı, iptal ve retry testleri. Sonra d3 child (tek POST_PROCESSING geçişi:
+   child CAS aynı durumu tekrar kabul etmiyor; stage_child_completion katalog override), en son d4 API kapısı.
 2. Takip: M6.4e arayüz → M6.4f gerçek binary/çıktı smoke (encoder var/yok, ffprobe codec/faststart,
    gerçek iptalde artık süreç yok; ffmpeg yoksa skip).
    M6.5 metadata/etiket pipeline bağlantısı →
@@ -99,6 +111,9 @@ Kaynaklar: PRODUCT_SPEC §13–16, ARCHITECTURE §30–34 ve §59 M6.
 
 ## Son gate
 
+- 2026-10-30 Fedora Python 3.14.8, M6.4d-d1 worker ve lead: conversion_plan/prepared_media/ffmpeg adaptörü/
+  child runner/dispatch/jobs/output_profiles 7 test dosyası 371 PASS; hedefli ruff, mypy (7 dosya) ve
+  diff --check PASS. Review yok (Opus yazdı); GPT review bekliyor. Full gate/frontend çalıştırılmadı.
 - 2026-10-30 Fedora Python 3.14.8, M6.4c worker ve lead: ffmpeg/prepared_media/collection runner+dispatch
   4 test dosyası 136 PASS (52 adaptör testi); hedefli ruff, mypy ve diff --check PASS. Opus review
   yok (Opus yazdı); GPT review bekliyor. Full gate/frontend çalıştırılmadı. Sonraki gate'ler bayat kabul edilir.

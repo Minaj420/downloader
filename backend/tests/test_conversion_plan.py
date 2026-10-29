@@ -1,0 +1,123 @@
+from typing import Any, cast
+
+import pytest
+
+from app.domain.analysis import MediaFormatKind, NormalizedFormat
+from app.domain.jobs import JobError, JobErrorCode
+from app.integrations.ffmpeg import ConversionProfile
+from app.services.conversion_plan import ConversionPlan, plan_conversion
+
+
+def fmt(
+    kind: MediaFormatKind, video: str | None = None, audio: str | None = None,
+) -> NormalizedFormat:
+    return NormalizedFormat(
+        variant_id="v", format_id="f", kind=kind, video_codec=video, audio_codec=audio,
+    )
+
+
+def audio(codec: str | None) -> NormalizedFormat:
+    return fmt(MediaFormatKind.AUDIO_ONLY, audio=codec)
+
+
+def muxed(video: str | None, audio_codec: str | None) -> NormalizedFormat:
+    return fmt(MediaFormatKind.MUXED, video, audio_codec)
+
+
+def video_only(codec: str | None) -> NormalizedFormat:
+    return fmt(MediaFormatKind.VIDEO_ONLY, video=codec)
+
+
+@pytest.mark.parametrize("profile, source_codec, copy", [
+    ("mp3", "mp3", True), ("mp3", "aac", False), ("mp3", None, False),
+    ("m4a", "aac", True), ("m4a", "opus", False), ("m4a", None, False),
+    ("opus", "opus", True), ("opus", "vorbis", False), ("opus", None, False),
+    ("wav", "pcm_s16le", False), ("wav", "aac", False), ("wav", None, False),
+    ("flac", "flac", False), ("flac", "opus", False), ("flac", None, False),
+])
+def test_audio_profiles_copy_only_on_exact_match(
+    profile: ConversionProfile, source_codec: str | None, copy: bool,
+) -> None:
+    plan = plan_conversion(profile, audio(source_codec), None)
+    assert plan.copy_audio is copy
+    assert plan.copy_video is False
+    assert plan.keep_source_bitrate is copy
+
+
+def test_audio_profile_ignores_companion() -> None:
+    plan = plan_conversion("mp3", audio("mp3"), audio("aac"))
+    assert plan == ConversionPlan(True, False, "mp3", True)
+
+
+@pytest.mark.parametrize("profile, codec", [
+    ("mp3", "mp3"), ("wav", "pcm_s16le"), ("m4a", "aac"),
+    ("opus", "opus"), ("flac", "flac"), ("mp4", "h264"),
+])
+def test_output_codec_per_profile(profile: ConversionProfile, codec: str) -> None:
+    source = muxed("vp9", "opus") if profile == "mp4" else audio("vorbis")
+    assert plan_conversion(profile, source, None).output_codec == codec
+
+
+@pytest.mark.parametrize("video, audio_codec, copy_video, copy_audio", [
+    ("h264", "aac", True, True),
+    ("hevc", "aac", False, True),
+    ("h264", "opus", True, False),
+    ("vp9", "opus", False, False),
+    ("av1", "aac", False, True),
+    ("vp9", "aac", False, True),
+    (None, "aac", False, True),
+    ("h264", None, True, False),
+    (None, None, False, False),
+])
+def test_mp4_muxed_source_uses_selected_codecs(
+    video: str | None, audio_codec: str | None, copy_video: bool, copy_audio: bool,
+) -> None:
+    plan = plan_conversion("mp4", muxed(video, audio_codec), None)
+    assert plan == ConversionPlan(
+        copy_audio, copy_video, "h264", copy_audio and copy_video,
+    )
+
+
+@pytest.mark.parametrize("video, companion_codec, copy_video, copy_audio", [
+    ("h264", "aac", True, True),
+    ("hevc", "aac", False, True),
+    ("h264", "opus", True, False),
+    ("av1", None, False, False),
+])
+def test_mp4_video_only_uses_companion_audio(
+    video: str, companion_codec: str | None, copy_video: bool, copy_audio: bool,
+) -> None:
+    # The video-only selection's own audio codec must not be consulted.
+    selected = fmt(MediaFormatKind.VIDEO_ONLY, video, "aac")
+    plan = plan_conversion("mp4", selected, audio(companion_codec))
+    assert plan == ConversionPlan(
+        copy_audio, copy_video, "h264", copy_audio and copy_video,
+    )
+
+
+@pytest.mark.parametrize("profile", ["mp3", "wav", "m4a", "opus", "flac"])
+@pytest.mark.parametrize("source", [muxed("h264", "aac"), video_only("h264")])
+def test_audio_profile_rejects_non_audio_source(
+    profile: ConversionProfile, source: NormalizedFormat,
+) -> None:
+    with pytest.raises(JobError) as caught:
+        plan_conversion(profile, source, audio("aac"))
+    assert caught.value.code == JobErrorCode.INVALID_PROFILE
+
+
+def test_mp4_rejects_audio_only_source() -> None:
+    with pytest.raises(JobError) as caught:
+        plan_conversion("mp4", audio("aac"), None)
+    assert caught.value.code == JobErrorCode.INVALID_PROFILE
+
+
+def test_mp4_video_only_without_companion_is_invalid_variant() -> None:
+    with pytest.raises(JobError) as caught:
+        plan_conversion("mp4", video_only("h264"), None)
+    assert caught.value.code == JobErrorCode.INVALID_VARIANT
+
+
+@pytest.mark.parametrize("profile", ["original", "mkv"])
+def test_non_conversion_profile_is_value_error(profile: Any) -> None:
+    with pytest.raises(ValueError):
+        plan_conversion(cast(ConversionProfile, profile), audio("aac"), None)

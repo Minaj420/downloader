@@ -25,6 +25,7 @@ class Settings(BaseSettings):
 
     ffmpeg_binary: str = "ffmpeg"
     ffmpeg_timeout_seconds: float = 600.0
+    ffmpeg_conversion_timeout_seconds: float = 3600.0
     download_timeout_seconds: float = 3600.0
     download_concurrency: int = 2
     queue_poll_interval_seconds: float = 1.0

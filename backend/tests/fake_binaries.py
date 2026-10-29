@@ -92,6 +92,17 @@ printf 'merged-media' > "$out"
     return _write_script(directory / "ffmpeg", body)
 
 
+def fake_ffmpeg_record(directory: Path, log: Path) -> str:
+    """Append each invocation's argv (one per line, then ``END``) to ``log``."""
+    body = f"""#!/bin/sh
+out=""
+for a in "$@"; do out="$a"; printf '%s\\n' "$a" >> '{log}'; done
+printf 'END\\n' >> '{log}'
+printf 'converted-media' > "$out"
+"""
+    return _write_script(directory / "ffmpeg", body)
+
+
 def fake_ffmpeg_slow(directory: Path, *, media: str = "merged-media") -> str:
     body = f"""#!/bin/sh
 out=""
