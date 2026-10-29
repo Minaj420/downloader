@@ -4,13 +4,21 @@ This repository is developed with AI coding agents.
 
 - Current state, next task and open decisions: `STATE.md`.
 - Agent roles, task loop, review classes and gates: `docs/WORKFLOW.md`.
-- OpenCode lead is the sole orchestrator. Claude Code subscription CLI (`--model opus`)
-  provides read-only advice and scoped implementation through `scripts/claude-agent.sh`.
+- OpenCode lead is the sole orchestrator. Claude Code subscription CLI provides Opus
+  read-only advice and scoped implementation through `scripts/claude-agent.sh`:
+  Sonnet is the default implementer; lead selects explicit `--model opus` for expert work.
   Before each milestone, obtain Opus advice or explicit user approval to proceed without it.
   Important architecture decisions go to Opus first; product choices go to the user.
   Lead exposes Opus recommendation/reason/alternatives-risk and its own decision.
-  GPT reviewer reviews Opus code. One writer, at most one review fix round; no quota/auth retry
+  GPT reviewer independently reviews both Sonnet and Opus code. One writer, at most one review fix round; no quota/auth retry
   or silent model fallback. CLI permissions are not an OS sandbox (see WORKFLOW).
+  Lead announces “Uygulayıcı: Sonnet/Opus; gerekçe...” at each task start. Sonnet handles
+  bounded ordinary reasoning; choose Opus upfront for hard/ambiguous work, high-impact
+  migrations, transaction/concurrency/ownership, destructive filesystem/path safety/data
+  loss, or meaningful API contract/architecture changes. Size/file count is not a criterion.
+  Luna handles only mechanical low-risk work. Unclear product behaviour requires user choice.
+  On resume, lead explicitly resends the initial requested_model via --model; no silent
+  family switch or quota retry. Model changes do not reset the single review fix round.
 
 ## Starting a task
 

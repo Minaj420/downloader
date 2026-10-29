@@ -26,7 +26,17 @@ COMMON = (
 )
 
 
-def command(role, resume=None):
+def selected_model(role, model=None):
+    model = model or ("sonnet" if role == "implement" else "opus")
+    if model not in ("sonnet", "opus"):
+        raise ValueError("--model must be sonnet or opus")
+    if role != "implement" and model != "opus":
+        raise ValueError(f"{role} requires --model opus; sonnet is only allowed for implement")
+    return model
+
+
+def command(role, resume=None, model=None):
+    model = selected_model(role, model)
     tools = ["Read", "Grep", "Glob"]
     allow = tools.copy()
     deny = ["Read(./.env)", "Read(./.env.*)", "Read(./**/.env)", "Read(./**/.env.*)"]
@@ -42,7 +52,7 @@ def command(role, resume=None):
         "permissions": {"allow": allow, "deny": deny},
     }
     argv = [
-        "claude", "-p", "--model", "opus", "--output-format", "stream-json", "--verbose",
+        "claude", "-p", "--model", model, "--output-format", "stream-json", "--verbose",
         "--setting-sources", "", "--settings", json.dumps(settings),
         "--permission-mode", "dontAsk", "--tools", ",".join(tools),
         "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
@@ -75,7 +85,8 @@ def git_context():
     return "\n".join(sections)
 
 
-def run(role, prompt, resume=None, log=None):
+def run(role, prompt, resume=None, log=None, model=None):
+    requested_model = selected_model(role, model)
     instruction = (
         "Yalnız görevde izin verilen dosyaları düzenle. Önceden kararlaştırılmış hedefli "
         "test/lint komutlarını kendin çalıştır; sonuçları PASS/FAIL/NOT RUN olarak raporla. "
@@ -93,7 +104,7 @@ def run(role, prompt, resume=None, log=None):
     denied = malformed = False
     denial_details = []
     with subprocess.Popen(
-        command(role, resume), cwd=ROOT, env=environment(), stdin=subprocess.PIPE,
+        command(role, resume, requested_model), cwd=ROOT, env=environment(), stdin=subprocess.PIPE,
         stdout=subprocess.PIPE, text=True, encoding="utf-8",  # stderr stays in owning terminal.
     ) as child:
         child.stdin.write(text)
@@ -120,13 +131,17 @@ def run(role, prompt, resume=None, log=None):
                 denial_details.append(event)
             if event.get("type") == "result":
                 final = event
+    # Reject an explicit opposite family; unknown/missing IDs remain for lead verification.
+    opposite = "opus" if requested_model == "sonnet" else "sonnet"
+    model_mismatch = isinstance(model, str) and opposite in model.lower().split("-")
     success = (
         child.returncode == 0 and final is not None and not malformed and not denied
+        and not model_mismatch
         and final.get("is_error") is False and final.get("subtype") == "success"
         and isinstance(final.get("result"), str) and bool(final["result"].strip())
     )
     report = {
-        "role": role, "requested_model": "opus", "observed_model": model,
+        "role": role, "requested_model": requested_model, "observed_model": model,
         "session_id": (final or {}).get("session_id", session), "exit_code": child.returncode,
         "success": success, "permission_denials": denied,
         "permission_denial_details": denial_details,
@@ -141,14 +156,22 @@ def main():
     parser.add_argument("role", choices=("consult", "review", "implement"))
     parser.add_argument("prompt", nargs="?", help="Omit to read plain text from stdin")
     parser.add_argument("--resume", metavar="SESSION_ID")
+    parser.add_argument("--model", choices=("sonnet", "opus"),
+                        help="implement defaults to sonnet; consult/review require opus")
     parser.add_argument("--log", action="store_true", help="Save stream JSONL under tmp/claude")
     args = parser.parse_args()
+    if args.resume and args.role == "implement" and args.model is None:
+        parser.error("implement --resume requires explicit --model sonnet|opus")
+    try:
+        model = selected_model(args.role, args.model)
+    except ValueError as exc:
+        parser.error(str(exc))
     prompt = args.prompt if args.prompt is not None else sys.stdin.read()
     if not prompt.strip():
         parser.error("Nonempty prompt required")
     try:
         if not args.log:
-            return run(args.role, prompt, args.resume)
+            return run(args.role, prompt, args.resume, model=model)
         if LOGS.is_symlink() or (ROOT / "tmp").is_symlink():
             raise ValueError("Symlink log directories are not supported")
         LOGS.mkdir(parents=True, exist_ok=True)
@@ -156,7 +179,7 @@ def main():
         path = LOGS / name
         with path.open("x", encoding="utf-8") as log:
             print(f"WATCH: bash scripts/claude-watch.sh tmp/claude/{name}", flush=True)
-            return run(args.role, prompt, args.resume, log)
+            return run(args.role, prompt, args.resume, log, model=model)
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
         print(f"FAIL/INCOMPLETE: {exc}; no retry/fallback", file=sys.stderr)
         return 1

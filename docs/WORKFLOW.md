@@ -10,8 +10,8 @@ Claude child başka ajan/CLI çağırmaz. Kurallar AGENTS.md, durum STATE.md,
 | --- | --- | --- |
 | lead | OpenCode `openai/gpt-6.1-sol` | Plan, delegasyon, kullanıcı kararları, STATE, commit |
 | danışman | Claude Code abonelik oturumu, açık `--model opus` | Salt-okunur görüş |
-| implementer | Claude Code abonelik oturumu, açık `--model opus` | Scoped uygulama ve kendi hedefli test döngüsü |
-| reviewer | OpenCode `openai/gpt-6.1-sol` | Bağımsız salt-okunur review; Opus kodunu inceler |
+| implementer | Claude Code abonelik oturumu; varsayılan Sonnet, uzman işte açık `--model opus` | Scoped uygulama ve kendi hedefli test döngüsü |
+| reviewer | OpenCode `openai/gpt-6.1-sol` | Bağımsız salt-okunur review; Sonnet ve Opus kodunu inceler |
 | fast-worker | OpenCode `openai/gpt-6-luna` | Yalnız mekanik/düşük riskli işler |
 | checker | OpenCode `openai/gpt-6-luna` | İstenen gate'ler, kaynak düzenlemez |
 
@@ -29,14 +29,21 @@ modeli reload olmadan değişmiş sayılmaz.
 3. Tek bounded iş tanımı: amaç, okunacaklar, izinli dosyalar, kabul kriterleri,
    yapılmayacaklar, exact hedefli kontrol komutları ve çalışma dizinleri.
    Belgelenmemiş/çelişkili ürün gereksiniminde dur; soru ve en basit seçeneği raporla.
-4. Varsayılan uygulayıcı Opus external-worker adapter'dır. fast-worker yalnız mevcut
-   deseni birebir izleyen, net, geri alınabilir, hedefli testli mekanik işlerde.
+4. Lead her iş başında **“Uygulayıcı: Sonnet/Opus; gerekçe...”** der. Varsayılan
+   uygulayıcı aynı ince adapter üzerinden Sonnet'tir: sınırları net olağan muhakeme.
+   Zor/belirsiz işler, high-impact migration, transaction/concurrency/ownership,
+   destructive filesystem/path güvenliği/veri kaybı veya anlamlı API sözleşmesi/mimari
+   değişikliklerinde baştan açık `--model opus` seçilir. Boyut/dosya sayısı kriter değildir.
+   “Sonnet dene, başarısızsa kör Opus” zinciri yoktur; belirsiz ürün davranışı kullanıcı
+   kararı gerektirir. fast-worker yalnız mevcut deseni birebir izleyen, net, geri
+   alınabilir, hedefli testli mekanik/düşük riskli işlerde.
    Migration/kalıcı veri, transaction/concurrency/ownership, filesystem mutation,
    silme/veri kaybı, güvenlik/path-containment veya API/data contract varsa Luna durur.
    **Tek yazıcıyı lead yönetir; adapter kilit tutmaz.** Worker STATE yazmaz, git yazmaz.
-5. Lead diff ve testleri okur; GPT reviewer Opus kodunu bağımsız inceler. Opus kendi
+5. Lead diff ve testleri okur; GPT reviewer Sonnet ve Opus kodunu bağımsız inceler. Opus kendi
    koduna rutin reviewer değildir. GPT'nin riskli işlerinde (bu altyapı dahil)
    worker sonrası lead `scripts/claude-review.sh '<odak>'` ile Opus review başlatır.
+   Danışman ve mevcut review wrapper hep Opus'tur; genel Sonnet review rolü yoktur.
 6. Bulgular: must-fix (doğruluk/veri/güvenlik/spec/önemli test eksiği), should-fix
    (bloklamayan gerçek sorun), accepted-risk (düşük olasılık/etki), over-engineering
    (gereksiz karmaşıklık). Reviewer yeni ürün kararı üretmez.
@@ -59,8 +66,15 @@ Repo kökünde:
 bash scripts/claude-agent.sh consult 'Öneri, gerekçe, alternatif-risk ...' --log
 scripts/claude-review.sh 'Çalışma ağacındaki altyapı değişikliklerini incele' --log
 bash scripts/claude-agent.sh implement 'Amaç... İzinli dosyalar... Hedefli kontroller...'
-bash scripts/claude-agent.sh implement 'Tek review düzeltme turu: ...' --resume <claude-session-id>
+bash scripts/claude-agent.sh implement 'Uzman iş: amaç... İzinli dosyalar... Hedefli kontroller...' --model opus
+bash scripts/claude-agent.sh implement 'Tek review düzeltme turu: ...' --resume <claude-session-id> --model sonnet
 ```
+
+`--model` yalnız `sonnet|opus` kabul eder. `implement` varsayılanı Sonnet'tir;
+`consult`/`review` varsayılan ve sabit Opus'tur (`--model opus` kabul edilir,
+`--model sonnet` provider başlamadan anlaşılır CLI hatasıdır). Model seçimi tools,
+permissions, ortak prompt, test akışı veya environment/OAuth izolasyonunu değiştirmez.
+Yeni Python/wrapper/servis ajanı veya runner yoktur.
 
 Örneklerdeki `'<odak>'` gibi metinler öğretici placeholder'dır; ham görev metni
 shell komutuna birleştirilmez. Bash araç API'sine giderken prompt tek argüman olacak
@@ -76,6 +90,11 @@ verilir; `consult`/`review` için salt-okunur tools/settings tekrar gönderilir.
 Bu argv davranışı fake testlerle sınanır; gerçek farklı-rol resume izolasyonu henüz
 doğrulanmamıştır. `implement` seçmek lead'in yeni ve açık yazma yetkilendirmesidir;
 adapter session kökeni/tur geçmişi tutmaz, uygun aynı-rol resume seçimini lead yapar.
+Lead ilk çağrının `requested_model` bilgisine bakar ve resume'da aynı modeli açıkça
+`--model sonnet` veya `--model opus` ile yeniden iletir; yukarıdaki resume örneği
+Sonnet ile başlayan görev içindir. Sessiz family geçişi yoktur. Aynı model kota
+hatasında tekrar yoktur; model değiştirmek tek review düzeltme turu sınırını sıfırlamaz.
+Adapter session geçmişi tutmaz; bunlar lead politikasıdır.
 
 `--log` isteğe bağlı tek runtime çıktısıdır: ignored
 `tmp/claude/<timestamp>-<pid>.jsonl`. Task/summary deposu, UUID görev kimliği,
@@ -113,7 +132,7 @@ doğrulanmış iddia edilmez. Server/tmux/ek altyapı yoktur.
 - consult/review yalnız Read/Grep/Glob kullanır; Bash/Edit/Write kaldırılmıştır.
   Git status/diff snapshot'ını adapter sabit read-only argv ile prompt'a ekler;
   external diff/textconv kapalıdır. Untracked dosyalar diff'te yoktur, Read ile okunur.
-- implement normal Edit/Write ve yalnız proje test/lint Bash izinleri alır:
+- Her iki implement modeli aynı normal Edit/Write ve yalnız proje test/lint Bash izinlerini alır:
   backend `.venv/bin/pytest`, `.venv/bin/ruff check`, `.venv/bin/mypy`; frontend
   `npm test`, `npm run lint/typecheck/build/check:contrast`. İlgili backend/frontend
   dizinine ayrı `cd` ile geçebilir; zincir/pipe/yönlendirme yoktur. Git yazma,
@@ -125,8 +144,10 @@ doğrulanmış iddia edilmez. Server/tmux/ek altyapı yoktur.
   değildir. Hedefli test seçimi ve tek yazıcı lead'in sorumluluğundadır.
 - Exit != 0, eksik final, final is_error, permission denial veya bozuk stream
   başarısızdır. Stdout requested/observed model, session, exit, result ve başarıyı
-  ve varsa permission_denial_details listesini gösterir; lead gözlenen modelin
-  Opus olduğunu doğrular. Adapter aktif retry,
+  ve varsa permission_denial_details listesini gösterir; lead gözlenen model family'nin
+  seçilen `requested_model` ile eşleştiğini doğrular. Açık karşı family gözlemi
+  (ör. Sonnet istenirken `claude-opus-...`) adapter'da başarısızdır; eksik/tanınmayan
+  model lead doğrulamasını gerektirir, adapter model registry tutmaz. Adapter aktif retry,
   fallback veya test çalıştırıcısı değildir; CLI iç retry davranışını kontrol etmez.
 
 CLI semantics kaynakları: https://code.claude.com/docs/en/cli-reference ,

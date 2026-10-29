@@ -95,11 +95,16 @@ def test_argv_stdin_and_inherited_settings_isolation(bridge, monkeypatch, capsys
     assert report["result"] == "must-fix yok" and report["exit_code"] == 0
 
 
-@pytest.mark.parametrize("role", ["consult", "review", "implement"])
-def test_resume_sends_current_role_settings_to_cli(bridge, role):
+@pytest.mark.parametrize("role,model", [
+    ("consult", "opus"), ("review", "opus"), ("implement", "sonnet"), ("implement", "opus"),
+])
+def test_resume_sends_current_role_settings_to_cli(bridge, role, model):
     # Fake argv coverage only; this does not prove live cross-role resume isolation.
-    assert bridge.run(role, "Scope and targeted commands decided by lead", resume="session-id") == 0
+    bridge.events[0]["model"] = f"claude-{model}-fake"
+    assert bridge.run(role, "Scope and targeted commands decided by lead",
+                      resume="session-id", model=model) == 0
     argv = bridge.calls[0].argv
+    assert argv[argv.index("--model") + 1] == model
     assert argv[-2:] == ["--resume", "session-id"]
     settings = json.loads(argv[argv.index("--settings") + 1])
     allow = settings["permissions"]["allow"]
@@ -150,9 +155,12 @@ def test_failed_or_incomplete_call_is_not_success(bridge, capsys, failure):
 
 
 def test_plain_stdin_and_optional_log(bridge, monkeypatch, tmp_path, capsys):
+    bridge.events[0]["model"] = "claude-sonnet-fake"
     monkeypatch.setattr(bridge, "ROOT", tmp_path)
     monkeypatch.setattr(bridge, "LOGS", tmp_path / "tmp" / "claude")
-    monkeypatch.setattr(sys, "argv", ["bridge", "implement", "--log", "--resume", "s1"])
+    monkeypatch.setattr(sys, "argv", [
+        "bridge", "implement", "--log", "--resume", "s1", "--model", "sonnet",
+    ])
     monkeypatch.setattr(sys, "stdin", io.StringIO("Allowed files: example.py; targeted tests ..."))
     assert bridge.main() == 0
     logs = list(bridge.LOGS.glob("*.jsonl"))
@@ -163,13 +171,80 @@ def test_plain_stdin_and_optional_log(bridge, monkeypatch, tmp_path, capsys):
     assert f"WATCH: bash scripts/claude-watch.sh tmp/claude/{logs[0].name}" in output
 
 
-@pytest.mark.parametrize("argv", [["unknown", "prompt"], ["review", "--model", "sonnet"],
+@pytest.mark.parametrize("argv", [["unknown", "prompt"],
                                  ["implement", "a", "extra"]])
 def test_unknown_role_or_arg_does_not_invoke_claude(bridge, monkeypatch, argv):
     monkeypatch.setattr(sys, "argv", ["bridge", *argv])
     with pytest.raises(SystemExit):
         bridge.main()
     assert not bridge.calls
+
+
+@pytest.mark.parametrize("role,model,expected", [
+    ("implement", None, "sonnet"), ("implement", "opus", "opus"),
+    ("consult", None, "opus"), ("review", None, "opus"),
+    ("consult", "opus", "opus"), ("review", "opus", "opus"),
+])
+def test_cli_model_selection_and_report(bridge, monkeypatch, capsys, role, model, expected):
+    argv = ["bridge", role, "Scoped task"]
+    if model:
+        argv += ["--model", model]
+    monkeypatch.setattr(sys, "argv", argv)
+    bridge.events[0]["model"] = f"claude-{expected}-fake"
+    assert bridge.main() == 0
+    assert bridge.calls[0].argv[:4] == ["claude", "-p", "--model", expected]
+    report = json.loads(capsys.readouterr().out)
+    assert report["requested_model"] == expected
+    assert report["observed_model"] == f"claude-{expected}-fake"
+    assert report["success"] is True
+
+
+@pytest.mark.parametrize("argv,error", [
+    (["consult", "task", "--model", "sonnet"], "consult requires --model opus"),
+    (["review", "task", "--model", "sonnet"], "review requires --model opus"),
+    (["implement", "task", "--model", "haiku"], "invalid choice"),
+    (["implement", "--resume", "s1"],
+     "implement --resume requires explicit --model sonnet|opus"),
+])
+def test_invalid_model_rejected_before_provider(bridge, monkeypatch, capsys, argv, error):
+    monkeypatch.setattr(sys, "argv", ["bridge", *argv])
+    with pytest.raises(SystemExit) as exc:
+        bridge.main()
+    assert exc.value.code == 2
+    assert error in capsys.readouterr().err
+    assert not bridge.calls
+
+
+@pytest.mark.parametrize("role", ["consult", "review"])
+def test_readonly_resume_defaults_to_opus(bridge, monkeypatch, role):
+    monkeypatch.setattr(sys, "argv", ["bridge", role, "task", "--resume", "s1"])
+    assert bridge.main() == 0
+    argv = bridge.calls[0].argv
+    assert argv[argv.index("--model") + 1] == "opus"
+    assert argv[-2:] == ["--resume", "s1"]
+
+
+def test_implement_models_have_identical_permissions_prompt_and_environment(bridge):
+    for model in ("sonnet", "opus"):
+        bridge.events[0]["model"] = f"claude-{model}-fake"
+        assert bridge.run("implement", "same task", model=model) == 0
+    sonnet, opus = bridge.calls
+    # Only the model argument differs, including settings/tools and all restrictions.
+    assert sonnet.argv[:3] == opus.argv[:3]
+    assert sonnet.argv[4:] == opus.argv[4:]
+    assert sonnet.kwargs == opus.kwargs
+    assert sonnet.stdin.saved == opus.stdin.saved
+
+
+@pytest.mark.parametrize("requested,observed", [("sonnet", "opus"), ("opus", "sonnet")])
+def test_explicit_opposite_observed_family_fails(bridge, capsys, requested, observed):
+    bridge.events[0]["model"] = f"claude-{observed}-fake"
+    assert bridge.run("implement", "task", model=requested) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["requested_model"] == requested
+    assert report["observed_model"] == f"claude-{observed}-fake"
+    assert report["success"] is False
+    assert len(bridge.calls) == 1
 
 
 def test_git_snapshot_is_fixed_read_only(monkeypatch):

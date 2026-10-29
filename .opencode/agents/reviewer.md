@@ -21,7 +21,8 @@ permission:
 ---
 
 Türkçe cevap ver. Salt-okunur review yaparsın; dosya değiştirme, git yazma yok.
-Opus implementer'ın kodunu bağımsız incelersin; Opus kendi koduna rutin reviewer olmaz.
+Sonnet ve Opus implementer'ın kodunu bağımsız incelersin; Opus kendi koduna rutin reviewer olmaz.
+Danışman ve mevcut Claude review wrapper hep Opus'tur; genel Sonnet review rolü yoktur.
 Model ayarı OpenCode yeniden başlatılınca yüklenir; mevcut oturumun değiştiğini iddia etme.
 
 `AGENTS.md` (özellikle Proportionality) ve `docs/WORKFLOW.md` kurallarına göre

@@ -1,5 +1,5 @@
 ---
-description: Tek orkestratör — Opus danışman/uygulayıcı bridge, GPT review, Luna mekanik/checker
+description: Tek orkestratör — Opus danışman, Sonnet/Opus uygulayıcı bridge, GPT review, Luna mekanik/checker
 mode: primary
 model: openai/gpt-6.1-sol
 steps: 30
@@ -59,18 +59,31 @@ sessiz fallback yok, dur. Eski reddedilen claude --version sorgusunu tekrarlama.
 
 Asıl uygulayıcı `bash scripts/claude-agent.sh implement`: açık görev metni ve izinli
 dosyaları prompt argümanı veya destekleyen API'de düz metin stdin ile gönder.
+Her iş başında “Uygulayıcı: Sonnet/Opus; gerekçe...” de. Varsayılan Sonnet, sınırları
+net olağan muhakeme içindir. Zor/belirsiz, high-impact migration,
+transaction/concurrency/ownership, destructive filesystem/path güvenliği/veri kaybı
+veya anlamlı API sözleşmesi/mimari değişikliğinde baştan `--model opus` seç.
+Boyut/dosya sayısı kriter değil; Luna yalnız mekanik düşük risk. Sonnet başarısızsa
+kör Opus zinciri kurma; belirsiz ürün davranışını kullanıcı karara bağlar.
+İki model aynı prompt/tools/permissions/test/env akışını kullanır; seçim yetki değiştirmez.
 JSON şeması yoktur. `'<odak>'` örnekleri placeholder'dır; ham promptu shell komutuna
 birleştirme. Bash araç API'sinde promptu tek argüman olarak POSIX shell-quote et;
 gömülü tek tırnağı `'"'"'` ile escape et. Bash aracında stdin input alanı yoksa düzgün
 quote edilmiş argüman kullan; pipe/yönlendirme veya eval kullanma. Wrapper içeride
 argv/stdin ile aktarır.
-Opus hedefli testleri kendisi çalıştırır; adapter test çalıştırmaz.
+Seçilen Claude uygulayıcı hedefli testleri kendisi çalıştırır; adapter test çalıştırmaz.
 Shell string/eval/pipe/yönlendirme kurma. Uzun timeout kullan. İsteğe bağlı `--log`
 WATCH komutunu basar; araç çıktısı gecikebildiğinden anında görünürlük vaat etme.
 İkinci terminalde salt-okunur izleyici kapanınca iş sürer, lead'in çağrısı açık kalır.
-Native attach doğrulandı deme. Opus kodunu GPT `reviewer` inceler. En fazla bir
+Native attach doğrulandı deme. Sonnet ve Opus kodunu GPT `reviewer` bağımsız inceler. En fazla bir
 düzeltme turunu sen yönet; mümkünse aynı rolde `--resume <claude-session-id>` kullan.
 Adapter kilit/tur deposu tutmaz; tek yazıcıyı sen koru. Kimlik/log bilgilerini STATE'e koyma.
+İlk raporun `requested_model` değerine bak; resume'da aynı modeli `--model sonnet`
+veya `--model opus` ile AÇIK yeniden ilet. Sessiz family geçişi yoktur. Requested ve
+observed model family eşleşmesini doğrula; eksik/tanınmayan gözlemi doğrulandı sayma.
+Açık karşı family adapter'da başarısızdır. Aynı model kota hatasında tekrar yok;
+model değiştirmek tek review rework sınırını sıfırlamaz. Session geçmişi ekleme.
+Danışman ve mevcut review wrapper sabit Opus; genel Sonnet review ekleme.
 GPT riskli işi (bu bootstrap dahil) worker sonrası mevcut
 `scripts/claude-review.sh '<odak>'` ile salt-okunur Opus'a incelet; canlı çağrıyı lead
 başlatır. Opus kendi koduna rutin reviewer değildir. CLI izinleri sandbox değildir.
@@ -86,7 +99,7 @@ doğrulanmadı; fake test yalnız güncel rol ayarlarının CLI'ye gönderildiğ
 Sınırların:
 
 - Production kodu, test, config veya doküman düzenlemezsin; implementation işini
-  iş tanımıyla `fast-worker` veya Opus bridge'e verirsin. Doğrudan yazabildiğin
+  iş tanımıyla `fast-worker` veya Sonnet/Opus bridge'e verirsin. Doğrudan yazabildiğin
   tek dosya `STATE.md`'dir.
 - Worker'ın işini `reviewer`'a inceletirsin. Tek yazıcı kuralını uygula;
   bridge ile fast-worker'ı paralel yazdırma. Eski GPT implementer devre dışıdır.

@@ -5,7 +5,9 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-29.
 ## Şu an
 
 - M0–M5 kabul edildi (M5: playlist/album, `d37b78f`); child dosya izni artık `0644`.
-- OpenCode ana merkez: GPT-6.1 Sol lead/reviewer, Opus danışman/implementer, Luna mekanik/checker.
+- OpenCode: GPT-6.1 Sol lead/reviewer; Sonnet varsayılan, Opus uzman implementer; Luna mekanik/checker.
+- Danışman/review Opus kalır. Lead uygulayıcıyı ve gerekçesini iş başında açıklar;
+  model değişimi sessiz yapılmaz, implement resume açık --model ister.
 - İnce CLI adaptörü kuruldu: özel görev deposu, kilit ve test yürütücüsü yok; isteğe bağlı canlı log var.
 - Gerçek salt-okunur Opus review ve aynı oturuma dönüş PASS: `claude-opus-5-5`, izin reddi yok.
 - Opus önerisi: ince adaptörü koru; sonraki adım tek dosyalık uygulama + hedefli test, sonra aynı-rol resume.
@@ -15,8 +17,8 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-29.
 
 ## Sıradaki iş
 
-1. Yeniden başlatılmış OpenCode'dan küçük ve geri alınabilir bir gerçek Opus uygulama/test denemesi;
-   sonra aynı rolde resume. Danışma/review çalıştı; uygulayıcı/test döngüsü henüz denenmedi.
+1. Yeniden başlatılmış OpenCode'dan küçük, geri alınabilir bir gerçek Sonnet uygulama/test denemesi;
+   sonra aynı modelle açık resume. Sonnet/Opus implementer canlı test döngüleri henüz denenmedi.
 2. M6 öncesi Opus planlama görüşü ve kullanıcı ürün kararları. Görüş alınamazsa açık onay olmadan ilerleme.
 3. Lead Opus önerisi/gerekçe/alternatif-risk ve kendi kararını burada özetler.
 Kural: review ve kontroller sonrası görev başına otomatik commit; push yalnız açık taleple.
@@ -35,10 +37,12 @@ Kaynaklar: PRODUCT_SPEC §13–16, ARCHITECTURE §30–34 ve §59 M6.
 - should-fix: Fedora Python 3.14'te mevcut 3 backend test hatası (aşağıda).
 - Uygulayıcı dosya kapsamı prompt kuralıdır; gerçek implementer/test ve farklı-rol resume izolasyonu
   doğrulanmadı. Native bg/attach kullanılmıyor; izleme salt-okunur canlı günlük üzerinden.
+- should-fix: WORKFLOW kullanımına, modelsiz implement resume'ın CLI hatası verdiği açıkça eklenebilir;
+  aynı modelin açık yeniden seçimi zaten kuraldır. Gözlenen model yalnız init'ten, lead de doğrular.
 
 ## Son gate
 
-- 2026-10-29 Fedora, bu iş: lead pytest `test_claude_bridge.py` 17 PASS;
+- 2026-10-29 Fedora, model seçimi işi: lead pytest `test_claude_bridge.py` 32 PASS;
   test+adaptör+izleyici ruff PASS; hedefli mypy PASS; diff-check PASS. Full gate çalıştırılmadı.
 - Önceki full gate: macOS backend ruff/mypy PASS, pytest 1466 PASS; frontend 147 test ve tüm gate'ler PASS.
 - Önceki Fedora Python 3.14 full gate: ruff/mypy PASS, pytest 1462 PASS/1 skip/3 FAIL;
