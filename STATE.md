@@ -4,6 +4,13 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-30.
 
 ## Şu an
 
+- Mod: Claude-only (GPT kotası bitti, 2026-10-30); lead Claude Code. Bu moddaki commit'ler: `f926a63`
+  (yalnız mod altyapısı), M6.4c (hash aşağıda). GPT review bekliyor: M6.4c FFmpeg adaptörü
+  (Opus yazdı, bu modda review edilmedi). Dönüş: `/normal-mod`, sonra OpenCode `/continue`.
+- M6.4c tamamlandı: `FFmpegProcessor.convert` tek profil tablosuyla mp3/wav/m4a/opus/flac/mp4; ortak `_run`,
+  başarısızlık/timeout/iptalde yalnız kendi çıktısını silme, `input==output` ve uzantı `ValueError`,
+  ayrı conversion timeout (3600 sn). Aktivasyon yok; runner/config bağlanmadı, M6.4b kapısı duruyor.
+  Onaylı değerler: MP3 V0, M4A AAC 256k, Opus 160k, WAV/FLAC 16-bit, MP4 x264 CRF 20 medium + AAC 192k.
 - M0–M5 kabul edildi (M5: playlist/album, `d37b78f`); child dosya izni artık `0644`.
 - Kullanıcı dağıtım hedefini netleştirdi: uygulama açık kaynak dağıtılacak; bu, otomatik olarak
   ticari olmayan kullanım veya kapakların açık lisanslı olduğu anlamına gelmez.
@@ -28,11 +35,11 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-30.
 
 ## Sıradaki iş
 
-1. Yeni OpenCode oturumunda /continue ile M6.4c: FFmpeg dönüşüm adaptörü. Önce mevcut adapter,
-   iptal/timeout/fake-binary testlerini oku, Opus teknik görüşü ve lead kararını görünür özetle.
-   Preset/codec parametreleri henüz kilitlenmedi; yalnız adaptör işi, M6.4b gate'ini erken kaldırma.
-2. Takip: M6.4d dönüşüm kaynak seçimi/
-   pipeline+cancel/retry → M6.4e arayüz → M6.4f gerçek binary/çıktı smoke.
+1. M6.4d: dönüşüm kaynak seçimi/pipeline+cancel/retry. `convert` copy_audio/copy_video kararı
+   çağıranındır (kaynak codec'ine göre); conversion timeout config/main bağlantısı burada.
+   M6.4b fail-closed kapısı yalnız bu iş doğrulanınca kalkar. Önce Opus görüşü.
+2. Takip: M6.4e arayüz → M6.4f gerçek binary/çıktı smoke (encoder var/yok, ffprobe codec/faststart,
+   gerçek iptalde artık süreç yok; ffmpeg yoksa skip).
    M6.5 metadata/etiket pipeline bağlantısı →
    M6.6 müzik yolları/katalog → M6.7 kaynak kapak → M6.8 metadata/kapak önizleme-düzenleme →
    M6.9 harici kapak arama (haklar koşullu) → M6.10 kapanış gate. Başlıklar küçük işlere bölünebilir.
@@ -92,6 +99,9 @@ Kaynaklar: PRODUCT_SPEC §13–16, ARCHITECTURE §30–34 ve §59 M6.
 
 ## Son gate
 
+- 2026-10-30 Fedora Python 3.14.8, M6.4c worker ve lead: ffmpeg/prepared_media/collection runner+dispatch
+  4 test dosyası 136 PASS (52 adaptör testi); hedefli ruff, mypy ve diff --check PASS. Opus review
+  yok (Opus yazdı); GPT review bekliyor. Full gate/frontend çalıştırılmadı. Sonraki gate'ler bayat kabul edilir.
 - 2026-10-30 Fedora Python 3.14.8, M6.4b worker ve lead: hedefli 12 test dosyası 847 PASS
   (100 yeni profil testi dahil; migration/API/runner/retry/recovery/katalog). Hedefli ruff 18 dosya,
   mypy 17 dosya ve diff --check PASS. GPT review must-fix yok. Full gate/frontend çalıştırılmadı.
