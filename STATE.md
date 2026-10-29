@@ -16,19 +16,28 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-29.
   pytest/ruff/mypy komutlarını kendisi çalıştırdı, açık aynı-model resume takip çağrısı PASS, izin reddi yok.
 - Otomatik izleyici Sonnet ile geliştirildi; bağımsız GPT review: must-fix yok;
   lead hedefli kontrolleri tekrar doğruladı. Uygulamanın indirme davranışı değişmedi.
-- M6 metadata/isimlendirme planlama aşamasında; uygulaması başlamadı.
+- M6 başlangıç Opus görüşü alındı; requested opus / observed claude-opus-5-5 eşleşti,
+  çağrı başarılı ve izin reddi yok. Uygulama başlamadı; ürün tercihleri bekleniyor.
 
 ## Sıradaki iş
 
-1. M6 öncesi Opus planlama görüşü ve kullanıcı ürün kararları. Görüş alınamazsa açık onay olmadan ilerleme.
-2. Lead Opus önerisi/gerekçe/alternatif-risk ve kendi kararını burada özetler; ürün tercihlerini kullanıcı verir.
+1. Kullanıcı M6 ürün tercihlerini yanıtlasın; ardından tek bounded uygulama işi seçilsin.
+2. Opus planı: kaynak metadata → merkezi güvenli yollar → playlist video adları →
+   staging'de etiket/remux → müzik yolları/katalog → kapak → metadata düzenleme → kapanış gate.
+3. Lead: mevcut staging/yayınlama sınırlarını koru; kaynak alanlarını tahmin etmeden taşı.
+   Playlist adı otomatik albüm değildir; albüm alanı tek başına küçük resmi güvenilir yapmaz.
+   Kayıpsız remux kaliteyi korur; yeniden kodlama ve başlık temizliği kayıp riski taşır.
+   Sonraki aday: kaynak metadata modeli/normalizasyonu; API sözleşmesi değişirse Opus.
 Kural: review ve kontroller sonrası görev başına otomatik commit; push yalnız açık taleple.
 
 ## Açık kararlar
 
-- M6: ses biçimi (kaynak WebM/Opus → Opus çıkarma / M4A / MP3); eksik sanatçı/albüm/parça adları.
-- Parça numarası kaynak sırası mı metadata mı; başlıktaki Official Video vb. ekler temizlensin mi?
-- Kapak kaynağı/güven seviyesi; metadata ve kapak gömülecek biçimler ve hata davranışı.
+- M6 (henüz onaylanmadı): doğal ses kabı mı, kayıpsız WebM/Opus → .opus remux mı?
+- Eksik alanlarda öneri: metadata uydurma; sanatçı/albüm yoksa düz yerleşim, parça adı için kaynak başlığı.
+- Numara önerisi: koleksiyonda özgün kaynak sırası; başlıkta otomatik ek temizliği yapma.
+- Kapak önerisi: harici arama yok; belirsiz kaynak küçük resmi yalnız açık kullanıcı seçimiyle.
+- Etiket/kapak/remux hatası önerisi: güvenli orijinali koru, uyarıyla tamamla; iptal, güvenlik,
+  depolama veya katalog hatalarını bu fallback kapsamında yutma. Gömme biçimleri uygulamada netleşecek.
 - M9: video kalite basamaklarını sadeleştirme ve boyut gösterimi.
 Kaynaklar: PRODUCT_SPEC §13–16, ARCHITECTURE §30–34 ve §59 M6.
 
@@ -45,6 +54,8 @@ Kaynaklar: PRODUCT_SPEC §13–16, ARCHITECTURE §30–34 ve §59 M6.
 
 ## Son gate
 
+- 2026-10-29 Fedora, M6 başlangıç planlaması: yalnız salt-okunur inceleme ve Opus danışma;
+  uygulama/test/config değişmedi, hedefli test veya full gate çalıştırılmadı.
 - 2026-10-29 Fedora, otomatik izleme: worker ve lead pytest `test_claude_bridge.py` 43 PASS;
   test+izleyici ruff ve hedefli mypy PASS. Önceki model seçimi işinde adaptör ruff PASS.
   Bu çağrıda full gate çalıştırılmadı; test değişikliği bağımsız GPT review'dan geçti.
