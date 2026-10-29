@@ -511,7 +511,7 @@ Video inside a playlist:
 03 - Title.ext
 ```
 
-In a playlist, `NN` follows the original source playlist order; numbers of unselected items are not compacted (M6 decision, planned, not implemented). Automatic title cleanup is not applied; the title is the source title, which the user can edit.
+In a playlist, `NN` follows the original source playlist order; numbers of unselected items are not compacted (M6.3, implemented for collection video files: the persisted `source_order` with at least two digits and no compaction; standalone video and audio filenames are unchanged, audio numbering remains planned). Automatic title cleanup is not applied; the title is the source title, which the user can edit (manual name editing UI planned, not implemented).
 
 Technical IDs such as a YouTube video ID should not be included in the visible filename by default.
 

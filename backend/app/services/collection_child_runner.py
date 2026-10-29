@@ -246,6 +246,8 @@ class _ChildExecution:
             await self.transition(JobStatus.FINALIZING)
             # Storage owns the shielded thread drain. Signal cancellation through
             # its predicate, rather than racing task.cancel() against that drain.
+            # Filename order comes only from the persisted child row (video
+            # collections), never from fresh probe metadata.
             self.placing = True
             try:
                 placement = await self.deps.storage.place_child_final(
@@ -254,6 +256,8 @@ class _ChildExecution:
                     title=child.title or "Untitled", cancel_requested=lambda: (
                         self.cancel_event.is_set() or self.stopped.is_set()
                     ), publish_guard=self.cancel_gate,
+                    source_order=(child.source_order
+                                  if parent.collection_mode == "video" else None),
                 )
             finally:
                 self.placing = False

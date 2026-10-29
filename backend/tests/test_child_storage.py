@@ -351,6 +351,98 @@ def test_rejected_output_closes_all_walk_descriptors(
     assert not active
 
 
+def place_ordered(
+    storage: StorageService, source: Path, order: Any, *,
+    title: str = "Title", media_kind: str = "video",
+) -> Any:
+    return asyncio.run(storage.place_child_final(
+        "child", source, media_kind=media_kind, title=title, source_order=order,
+    ))
+
+
+def test_legacy_without_order_keeps_flat_title(storage: StorageService) -> None:
+    result = place_ordered(storage, output(storage), None)
+    assert result.relative_path == "video/Title.mp4"
+
+
+@pytest.mark.parametrize("order,name", [
+    (1, "01 - Title.mp4"), (7, "07 - Title.mp4"),
+    (100, "100 - Title.mp4"), (12345, "12345 - Title.mp4"),
+])
+def test_explicit_order_prefixes_video_filename(
+    storage: StorageService, order: int, name: str,
+) -> None:
+    source = output(storage)
+    result = place_ordered(storage, source, order)
+    assert result.relative_path == f"video/{name}"
+    assert result.final_path.read_bytes() == b"child content"
+    assert not result.skipped_existing and not source.exists()
+    assert_no_temp(storage)
+
+
+@pytest.mark.parametrize("order,media_kind,error", [
+    (True, "video", TypeError), (False, "video", TypeError),
+    (1.0, "video", TypeError), ("1", "video", TypeError),
+    (0, "video", ValueError), (-3, "video", ValueError),
+    (1, "audio", ValueError),
+])
+def test_invalid_order_rejected_without_mutation(
+    storage: StorageService, order: Any, media_kind: str, error: type[Exception],
+) -> None:
+    source = output(storage)
+    with pytest.raises(error):
+        place_ordered(storage, source, order, media_kind=media_kind)
+    assert source.read_bytes() == b"child content"
+    assert not list((storage.library_root / "video").iterdir())
+    assert not list((storage.library_root / "audio").iterdir())
+
+
+def test_long_unicode_title_keeps_prefix_and_extension_within_budget(
+    storage: StorageService,
+) -> None:
+    result = place_ordered(storage, output(storage), 7, title="Şarkı ğüé " * 40)
+    name = result.final_path.name
+    assert name.startswith("07 - Şarkı") and name.endswith(".mp4")
+    assert len(name.encode()) <= 150
+    assert result.final_path.parent == storage.library_root / "video"
+
+
+def test_control_only_title_falls_back_after_prefix(storage: StorageService) -> None:
+    result = place_ordered(storage, output(storage), 7, title="\x00\x01\x1f")
+    assert result.relative_path == "video/07 - download.mp4"
+
+
+@pytest.mark.parametrize("title", ["../../etc/passwd", "a/b\\c", "/abs", "..", "."])
+def test_path_shaped_titles_stay_flat_in_video_root(
+    storage: StorageService, tmp_path: Path, title: str,
+) -> None:
+    result = place_ordered(storage, output(storage), 3, title=title)
+    assert result.final_path.parent == storage.library_root / "video"
+    assert result.final_path.name.startswith("03 - ")
+    assert "/" not in result.final_path.name and "\\" not in result.final_path.name
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["library", "staging"]
+
+
+def test_same_title_different_orders_are_separate_files(storage: StorageService) -> None:
+    first = place_ordered(storage, output(storage), 2)
+    second = place_ordered(storage, output(storage), 9)
+    assert (first.relative_path, second.relative_path) == (
+        "video/02 - Title.mp4", "video/09 - Title.mp4")
+    assert not first.skipped_existing and not second.skipped_existing
+
+
+def test_existing_prefixed_target_is_skipped_unchanged(storage: StorageService) -> None:
+    target = storage.final_target("video", "07 - Title.mp4")
+    target.write_bytes(b"existing")
+    source = output(storage)
+    result = place_ordered(storage, source, 7)
+    assert result.skipped_existing and result.final_path == target
+    assert target.read_bytes() == b"existing"
+    assert source.read_bytes() == b"child content"
+    assert result.identity == (target.stat().st_dev, target.stat().st_ino)
+    assert_no_temp(storage)
+
+
 def test_copy_failure_closes_descriptors_and_removes_temp(
     storage: StorageService, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

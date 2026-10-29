@@ -17,20 +17,24 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-29.
   M6.0 hazırlık tamamlandı (`29206a9`).
 - M6.1 tamamlandı (`d2c6667`): tekli analiz POST/GET ve saklanan JSON'da opsiyonel source_metadata;
   yalnız açık kaynak alanları, bozuk alan izolasyonu, eski JSON uyumu. Collection parent None;
-  child probe bağlantısı, frontend gösterimi, adlandırma, etiketleme ve kapak henüz uygulanmadı.
+  child probe metadata bağlantısı, frontend gösterimi, müzik adlandırma/etiket/kapak henüz yok.
 - M6.1 için Opus uygulama/test çağrısı doğrulandı: opus / claude-opus-5-5, başarı ve izin reddi yok;
   bağımsız GPT review must-fix yok. Kaynak model adı source-only provenance için yeterli;
   artist listeleri korunur, başlık/kanal/yükleme tarihi üzerinden metadata çıkarılmaz.
-- M6.2 tamamlandı: merkezi `final_target(..., folders=())` yol planlama ve bayt sınırlı klasör
+- M6.2 tamamlandı (`8a1c303`): merkezi `final_target(..., folders=())` yol planlama ve bayt sınırlı klasör
   temizleyici. Dosya/klasör oluşturmaz; mevcut düz yayınlama değişmedi, nested yazma aktif değil.
   Opus ve aynı-model resume family eşleşti, izin reddi yok; tek review turunda temizleme sonrası
   NFC düzeltildi, GPT reviewer must-fix kalmadığını doğruladı.
+- M6.3 tamamlandı: koleksiyon video adı storage içinde kalıcı source_order ile NN - Başlık.ext;
+  numara en az iki hane, seçim boşlukları korunur. Başlık/katalog metadata değişmez;
+  fresh probe/playlist_index/track_number kullanılmaz. Standalone/audio ve completed işler değişmedi.
+  Opus family eşleşti, izin reddi yok; GPT review must-fix yok, rework gerekmedi.
 
 ## Sıradaki iş
 
-1. M6.3 playlist video sıra numaralı adlandırma; mevcut child/source-order/storage akışını incele,
-   uygulama öncesi Opus teknik görüşüyle dar kapsamı netleştir. M6.2 yalnız planlama temelidir.
-2. Takip: M6.4 FFmpeg etiket/remux → M6.5 pipeline bağlantısı →
+1. M6.4 FFmpeg etiket/remux adaptör desteği; mevcut adapter ve fake-binary testlerini incele,
+   uygulama öncesi Opus teknik görüşüyle biçim/hata sınırlarını netleştir. Henüz pipeline'a bağlama.
+2. Takip: M6.5 pipeline bağlantısı →
    M6.6 müzik yolları/katalog → M6.7 kaynak kapak → M6.8 metadata/kapak önizleme-düzenleme →
    M6.9 harici kapak arama (haklar koşullu) → M6.10 kapanış gate. Başlıklar küçük işlere bölünebilir.
 3. Lead: mevcut staging/yayınlama sınırlarını koru; kaynak alanlarını tahmin etmeden taşı.
@@ -65,6 +69,8 @@ Kaynaklar: PRODUCT_SPEC §13–16, ARCHITECTURE §30–34 ve §59 M6.
 - should-fix: Fedora Python 3.14'te mevcut 3 backend test hatası (aşağıda).
 - should-fix: test_jobs.py iptal testi DOWNLOADING görünür görünmez staging.exists varsayıyor;
   claim commit'i mkdir'den önce olduğundan yarış var. M6.1 bu sırayı değiştirmedi; kapsam dışı.
+- should-fix: collection child Skip Existing sonucunu Activity uyarısıyla göstermiyor; M6.3 mevcut
+  skip/identity davranışını korudu. Activity/SSE/transaction sahipliği ayrı scoped iş gerektirir.
 - Sonnet/Opus uygulama/test ve açık aynı-model resume görüldü; farklı-rol resume izolasyonu
   denenmedi. Dosya kapsamı prompt kuralıdır, teknik sandbox değildir. Native bg/attach yok.
 - should-fix: WORKFLOW kullanımına, modelsiz implement resume'ın CLI hatası verdiği açıkça eklenebilir;
@@ -74,14 +80,12 @@ Kaynaklar: PRODUCT_SPEC §13–16, ARCHITECTURE §30–34 ve §59 M6.
 
 ## Son gate
 
-- 2026-10-29 Fedora Python 3.14.8, M6.2: worker ve lead storage_utils+child_storage 193 PASS/3 FAIL;
-  hataların tümü bilinen test_child_storage descriptor/pidfd çakışması, deselect edilmedi.
-  Worker/lead üç değişen dosya ruff+mypy ve lead diff --check PASS; yeni testlerin tümü geçti.
-  GPT review tek rework sonrası must-fix yok. Full gate/frontend çalıştırılmadı.
-- 2026-10-29 Fedora Python 3.14.8, M6.1: worker hedefli normalizer+API+jobs 281 PASS;
-  lead tekrarı 280 PASS/1 FAIL (yukarıdaki iptal testi yarışı), ayrı diagnostic 1 PASS.
-  Lead normalizer+API ayrı koşu 208 PASS; worker/lead dört değişen dosya ruff ve mypy PASS.
-  GPT review must-fix yok; iptal testi should-fix. Full gate/frontend bu işte çalıştırılmadı.
+- 2026-10-29 Fedora Python 3.14.8, M6.3: worker ve lead child_storage+collection child/parent+
+  storage_utils 321 PASS/3 FAIL (yalnız bilinen descriptor/pidfd testleri; deselect edilmedi).
+  Aynı hata yolundaki await edilmemiş coroutine uyarısı korundu; ayrı child runner
+  `-W error::RuntimeWarning` worker/lead 56 PASS. Hedefli beş dosya ruff/mypy ve diff --check PASS.
+  GPT review must-fix yok; full gate/frontend çalıştırılmadı. Gerçek Retry endpoint'i bu işte
+  ayrıca sınanmadı; yayın sonrası katalog hatası testi kontrollü reset ile yol tutarlılığını sınar.
 - Önceki full gate: macOS backend ruff/mypy PASS, pytest 1466 PASS; frontend 147 test ve tüm gate'ler PASS.
 - Önceki Fedora Python 3.14 full gate: ruff/mypy PASS, pytest 1462 PASS/1 skip/3 FAIL;
   `test_rejected_output_closes_all_walk_descriptors` os.close monkeypatch/pidfd çakışması.

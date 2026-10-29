@@ -1286,7 +1286,7 @@ NN - Title.ext
 
 Source IDs should remain database metadata rather than default visible filenames.
 
-M6 (approved; planned, not implemented): playlist `NN` follows the original source playlist order and is not compacted for unselected items; no automatic title cleanup; the title is the source title and may be edited.
+M6.3 (implemented): collection video files are named `NN - Title.ext` inside `StorageService` from the persisted child `source_order` (at least two digits, never compacted or truncated) and the persisted title; standalone video and audio filenames are unchanged. No automatic title cleanup; the title is the source title; manual name editing and audio numbering remain planned, not implemented.
 
 ---
 

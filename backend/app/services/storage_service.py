@@ -31,7 +31,11 @@ from pathlib import Path
 from typing import Any
 
 from app.domain.library import MediaStorageType
-from app.utils.filenames import sanitize_media_filename, sanitize_path_segment
+from app.utils.filenames import (
+    sanitize_filename,
+    sanitize_media_filename,
+    sanitize_path_segment,
+)
 from app.utils.paths import ensure_within_root
 
 
@@ -345,8 +349,14 @@ class StorageService:
         title: str,
         cancel_requested: Callable[[], bool] | None = None,
         publish_guard: AbstractContextManager[Any] | None = None,
+        source_order: int | None = None,
     ) -> PlacementResult:
         """Place only a regular output owned by the backend child's staging key.
+
+        ``source_order`` (video only) is the persisted collection position;
+        it prefixes the filename as ``NN - Title.ext`` with at least two
+        digits, never truncated or compacted (PRODUCT_SPEC.md §15). With
+        ``None`` the flat ``Title.ext`` target is unchanged.
 
         Source parents and file are pinned with no-follow descriptors. Always
         copy from the pinned file (also on the same filesystem): portable POSIX
@@ -363,10 +373,18 @@ class StorageService:
         of protection against arbitrary concurrent filesystem mutation.
         """
         child_staging_key = self._validated_job_id(child_staging_key)
+        if source_order is not None:
+            if isinstance(source_order, bool) or not isinstance(source_order, int):
+                raise TypeError(f"source_order must be an int: {source_order!r}")
+            if source_order <= 0:
+                raise ValueError(f"source_order must be positive: {source_order!r}")
+            if media_kind != "video":
+                raise ValueError(f"source_order is only for video: {media_kind!r}")
         operation = asyncio.create_task(asyncio.to_thread(
             self._place_child_final_sync,
             child_staging_key, adapter_output_path, media_kind, title,
             cancel_requested or (lambda: False), publish_guard,
+            source_order=source_order,
         ))
         while True:
             try:
@@ -440,11 +458,18 @@ class StorageService:
         self, key: str, output: Path, media_kind: str, title: str,
         cancel_requested: Callable[[], bool],
         publish_guard: AbstractContextManager[Any] | None,
+        source_order: int | None = None,
     ) -> PlacementResult:
         source = self._prepare_child_output(key, output)
         try:
             extension = output.suffix.lstrip(".") or "bin"
-            target = self.final_target(media_kind, f"{title}.{extension}")
+            # Clean the title first so a control-only title still yields
+            # "NN - download.ext"; final_target applies the shared extension,
+            # byte budget and root checks to the combined name.
+            name = title if source_order is None else (
+                f"{source_order:02d} - {sanitize_filename(title)}"
+            )
+            target = self.final_target(media_kind, f"{name}.{extension}")
             self._raise_if_cancelled(cancel_requested)
             if target.exists():
                 return self._placement_result(target, skipped_existing=True)

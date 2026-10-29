@@ -110,6 +110,67 @@ async def test_real_heterogeneous_pipeline_raw_order_and_completed_without_libra
 
 
 @pytest.mark.anyio
+async def test_selected_video_orders_keep_gaps_in_filenames(tmp_path: Path) -> None:
+    from app.models.library import MediaFile
+
+    h = Harness(tmp_path)
+    try:
+        await seed(h, [child(2, title="Same"), child(5, status="completed", title="Same"),
+                       child(9, title="Same")])
+        assert await run(h) == runner.ParentRunOutcome.EXHAUSTED
+        assert h.adapters.calls.count("probe") == 2
+        video = h.storage.library_root / "video"
+        assert sorted(p.name for p in video.iterdir()) == ["02 - Same.mp4", "09 - Same.mp4"]
+        async with h.sessions() as session:
+            paths = (await session.scalars(select(MediaFile.path).order_by(MediaFile.path))).all()
+            assert paths == ["video/02 - Same.mp4", "video/09 - Same.mp4"]
+            titles = (await session.scalars(select(LibraryItem.title))).all()
+            assert titles == ["Same", "Same"]
+            assert await session.get(LibraryItem, "child-5") is None
+    finally:
+        await h.engine.dispose()
+
+
+@pytest.mark.anyio
+async def test_retry_after_publication_before_catalog_skips_same_prefixed_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.models.library import MediaFile
+    from app.services import collection_child_runner as child_runner
+
+    h = Harness(tmp_path)
+    real_completion = child_runner.stage_child_completion
+
+    async def fail_once(*args: Any, **kwargs: Any) -> Any:
+        monkeypatch.setattr(child_runner, "stage_child_completion", real_completion)
+        raise RuntimeError("catalog failure after publication")
+
+    monkeypatch.setattr(child_runner, "stage_child_completion", fail_once)
+    try:
+        await seed(h, [child(2, title="Same")])
+        with pytest.raises(JobError) as caught:
+            await run(h)
+        assert caught.value.code == JobErrorCode.INTERNAL_ERROR
+        target = h.storage.library_root / "video" / "02 - Same.mp4"
+        published = (target.read_bytes(), target.stat().st_ino)
+        # Simulated retry reset of the unfinished attempt (not under test here).
+        async with h.sessions() as session:
+            await session.execute(update(JobItem).values(status="queued"))
+            await session.execute(update(DownloadJob).values(status="queued"))
+            await session.commit()
+        assert await run(h) == runner.ParentRunOutcome.EXHAUSTED
+        assert (target.read_bytes(), target.stat().st_ino) == published
+        assert [p.name for p in target.parent.iterdir()] == ["02 - Same.mp4"]
+        async with h.sessions() as session:
+            assert (await session.scalars(select(MediaFile.path))).all() == [
+                "video/02 - Same.mp4"]
+        assert await run(h) == runner.ParentRunOutcome.SKIPPED
+        assert h.adapters.calls.count("probe") == 2
+    finally:
+        await h.engine.dispose()
+
+
+@pytest.mark.anyio
 @pytest.mark.parametrize("case", ["owner", "kind", "failed", "completed", "cancelled",
                                   "analyzing", "marker"])
 async def test_actual_claim_cas_rejects_before_child(tmp_path: Path, case: str) -> None:

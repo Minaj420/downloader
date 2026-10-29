@@ -179,6 +179,42 @@ async def test_completion_catalog_populates_probe_source_facts(tmp_path: Path) -
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("mode,missing_title,expected", [
+    ("video", False, "video/02 - Track.mp4"),
+    ("video", True, "video/02 - Untitled.mp4"),
+    ("audio", False, "audio/Track.mp4"),
+    ("audio", True, "audio/Untitled.mp4"),
+])
+async def test_completion_filename_uses_persisted_order_for_video_only(
+    tmp_path: Path, mode: str, missing_title: bool, expected: str,
+) -> None:
+    h = Harness(tmp_path)
+    try:
+        await h.seed(mode, playlist_index=40, track_number=41)
+        if missing_title:
+            async with h.sessions() as session:
+                await session.execute(
+                    update(JobItem).where(JobItem.id == "child-2").values(title=None))
+                await session.commit()
+        # Fresh probe metadata is never a naming source.
+        h.adapters.source = source() | {
+            "title": "Probe Title", "playlist_index": 5, "track_number": 6,
+        }
+        assert await h.run() == ChildResult.COMPLETED
+        item, copies = (await h.facts())[5:]
+        assert [c.path for c in copies] == [expected]
+        assert (h.storage.library_root / expected).read_bytes()
+        assert item.title == ("Untitled" if missing_title else "Track")
+        async with h.sessions() as session:
+            row = await session.get(JobItem, "child-2")
+            assert row is not None
+            assert (row.source_order, row.title, row.playlist_index) == (
+                2, None if missing_title else "Track", 40)
+    finally:
+        await h.engine.dispose()
+
+
+@pytest.mark.anyio
 @pytest.mark.parametrize("raw,expected", [
     (0, 0.0), (0.0, 0.0), (215, 215.0), (215.5, 215.5), (1e308, 1e308),
     (True, None), (False, None), ("204", None), (None, None), ([124], None),
