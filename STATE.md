@@ -17,13 +17,14 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-29.
 - Otomatik izleyici Sonnet ile geliştirildi; bağımsız GPT review: must-fix yok;
   lead hedefli kontrolleri tekrar doğruladı. Uygulamanın indirme davranışı değişmedi.
 - M6 başlangıç Opus görüşü alındı; requested opus / observed claude-opus-5-5 eşleşti,
-  çağrı başarılı ve izin reddi yok. Uygulama başlamadı; ürün tercihleri bekleniyor.
+  çağrı başarılı ve izin reddi yok. Uygulama başlamadı; kullanıcı aşağıdaki tercihleri onayladı.
 
 ## Sıradaki iş
 
-1. Kullanıcı M6 ürün tercihlerini yanıtlasın; ardından tek bounded uygulama işi seçilsin.
+1. M6 kaynak metadata için tek bounded iş seç; ürün/spec kayıtlarını worker ile eşitle.
 2. Opus planı: kaynak metadata → merkezi güvenli yollar → playlist video adları →
-   staging'de etiket/remux → müzik yolları/katalog → kapak → metadata düzenleme → kapanış gate.
+   staging'de etiket/remux → müzik yolları/katalog → kapak → metadata düzenleme →
+   kullanıcı tetiklemeli harici kapak arama (koşullu) → kapanış gate.
 3. Lead: mevcut staging/yayınlama sınırlarını koru; kaynak alanlarını tahmin etmeden taşı.
    Playlist adı otomatik albüm değildir; albüm alanı tek başına küçük resmi güvenilir yapmaz.
    Kayıpsız remux kaliteyi korur; yeniden kodlama ve başlık temizliği kayıp riski taşır.
@@ -32,12 +33,25 @@ Kural: review ve kontroller sonrası görev başına otomatik commit; push yaln�
 
 ## Açık kararlar
 
-- M6 (henüz onaylanmadı): doğal ses kabı mı, kayıpsız WebM/Opus → .opus remux mı?
-- Eksik alanlarda öneri: metadata uydurma; sanatçı/albüm yoksa düz yerleşim, parça adı için kaynak başlığı.
-- Numara önerisi: koleksiyonda özgün kaynak sırası; başlıkta otomatik ek temizliği yapma.
-- Kapak önerisi: harici arama yok; belirsiz kaynak küçük resmi yalnız açık kullanıcı seçimiyle.
-- Etiket/kapak/remux hatası önerisi: güvenli orijinali koru, uyarıyla tamamla; iptal, güvenlik,
-  depolama veya katalog hatalarını bu fallback kapsamında yutma. Gömme biçimleri uygulamada netleşecek.
+- Onaylı M6: kayıpsız WebM/Opus → .opus remux; AAC/M4A korunur. Metadata uydurulmaz;
+  sanatçı/albüm yoksa düz yerleşim, parça adı için kaynak başlığı. Özgün playlist sırası korunur,
+  numaralar sıkıştırılmaz; otomatik başlık eki temizliği yok.
+- Kapak önizlenir, son seçim kullanıcıda. Kullanıcı düşük kaliteli kaynak kapağına alternatif olarak
+  düğmeyle harici veritabanlarında arama ve aday seçimi istiyor; sessiz arama/değiştirme yok.
+- Etiket/kapak/remux hatasında güvenli orijinal + uyarı onaylandı; iptal/güvenlik/depolama/katalog
+  hataları yutulmaz. Gömme biçimleri, ilk sağlayıcı ve harici kapak hakları henüz netleşecek.
+- 2026-10-29 resmî web kontrolü: MusicBrainz ticari olmayan API araması ücretsiz/anahtarsız;
+  User-Agent uygulama/sürüm/iletişim içermeli, uygulama/IP için en çok 1 istek/sn; 503 mümkün.
+  Çekirdek veri CC0; ek veri CC BY-NC-SA 3.0. Açık kaynak dağıtım/ticari kullanım ayrı incelenmeli.
+- MB + CAA ilk kaynak önerisi (tek zincir): CAA GET/HEAD, orijinal ve 250/500/1200 önizleme uçları;
+  görsel istekleri CAA üzerinden başlamalı. Belgede CAA hız limiti yok; sınırsızlık/SLA garantisi değil.
+- Uygunluk: API yönü olumlu; kapak telifleri sahiplerinde, MB lisansı görselleri kapsamaz.
+  Cache/önizleme/gömme için genel hak izni doğrulanmadı; bu alt işin yazımı öncesi netleştir.
+  IA tam koşulları JS nedeniyle okunamadı; resmî Rights yardım sayfası ihlalsiz kullanım sorumluluğunu
+  kullanıcıya bırakıyor. Anahtar gerektirmemesi veya kullanıcı seçimi telif izni yerine geçmez.
+  Kaynaklar: musicbrainz.org/doc/{MusicBrainz_API,MusicBrainz_API/Rate_Limiting,About/Data_License,
+  MusicBrainz_Database,Cover_Art_Archive,Cover_Art_Archive/API}; coverartarchive.org;
+  help.archive.org/help/rights/; metabrainz.org/supporters/account-type.
 - M9: video kalite basamaklarını sadeleştirme ve boyut gösterimi.
 Kaynaklar: PRODUCT_SPEC §13–16, ARCHITECTURE §30–34 ve §59 M6.
 
@@ -54,8 +68,8 @@ Kaynaklar: PRODUCT_SPEC §13–16, ARCHITECTURE §30–34 ve §59 M6.
 
 ## Son gate
 
-- 2026-10-29 Fedora, M6 başlangıç planlaması: yalnız salt-okunur inceleme ve Opus danışma;
-  uygulama/test/config değişmedi, hedefli test veya full gate çalıştırılmadı.
+- 2026-10-29 Fedora, kapak sağlayıcı uygunluğu: resmî web belgeleri incelendi, API/image smoke yok;
+  uygulama/test/config değişmedi; hedefli test/full gate yok. IA tam koşulları eksik doğrulandı.
 - 2026-10-29 Fedora, otomatik izleme: worker ve lead pytest `test_claude_bridge.py` 43 PASS;
   test+izleyici ruff ve hedefli mypy PASS. Önceki model seçimi işinde adaptör ruff PASS.
   Bu çağrıda full gate çalıştırılmadı; test değişikliği bağımsız GPT review'dan geçti.
