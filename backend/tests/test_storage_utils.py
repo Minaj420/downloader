@@ -5,6 +5,7 @@ import shutil
 import stat
 import threading
 import time
+import unicodedata
 import uuid
 from pathlib import Path
 from typing import Any
@@ -21,7 +22,11 @@ from app.services.storage_service import (
     StorageService,
     StorageTargetError,
 )
-from app.utils.filenames import sanitize_filename, sanitize_media_filename
+from app.utils.filenames import (
+    sanitize_filename,
+    sanitize_media_filename,
+    sanitize_path_segment,
+)
 from app.utils.paths import ensure_within_root
 
 
@@ -131,6 +136,104 @@ class TestSanitizeMediaFilename:
 
     def test_sanitizes_body_and_extension_independently(self) -> None:
         assert sanitize_media_filename("bad/name?.mp4") == "bad_name_.mp4"
+
+
+class TestSanitizePathSegment:
+    def test_preserves_useful_unicode_with_nfc(self) -> None:
+        decomposed = "Café Björk"
+        assert sanitize_path_segment(decomposed) == "Café Björk"
+        assert sanitize_path_segment("坂本龍一 🎹") == "坂本龍一 🎹"
+
+    def test_keeps_inner_dots_without_extension_treatment(self) -> None:
+        assert sanitize_path_segment("Vol. 1.5 (Live)") == "Vol. 1.5 (Live)"
+        assert sanitize_path_segment("a..b") == "a..b"
+        assert sanitize_path_segment("Album.mp3") == "Album.mp3"
+        # A long dotted name is cut as one segment, never "body.ext".
+        assert sanitize_path_segment("x" * 200 + ".flac") == "x" * 150
+
+    @pytest.mark.parametrize("separator", ["\x00", "\x07", "​"])
+    def test_renormalizes_after_dropping_characters(self, separator: str) -> None:
+        name = f"e{separator}́"
+        assert sanitize_path_segment(name) == "é"
+        assert sanitize_path_segment(name, max_bytes=2) == "é"
+        assert unicodedata.is_normalized("NFC", sanitize_path_segment(name))
+        assert sanitize_path_segment("é") == "é"  # idempotent
+
+    def test_drops_control_nul_format_and_lone_surrogates(self) -> None:
+        cleaned = sanitize_path_segment("a\x00b\nc\td​e\ud800f\x7fg")
+        assert cleaned == "abcdefg"
+        cleaned.encode("utf-8")  # no lone surrogate survives
+
+    def test_neutralizes_separators_and_forbidden_characters(self) -> None:
+        assert sanitize_path_segment("AC/DC") == "AC_DC"
+        assert sanitize_path_segment("a\\b") == "a_b"
+        assert sanitize_path_segment('a:b*c?d"e<f>g|h') == "a_b_c_d_e_f_g_h"
+        assert sanitize_path_segment("../../etc") == ".._.._etc"
+        assert sanitize_path_segment("/etc/passwd") == "_etc_passwd"
+
+    @pytest.mark.parametrize(
+        "name", ["", "   ", ".", "..", "...", " . . ", "\x00", "​"]
+    )
+    def test_empty_and_dot_only_use_fallback(self, name: str) -> None:
+        assert sanitize_path_segment(name) == "download"
+
+    def test_trims_trailing_dots_and_spaces(self) -> None:
+        assert sanitize_path_segment("  Album... ") == "Album"
+        assert sanitize_path_segment(".hidden") == ".hidden"
+
+    def test_ascii_byte_bound(self) -> None:
+        assert sanitize_path_segment("a" * 150) == "a" * 150
+        assert sanitize_path_segment("a" * 151) == "a" * 150
+
+    def test_cjk_byte_bound_on_character_boundary(self) -> None:
+        cleaned = sanitize_path_segment("視" * 60)
+        assert cleaned == "視" * 50
+        assert len(cleaned.encode("utf-8")) == 150
+
+    def test_emoji_byte_bound_on_character_boundary(self) -> None:
+        cleaned = sanitize_path_segment("🎵" * 50)
+        assert cleaned == "🎵" * 37
+        assert len(cleaned.encode("utf-8")) <= 150
+
+    def test_truncation_retrims_trailing_dots_and_spaces(self) -> None:
+        assert sanitize_path_segment("a" * 148 + " .b") == "a" * 148
+
+    def test_is_deterministic(self) -> None:
+        name = "Artist/Name: 視🎵..."
+        assert sanitize_path_segment(name) == sanitize_path_segment(name)
+
+    @pytest.mark.parametrize(
+        "name, max_bytes, expected",
+        [
+            ("", 1, "d"),
+            ("..", 3, "dow"),
+            ("視", 2, "do"),
+            ("ab", 1, "a"),
+            ("x" * 10, 8, "x" * 8),
+        ],
+    )
+    def test_small_positive_budget_never_exceeded(
+        self, name: str, max_bytes: int, expected: str
+    ) -> None:
+        cleaned = sanitize_path_segment(name, max_bytes=max_bytes)
+        assert cleaned == expected
+        assert 0 < len(cleaned.encode("utf-8")) <= max_bytes
+
+    @pytest.mark.parametrize("max_bytes", [0, -1])
+    def test_non_positive_budget_rejected(self, max_bytes: int) -> None:
+        with pytest.raises(ValueError):
+            sanitize_path_segment("Album", max_bytes=max_bytes)
+
+    @pytest.mark.parametrize("max_bytes", [True, False, 1.5, "10", None])
+    def test_non_int_budget_rejected(self, max_bytes: Any) -> None:
+        with pytest.raises(TypeError):
+            sanitize_path_segment("Album", max_bytes=max_bytes)
+
+    def test_existing_sanitizers_unchanged(self) -> None:
+        assert sanitize_filename("..") == "download"
+        assert sanitize_filename("x" * 200) == "x" * 150
+        assert sanitize_media_filename("Album.mp3") == "Album.mp3"
+        assert sanitize_media_filename("x" * 200 + ".flac") == "x" * 145 + ".flac"
 
 
 class TestEnsureWithinRoot:
@@ -267,6 +370,212 @@ class TestFinalTarget:
         assert target.name == "x" * 140 + ".longextxx"
         assert target.name.endswith(".longextxx")
         assert len(target.name.encode("utf-8")) <= 150
+
+
+def _tree_snapshot(root: Path) -> dict[str, tuple[int, int, str | None]]:
+    """Every entry below ``root`` with its mode, size and link text."""
+    snapshot: dict[str, tuple[int, int, str | None]] = {}
+    for directory, names, files in os.walk(root, followlinks=False):
+        for name in [*names, *files]:
+            entry = Path(directory) / name
+            info = entry.lstat()
+            link = os.readlink(entry) if entry.is_symlink() else None
+            snapshot[str(entry.relative_to(root))] = (
+                info.st_mode, info.st_size, link
+            )
+    return snapshot
+
+
+class TestFinalTargetFolders:
+    """Nested App Library planning (M6.2): one sanitized segment per
+    folder, containment at resolve time, no filesystem mutation."""
+
+    @staticmethod
+    def _storage(tmp_path: Path) -> StorageService:
+        storage = StorageService(tmp_path / "staging", tmp_path / "library")
+        storage.ensure_layout()
+        return storage
+
+    @staticmethod
+    def _forbid_mkdir(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+        calls: list[Any] = []
+
+        def spy(*args: Any, **kwargs: Any) -> None:
+            calls.append(args)
+            raise AssertionError("final_target must not create directories")
+
+        monkeypatch.setattr(Path, "mkdir", spy)
+        monkeypatch.setattr(os, "mkdir", spy)
+        monkeypatch.setattr(os, "makedirs", spy)
+        return calls
+
+    @pytest.mark.parametrize("media_kind", ["audio", "video"])
+    @pytest.mark.parametrize(
+        "filename", ["Clip.mp4", "x" * 200 + ".mp4", "x" * 200 + ".longextxx"]
+    )
+    def test_empty_folders_match_existing_flat_target(
+        self, tmp_path: Path, media_kind: str, filename: str
+    ) -> None:
+        storage = self._storage(tmp_path)
+
+        target = storage.final_target(media_kind, filename, folders=())
+
+        assert target == storage.final_target(media_kind, filename)
+        expected = tmp_path / "library" / media_kind / sanitize_media_filename(
+            filename
+        )
+        assert target == expected.resolve()
+
+    def test_nested_segments_are_sanitized(self, tmp_path: Path) -> None:
+        storage = self._storage(tmp_path)
+
+        target = storage.final_target(
+            "audio", "01 - Song?.m4a", folders=("AC/DC", "Album: Vol. 1...")
+        )
+
+        assert target == (
+            tmp_path / "library" / "audio" / "AC_DC" / "Album_ Vol. 1"
+            / "01 - Song_.m4a"
+        ).resolve()
+
+    @pytest.mark.parametrize(
+        "folder, expected",
+        [
+            ("..", "download"),
+            (".", "download"),
+            ("../../outside", ".._.._outside"),
+            ("a/../../b", "a_.._.._b"),
+            ("/etc", "_etc"),
+            ("\\\\server\\share", "__server_share"),
+        ],
+    )
+    def test_traversal_and_absolute_folders_stay_one_segment(
+        self, tmp_path: Path, folder: str, expected: str
+    ) -> None:
+        storage = self._storage(tmp_path)
+
+        target = storage.final_target("video", "Clip.mp4", folders=(folder,))
+
+        assert target == (
+            tmp_path / "library" / "video" / expected / "Clip.mp4"
+        ).resolve()
+        assert target.parent.parent == (tmp_path / "library" / "video").resolve()
+
+    def test_unsupported_media_kind_rejected(self, tmp_path: Path) -> None:
+        storage = self._storage(tmp_path)
+
+        for media_kind in ("", "music", "../audio", "audio/x"):
+            with pytest.raises(ValueError):
+                storage.final_target(media_kind, "Clip.mp4", folders=("A",))
+
+    @pytest.mark.parametrize("folders", ["Artist", "", ["Artist"], [], None])
+    def test_non_tuple_folders_rejected(self, tmp_path: Path, folders: Any) -> None:
+        storage = self._storage(tmp_path)
+
+        with pytest.raises(TypeError):
+            storage.final_target("audio", "a.mp3", folders=folders)
+
+    @pytest.mark.parametrize("element", [1, None, b"Artist", Path("Artist")])
+    def test_non_string_folder_elements_rejected(
+        self, tmp_path: Path, element: Any
+    ) -> None:
+        storage = self._storage(tmp_path)
+
+        with pytest.raises(TypeError):
+            storage.final_target("audio", "a.mp3", folders=("Artist", element))
+
+    @pytest.mark.parametrize("blank", ["", " ", "\t\n"])
+    def test_blank_folders_rejected(self, tmp_path: Path, blank: str) -> None:
+        storage = self._storage(tmp_path)
+
+        with pytest.raises(ValueError):
+            storage.final_target("audio", "a.mp3", folders=("Artist", blank))
+
+    def test_unicode_segments_are_byte_bounded(self, tmp_path: Path) -> None:
+        storage = self._storage(tmp_path)
+
+        target = storage.final_target(
+            "audio", "Song.opus", folders=("視" * 60, "🎵" * 50, "a" * 200)
+        )
+
+        relative = target.relative_to((tmp_path / "library").resolve())
+        assert relative.parts[1:4] == ("視" * 50, "🎵" * 37, "a" * 150)
+        for part in relative.parts:
+            assert len(part.encode("utf-8")) <= 150
+
+    def test_planning_does_not_mutate_filesystem(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        storage = self._storage(tmp_path)
+        before = _tree_snapshot(tmp_path)
+        calls = self._forbid_mkdir(monkeypatch)
+
+        target = storage.final_target(
+            "audio", "01 - Song.m4a", folders=("Artist", "Album")
+        )
+
+        assert calls == []
+        assert not target.parent.exists()
+        assert _tree_snapshot(tmp_path) == before
+
+    @pytest.mark.parametrize("dangling", [False, True])
+    def test_folder_symlink_escaping_root_rejected(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, dangling: bool
+    ) -> None:
+        storage = self._storage(tmp_path)
+        outside = tmp_path / "outside"
+        if not dangling:
+            outside.mkdir()
+            (outside / "keep.txt").write_text("keep")
+        (tmp_path / "library" / "audio" / "Artist").symlink_to(
+            outside, target_is_directory=True
+        )
+        before = _tree_snapshot(tmp_path)
+        calls = self._forbid_mkdir(monkeypatch)
+
+        with pytest.raises(ValueError):
+            storage.final_target("audio", "Song.m4a", folders=("Artist", "Album"))
+
+        assert calls == []
+        assert _tree_snapshot(tmp_path) == before
+        if dangling:
+            assert not outside.exists()
+        else:
+            assert (outside / "keep.txt").read_text() == "keep"
+            assert not (outside / "Album").exists()
+
+    def test_media_kind_symlink_escaping_root_rejected(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        storage = StorageService(tmp_path / "staging", tmp_path / "library")
+        (tmp_path / "library").mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (tmp_path / "library" / "audio").symlink_to(outside, target_is_directory=True)
+        before = _tree_snapshot(tmp_path)
+        calls = self._forbid_mkdir(monkeypatch)
+
+        for folders in ((), ("Artist",)):
+            with pytest.raises(ValueError):
+                storage.final_target("audio", "Song.m4a", folders=folders)
+
+        assert calls == []
+        assert _tree_snapshot(tmp_path) == before
+        assert list(outside.iterdir()) == []
+
+    def test_symlink_inside_root_keeps_existing_behavior(
+        self, tmp_path: Path
+    ) -> None:
+        storage = self._storage(tmp_path)
+        real = tmp_path / "library" / "audio" / "Real Artist"
+        real.mkdir()
+        (tmp_path / "library" / "audio" / "Alias").symlink_to(
+            real, target_is_directory=True
+        )
+
+        target = storage.final_target("audio", "Song.m4a", folders=("Alias",))
+
+        assert target == (real / "Song.m4a").resolve()
 
 
 class TestDeleteRootTrust:

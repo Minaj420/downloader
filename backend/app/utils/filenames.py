@@ -9,6 +9,9 @@ name when nothing usable remains.
 and caps the combined name by UTF-8 byte length (filesystem NAME_MAX is a
 byte limit), so a long title can neither eat the extension nor produce a
 name that exceeds the filesystem limit for multi-byte titles.
+
+``sanitize_path_segment`` cleans one directory segment with the same
+rules and the same UTF-8 byte bound, without any extension handling.
 """
 
 import unicodedata
@@ -16,6 +19,7 @@ import unicodedata
 _FORBIDDEN_CHARACTERS = set('/\\:*?"<>|')
 _MAX_FILENAME_LENGTH = 150
 _MAX_MEDIA_FILENAME_BYTES = 150
+_MAX_PATH_SEGMENT_BYTES = 150
 _FALLBACK_FILENAME = "download"
 
 
@@ -76,6 +80,29 @@ def sanitize_media_filename(
         # a non-empty name instead of returning ""/"."/"..".
         return _FALLBACK_FILENAME
     return f"{fitted}.{extension}"
+
+
+def sanitize_path_segment(
+    name: str, *, max_bytes: int = _MAX_PATH_SEGMENT_BYTES
+) -> str:
+    """Sanitize a single directory segment within ``max_bytes`` UTF-8 bytes.
+
+    The whole name is one segment: dots are never treated as an
+    extension separator, and ``/``/``\\`` become ``_`` so a path-shaped
+    name can never add a directory level. Trailing dots and spaces are
+    trimmed, so ``.``/``..`` and dot-only names use the deterministic
+    fallback, which is itself cut to fit the budget. ``max_bytes`` must
+    be a positive ``int``.
+    """
+    if isinstance(max_bytes, bool) or not isinstance(max_bytes, int):
+        raise TypeError(f"max_bytes must be an int: {max_bytes!r}")
+    if max_bytes <= 0:
+        raise ValueError(f"max_bytes must be positive: {max_bytes!r}")
+    # Re-normalize: removing a control/format character can leave a base
+    # character next to a combining mark that the first NFC pass kept apart.
+    cleaned = unicodedata.normalize("NFC", _clean_characters(name))
+    fitted = _truncate_to_utf8_bytes(cleaned, max_bytes).rstrip(" .")
+    return fitted or _truncate_to_utf8_bytes(_FALLBACK_FILENAME, max_bytes)
 
 
 def _split_extension(filename: str) -> tuple[str, str]:

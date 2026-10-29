@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from app.domain.library import MediaStorageType
-from app.utils.filenames import sanitize_media_filename
+from app.utils.filenames import sanitize_media_filename, sanitize_path_segment
 from app.utils.paths import ensure_within_root
 
 
@@ -268,11 +268,35 @@ class StorageService:
             raise ValueError(f"invalid job id: {job_id!r}")
         return job_id
 
-    def final_target(self, media_kind: str, filename: str) -> Path:
+    def final_target(
+        self, media_kind: str, filename: str, *, folders: tuple[str, ...] = ()
+    ) -> Path:
+        """Plan an App Library target ``media_kind/*folders/filename``.
+
+        Backend-only planning: each folder is sanitized as exactly one
+        segment (path-shaped names never add levels; ``.``/``..`` fall
+        back) and the filename keeps its extension. No metadata or layout
+        is interpreted here; callers omit folders for missing metadata
+        instead of passing blanks. Nothing is written and no directory is
+        created. The ``ensure_within_root`` check happens at resolve time
+        only and is no defense against concurrent mutation (TOCTOU):
+        before nested publication is activated, the writer must verify
+        containment safely again at write time. With ``folders=()`` the
+        result is the existing flat target.
+        """
         if media_kind not in {"audio", "video"}:
             raise ValueError(f"unsupported media kind: {media_kind}")
+        if not isinstance(folders, tuple):
+            raise TypeError(f"folders must be a tuple: {folders!r}")
+        segments: list[str] = []
+        for folder in folders:
+            if not isinstance(folder, str):
+                raise TypeError(f"folder must be a str: {folder!r}")
+            if not folder.strip():
+                raise ValueError(f"folder must not be blank: {folder!r}")
+            segments.append(sanitize_path_segment(folder))
         safe_filename = sanitize_media_filename(filename)
-        candidate = self._library_root / media_kind / safe_filename
+        candidate = self._library_root.joinpath(media_kind, *segments, safe_filename)
         return ensure_within_root(self._library_root, candidate)
 
     async def place_final(
