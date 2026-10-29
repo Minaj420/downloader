@@ -1,67 +1,62 @@
 # Durum
 
-Bu dosya güncel durumun tek özetidir; üstüne yazılır (kurallar: `docs/WORKFLOW.md`).
-Son güncelleme: 2026-10-29
+Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-29.
 
 ## Şu an
 
-- M0–M5 kabul edildi (M5: playlist/album; commit `d37b78f`).
-- Workflow Faz 1 tamam: `/devam` (Claude Code) + yedek `/continue` (opencode); canlı izleme `izle`.
-- Manuel smoke testi yapıldı (2026-10-29, Fedora + Podman, yt-dlp 2026.10.26, FFmpeg 7.1.5):
-  1 binary'ler PASS · 2 tek ses PASS · 3 birleştirme gerektiren video PASS · 4 playlist PASS
-  (seçim, sıra, sayaçlar doğru) ama dosya izni hatası doğrulandı. 5–6 (iptal, yeniden başlatma) atlandı.
-- Playlist dosya izni düzeltildi: child yerleştirme artık `0644` (önceden `0600`).
-- M6 — Metadata ve isimlendirme: PLANLAMA. Implementation başlamadı.
+- M0–M5 kabul edildi (M5: playlist/album, `d37b78f`); child dosya izni artık `0644`.
+- OpenCode ana merkez: GPT-6.1 Sol lead/reviewer, Opus danışman/implementer, Luna mekanik/checker.
+- İnce CLI adaptörü kuruldu: özel görev deposu, kilit ve test yürütücüsü yok; isteğe bağlı canlı log var.
+- Gerçek salt-okunur Opus review ve aynı oturuma dönüş PASS: `claude-opus-5-5`, izin reddi yok.
+- Opus önerisi: ince adaptörü koru; sonraki adım tek dosyalık uygulama + hedefli test, sonra aynı-rol resume.
+- GPT ve Opus son review: must-fix yok. Yapılandırma için OpenCode yeniden başlatılmalı;
+  mevcut reviewer oturumunun yeni modeli kullandığı iddia edilmez.
+- M6 metadata/isimlendirme planlama aşamasında; uygulaması başlamadı.
 
 ## Sıradaki iş
 
-Kural: `/devam` her işi review + kontrollerden sonra otomatik commit eder; push yalnız
-kullanıcı "push et" deyince.
+1. Yeniden başlatılmış OpenCode'dan küçük ve geri alınabilir bir gerçek Opus uygulama/test denemesi;
+   sonra aynı rolde resume. Danışma/review çalıştı; uygulayıcı/test döngüsü henüz denenmedi.
+2. M6 öncesi Opus planlama görüşü ve kullanıcı ürün kararları. Görüş alınamazsa açık onay olmadan ilerleme.
+3. Lead Opus önerisi/gerekçe/alternatif-risk ve kendi kararını burada özetler.
+Kural: review ve kontroller sonrası görev başına otomatik commit; push yalnız açık taleple.
 
-1. M6 ürün kararlarını kullanıcıyla netleştirmek (aşağıda); smoke testteki gerçek çıktılar elde.
-2. Kararlar sonrası M6'yı küçük işlere bölüp `/devam` ile yürütmek.
+## Açık kararlar
 
-## Açık kararlar (kullanıcı verecek)
-
-M6:
-- Müzik dosyaları hangi biçimde kaydedilsin? (Smoke: YouTube sesi `.webm`/Opus geldi; Plex ve
-  birçok çalar için sorunlu. Seçenekler: `.opus` olarak çıkar, M4A veya MP3'e dönüştür.)
-- Sanatçı / albüm / parça bilgisi eksikse klasör ve dosya adı ne olur?
-- Playlist parça numarası nereden gelir (kaynak sırası mı, metadata mı)?
-- Kaynak başlıklarındaki "(Audio)", "Official Video" gibi ekler temizlensin mi?
-- Kapak görseli aday kaynağı ve güven seviyesi; hangi biçimlere metadata/kapak gömülür?
-M9 (arayüz):
-- Video kalite etiketleri: geniş videolarda "858p, 804p, 536p..." gibi sayılar çıkıyor; bilinen
-  basamaklara (1080p/720p/480p) oturtulsun, liste kısalsın, her seçenekte boyut görünsün mü?
-
-Smoke'tan M6 gözlemleri: dosyalar `audio/`·`video/` altına düz konuyor; albüm adı kullanılmıyor;
-başlıktaki `:` → `_`; platform alanı boş (YouTube tanınmadı); video `.mkv` (VP9+AAC).
-Kaynaklar: PRODUCT_SPEC §13–16, ARCHITECTURE §30–34 ve §59 Milestone 6.
+- M6: ses biçimi (kaynak WebM/Opus → Opus çıkarma / M4A / MP3); eksik sanatçı/albüm/parça adları.
+- Parça numarası kaynak sırası mı metadata mı; başlıktaki Official Video vb. ekler temizlensin mi?
+- Kapak kaynağı/güven seviyesi; metadata ve kapak gömülecek biçimler ve hata davranışı.
+- M9: video kalite basamaklarını sadeleştirme ve boyut gösterimi.
+Kaynaklar: PRODUCT_SPEC §13–16, ARCHITECTURE §30–34 ve §59 M6.
 
 ## Açık bulgular
 
-- should-fix: container normal kapatmada (SIGTERM) 10 sn içinde durmadı, Podman SIGKILL kullandı.
-  Kuyruk boştu. Kapanış akışı incelenmeli (orderly shutdown settlement bu yola bağlı).
-- should-fix: Python 3.14'te 3 test başarısız (bkz. Son gate).
-- Not: Elisa `.m4a` dosyasını dışarıdan açınca çalmadı; VLC ve GStreamer/FFmpeg sorunsuz (oynatıcı sorunu).
+- should-fix: boş kuyrukta container SIGTERM sonrası 10 sn içinde kapanmadı; Podman SIGKILL kullandı.
+- should-fix: Fedora Python 3.14'te mevcut 3 backend test hatası (aşağıda).
+- Uygulayıcı dosya kapsamı prompt kuralıdır; gerçek implementer/test ve farklı-rol resume izolasyonu
+  doğrulanmadı. Native bg/attach kullanılmıyor; izleme salt-okunur canlı günlük üzerinden.
 
 ## Son gate
 
-- 2026-10-29, macOS: backend ruff/mypy PASS, pytest 1466 PASS; frontend tamamı PASS (147 test).
-- 2026-10-29, Fedora (Python 3.14): ruff/mypy PASS; pytest 1462 PASS, 1 skip, **3 FAIL** —
-  `test_rejected_output_closes_all_walk_descriptors`: testin `os.close` monkeypatch'i 3.14 asyncio
-  pidfd'siyle çakışıyor (test/ortam sorunu; Docker 3.12). Frontend tamamı PASS.
+- 2026-10-29 Fedora, bu iş: lead pytest `test_claude_bridge.py` 17 PASS;
+  test+adaptör+izleyici ruff PASS; hedefli mypy PASS; diff-check PASS. Full gate çalıştırılmadı.
+- Önceki full gate: macOS backend ruff/mypy PASS, pytest 1466 PASS; frontend 147 test ve tüm gate'ler PASS.
+- Önceki Fedora Python 3.14 full gate: ruff/mypy PASS, pytest 1462 PASS/1 skip/3 FAIL;
+  `test_rejected_output_closes_all_walk_descriptors` os.close monkeypatch/pidfd çakışması.
+  Frontend tümü PASS. Bu eski sonuçlar yeni test/araç ağacı için güncel full gate değildir.
 
 ## Bilinen riskler
 
-- Container root çalışıyor; yt-dlp sürümü sabit değil ve hiçbir yerde görünmüyor.
-- Dosya yerleştirme hedefte hard link desteği istiyor (bazı NAS/SMB mount'larında sorun olabilir).
-- Accepted: Delete File'da aynı dizin stat/unlink mikro-penceresi; bazı terminal parent DTO'larında
-  `error.retryable` gösterilemiyor. Ertelenmiş: cancel 404 kodu, `_cancel_events` temizliği.
+- Claude tool izinleri OS sandbox değil; testler kod çalıştırır. Built-in plugin'ler CLI'da kalıyor;
+  canlı review araçları yalnız Read/Grep/Glob, MCP/skills boş. Kota hatasında sessiz fallback yok.
+- Canlı log kaynak metni içerebilir; ignored tmp altında. İzleyiciden çıkış işi durdurmaz;
+  asıl lead çağrısının açık kalması gerekir, timeout/interrupt süreç davranışı tam doğrulanmadı.
+- Container root; yt-dlp sabit/görünür değil; hedef filesystem hard link desteği istiyor.
+- Accepted: Delete File stat/unlink mikro-penceresi; bazı terminal parent error.retryable alanları;
+  ertelenmiş cancel 404 ve cancel event temizliği. Elisa M4A açma sorunu oynatıcıya özgü.
 
 ## Sonraki fazlar
 
-- Faz 2 — teknik: 0600 izni, kapanış süresi, `compose.yml` `user:`, yt-dlp sürüm sabitleme +
-  görünürlük, GitHub Actions CI (Python 3.12).
-- Faz 3 — ARCHITECTURE.md'yi bölme (referans / kararlar / tarihçe; içerik taşınır, silinmez).
-- M6 → M7 (Plex) → M8 (cihaza indirme) → M9 (cilalama) → v0.1 güvenlik denetimi.
+- Teknik: kapanış süresi, container user, yt-dlp sabitleme/görünürlük, Python 3.12 CI.
+- Gerçek smoke: binary/ses/merge-video/playlist PASS; iptal ve yeniden başlatma henüz denenmedi.
+- ARCHITECTURE bölme → M6 → M7 Plex → M8 cihaza indirme → M9 cilalama → v0.1 denetim.

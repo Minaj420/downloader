@@ -4,6 +4,13 @@ This repository is developed with AI coding agents.
 
 - Current state, next task and open decisions: `STATE.md`.
 - Agent roles, task loop, review classes and gates: `docs/WORKFLOW.md`.
+- OpenCode lead is the sole orchestrator. Claude Code subscription CLI (`--model opus`)
+  provides read-only advice and scoped implementation through `scripts/claude-agent.sh`.
+  Before each milestone, obtain Opus advice or explicit user approval to proceed without it.
+  Important architecture decisions go to Opus first; product choices go to the user.
+  Lead exposes Opus recommendation/reason/alternatives-risk and its own decision.
+  GPT reviewer reviews Opus code. One writer, at most one review fix round; no quota/auth retry
+  or silent model fallback. CLI permissions are not an OS sandbox (see WORKFLOW).
 
 ## Starting a task
 
@@ -47,7 +54,7 @@ Only run commands that are actually configured in the repository; report clearly
 
 - Inspect `git status` before making changes; do not overwrite unrelated user changes.
 - Read-only commands (`status`, `diff`, `log`, `show`, `fetch`) and non-destructive branch switches (`switch`/`checkout` to change branches) are normal workflow operations when the task and permissions call for them.
-- The orchestrator (`/devam`, or `lead` in `/continue`) commits each task automatically once it has passed review and its checks: stage only that task's files one by one (never `git add .`/`-A`), one commit per task, message describing the behaviour change. Worker agents never commit.
+- The orchestrator (`lead` in OpenCode `/continue`; Claude `/devam` is obsolete) commits each task automatically once it has passed review and its checks unless the task forbids it: stage only that task's files one by one (never `git add .`/`-A`), one commit per task, message describing the behaviour change. Worker agents never commit or edit STATE.md.
 - Never push unless the user explicitly asks.
 - Never run destructive or history-rewriting operations (`reset --hard`, file-deleting `clean`, force push, change-discarding `restore`, `rebase`, `commit --amend`, or any history rewrite) without an explicit user request.
 

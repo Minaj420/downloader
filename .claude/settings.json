@@ -1,23 +1,14 @@
 {
+  "disableAllHooks": true,
   "permissions": {
-    "allow": [
-      "Bash(opencode run:*)",
-      "Bash(curl -s -o /dev/null http://127.0.0.1:4096)",
-      "Bash(python3 -I .claude/skills/devam/summarize.py:*)",
-      "Bash(mkdir -p tmp/devam)",
-      "Bash(git status:*)",
-      "Bash(git diff:*)",
-      "Bash(git log:*)",
-      "Bash(git show:*)",
-      "Bash(git add -- :*)",
-      "Bash(git commit -m :*)",
-      "Bash(backend/.venv/bin/pytest:*)",
-      "Bash(backend/.venv/bin/ruff check:*)",
-      "Bash(backend/.venv/bin/mypy:*)",
-      "Bash(npm --prefix frontend run:*)",
-      "Bash(npm --prefix frontend test:*)",
-      "Write(tmp/devam/**)",
-      "Edit(STATE.md)"
+    "allow": [],
+    "deny": [
+      "Bash(opencode *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "Edit(./STATE.md)",
+      "Write(./STATE.md)"
     ]
   }
 }
