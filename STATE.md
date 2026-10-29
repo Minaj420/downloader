@@ -32,10 +32,13 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-29.
 
 ## Sıradaki iş
 
-1. M6.4 öncesi dönüşüm kapsamını Opus'a danışıp plan/spec'i güncelle: kullanıcı indirme sırasında
-   seçtiği desteklenen çıktı biçimine dönüşümü zorunlu ürün özelliği olarak netleştirdi.
-   Eski yalnız etiket/remux kapsamıyla uygulamaya devam etme; profil seti ve hata davranışı açık.
-2. Takip: M6.5 pipeline bağlantısı →
+1. M6.4 dönüşüm planlama görüşü alındı (opus / claude-opus-5-5, başarılı, izin reddi yok).
+   Kullanıcı ses/video profil seti ve açık dönüşüm hata politikasını yanıtlasın; önce kod yazma.
+   Ardından M6.4a karar/spec düzeltmesi: §8 WAV future/optional matrix metni ve mimaride
+   kaynak variant_id ile çıktı profili karışımı yeni ürün gereksinimiyle eşitlenmeli.
+2. Revize sıra: M6.4b profil kalıcılığı/API → M6.4c FFmpeg adaptör → M6.4d dönüşüm kaynak seçimi/
+   pipeline+cancel/retry → M6.4e arayüz → M6.4f gerçek binary/çıktı smoke.
+   M6.5 metadata/etiket pipeline bağlantısı →
    M6.6 müzik yolları/katalog → M6.7 kaynak kapak → M6.8 metadata/kapak önizleme-düzenleme →
    M6.9 harici kapak arama (haklar koşullu) → M6.10 kapanış gate. Başlıklar küçük işlere bölünebilir.
 3. Lead: mevcut staging/yayınlama sınırlarını koru; kaynak alanlarını tahmin etmeden taşı.
@@ -51,6 +54,15 @@ Kural: review ve kontroller sonrası görev başına otomatik commit; push yaln�
   Original varsayılanı ile isteğe bağlı transcode ayrı: kaynak kalite kuralı transcode yasağı değil.
   Mevcut Library veya dosya yükleyerek dönüşüm bu istekle kapsama alınmadı. Açık çıktı seçimi
   karşılanamazsa hata/fallback ve completed davranışı henüz kararlaştırılmadı; kullanıcıya sorulmalı.
+- Onaylanmamış öneriler: Opus minimum ses Original+MP3+WAV; lead daha kapsamlı ilk set için
+  M4A/Opus/FLAC da sunuyor. Tek kalite preseti, bitrate kaydırıcısı yok; MP3 V0/WAV16bit yalnız aday.
+  Video Original+MP4(H.264/AAC uyumluluk; gerekirse transcode), açık dönüşüm başarısızsa failed ve
+  farklı biçim yayınlamama kullanıcıya önerildi; hiçbiri henüz onaylanmış ürün kararı değil.
+- Teknik lead kararı: kaynak variant/kalite tercihi çıktı profilinden ayrı; seçim işte kalıcı,
+  retry aynı seçimi kullanır, eski eksik profil Original olur. Şema/enum henüz kilitlenmedi.
+  Ayrı converter/runner yok; mevcut FFmpeg/prepared_media/staging/storage sınırları korunacak.
+  Açık dönüşüm hatası ile opsiyonel etiket/kapak fallback'i ayrı sözleşmeler olarak netleştirilecek.
+  Fake argv testine ek gerçek codec/container doğrulaması planlandı; encoder/build garantisi yok.
 - Onaylı M6: kayıpsız WebM/Opus → .opus remux; AAC/M4A korunur. Metadata uydurulmaz;
   sanatçı/albüm yoksa düz yerleşim, parça adı için kaynak başlığı. Özgün playlist sırası korunur,
   numaralar sıkıştırılmaz; otomatik başlık eki temizliği yok.
@@ -87,6 +99,8 @@ Kaynaklar: PRODUCT_SPEC §13–16, ARCHITECTURE §30–34 ve §59 M6.
 
 ## Son gate
 
+- 2026-10-29 Fedora, M6.4 dönüşüm yeniden planlama: yalnız kod/spec okuma ve Opus danışma;
+  runtime/test/config değişmedi; test/full gate yok. Planlama kaydı dışında uygulama başlamadı.
 - 2026-10-29 Fedora Python 3.14.8, M6.3: worker ve lead child_storage+collection child/parent+
   storage_utils 321 PASS/3 FAIL (yalnız bilinen descriptor/pidfd testleri; deselect edilmedi).
   Aynı hata yolundaki await edilmemiş coroutine uyarısı korundu; ayrı child runner
