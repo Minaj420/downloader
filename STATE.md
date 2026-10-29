@@ -6,8 +6,14 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-30.
 
 - Mod: Claude-only (GPT kotası bitti, 2026-10-30); lead Claude Code. Bu moddaki commit'ler: `f926a63`
   (yalnız mod altyapısı), M6.4c (`dc0142b`), M6.4d-d1 (`9ee4c3f`). GPT review bekliyor: M6.4c FFmpeg
-  adaptörü ve M6.4d-d1 dönüşüm çekirdeği (ikisini de Opus yazdı, bu modda review edilmedi).
+  adaptörü ve M6.4d-d1 dönüşüm çekirdeği (ikisini de Opus yazdı; GPT yok). Bu modda `/code-review high`
+  ile bağımsız review yapıldı, tek düzeltme turu uygulandı (aşağıda); GPT'nin ikinci bakışı yine beklenir.
   Dönüş: `/normal-mod`, sonra OpenCode `/continue`.
+- M6.4c/d1 review düzeltme turu (kullanıcı onaylı, aynı Opus session): mp4 transcode tek sayılı boyut için
+  `-vf scale=trunc(iw/2)*2:trunc(ih/2)*2` (copy_video'da yok); `-id3v2_version`/`-rf64` container grubunda
+  (copy_audio'da da kalır); convert argv'sine `-nostats` (merge değişmedi); convert'te 0 bayt/eksik çıktı
+  FAILED; terminate sırasında ikinci iptalde kill + çıktı silme (finally). Argv eklemeleri kullanıcı onaylı.
+  Reddedilen: muxed kaynaktan ses çıkarma bulgusu (ürün kararı: yok). Kalan: codec etiketi kaba (aşağıda).
 - M6.4d Opus görüşü alındı; dört dilim: d1 ortak çekirdek (bitti) → d2 tekli runner (Sonnet) → d3 koleksiyon
   child (Opus) → d4 API kapısı (en son; önce runner, sonra API). Kullanıcı onayı: videodan ses çıkarma yok
   (ses modu ses akışını doğrudan indirir); dosya zaten varsa dönüşümlü iş de mevcut kopyayı tutar (Skip Existing).
@@ -111,6 +117,10 @@ Kaynaklar: PRODUCT_SPEC §13–16, ARCHITECTURE §30–34 ve §59 M6.
 
 ## Son gate
 
+- 2026-10-30 Fedora Python 3.14.8, M6.4c/d1 review düzeltmesi, lead: ffmpeg/prepared_media/conversion_plan/
+  child runner/dispatch/jobs/output_profiles 7 test dosyası 376 PASS (worker); lead tekrarında 375 PASS +
+  1 bilinen yarış (`test_cancel_running_job_terminates_and_cleans_staging`; düzeltme öncesi HEAD'de de 6
+  denemede 2 düştü, düzeltmeyle 0/6; aşağıdaki mevcut should-fix). Hedefli ruff/mypy (4 dosya) ve diff --check PASS.
 - 2026-10-30 Fedora Python 3.14.8, M6.4d-d1 worker ve lead: conversion_plan/prepared_media/ffmpeg adaptörü/
   child runner/dispatch/jobs/output_profiles 7 test dosyası 371 PASS; hedefli ruff, mypy (7 dosya) ve
   diff --check PASS. Review yok (Opus yazdı); GPT review bekliyor. Full gate/frontend çalıştırılmadı.
@@ -135,6 +145,10 @@ Kaynaklar: PRODUCT_SPEC §13–16, ARCHITECTURE §30–34 ve §59 M6.
 - Container root; yt-dlp sabit/görünür değil; hedef filesystem hard link desteği istiyor.
 - M6.2 containment yalnız planlama anında; nested yazma etkinleştirilmeden önce writer tarafında
   güvenli kök/parent doğrulaması zorunlu. Root içi symlink mevcut gibi kabul; TOCTOU koruması değil.
+- Accepted (M6.4c/d1, M6.4f'te ffprobe veya ham codec dizesiyle ele alınacak): normalizer `mp4a.*`→aac ve
+  `avc1/avc3.*`→h264 etiketleri kaba; `mp4a.69` (MP3) AAC sayılıp copy edilebilir (muxer hatası), H.264 High 10/
+  4:4:4/interlaced copy edilip oynatıcıda açılmayan "uyumlu MP4" üretebilir. Ayrıca conversion timeout
+  süreden bağımsız sabit 3600 sn ve alt sınır doğrulaması yok (düşük etki).
 - Accepted (M6.4b tasarım): elle bozulmuş bilinmeyen output profili DTO/list/SSE doğrulamasını
   ve ilk snapshot nedeniyle normal failed sonlandırmayı bozabilir; Original'a sessiz düşüş yok.
 - Accepted: Delete File stat/unlink mikro-penceresi; bazı terminal parent error.retryable alanları;

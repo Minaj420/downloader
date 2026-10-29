@@ -223,11 +223,22 @@ for a in "$@"; do out="$a"; done
 printf 'done' > "$out"
 """
 
-_HEAD = ["-hide_banner", "-nostdin", "-y", "-i"]
+NO_OUTPUT_OK_SCRIPT = """#!/bin/sh
+exit 0
+"""
+
+EMPTY_OUTPUT_OK_SCRIPT = """#!/bin/sh
+out=""
+for a in "$@"; do out="$a"; done
+: > "$out"
+exit 0
+"""
+
+_HEAD = ["-hide_banner", "-nostats", "-nostdin", "-y", "-i"]
 _AUDIO_MAP = ["-map", "0:a:0", "-vn", "-sn", "-dn"]
 _VIDEO_MAP = ["-map", "0:v:0", "-map", "0:a:0", "-sn", "-dn"]
-_X264 = ["-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p",
-         "-profile:v", "high"]
+_X264 = ["-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2", "-c:v", "libx264", "-preset", "medium",
+         "-crf", "20", "-pix_fmt", "yuv420p", "-profile:v", "high"]
 
 EXPECTED_PROFILE_ARGS: dict[str, list[str]] = {
     "mp3": [*_AUDIO_MAP, "-c:a", "libmp3lame", "-q:a", "0", "-id3v2_version", "3",
@@ -242,8 +253,8 @@ EXPECTED_PROFILE_ARGS: dict[str, list[str]] = {
 }
 
 EXPECTED_COPY_AUDIO_ARGS: dict[str, list[str]] = {
-    "mp3": [*_AUDIO_MAP, "-c:a", "copy", "-f", "mp3"],
-    "wav": [*_AUDIO_MAP, "-c:a", "copy", "-f", "wav"],
+    "mp3": [*_AUDIO_MAP, "-c:a", "copy", "-id3v2_version", "3", "-f", "mp3"],
+    "wav": [*_AUDIO_MAP, "-c:a", "copy", "-rf64", "auto", "-f", "wav"],
     "m4a": [*_AUDIO_MAP, "-c:a", "copy", "-movflags", "+faststart", "-f", "ipod"],
     "opus": [*_AUDIO_MAP, "-c:a", "copy", "-f", "opus"],
     "flac": [*_AUDIO_MAP, "-c:a", "copy", "-f", "flac"],
@@ -311,6 +322,7 @@ def test_convert_mp4_copy_video_argv(tmp_path: Path) -> None:
         *_HEAD, str(source), *_VIDEO_MAP, "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
         "-movflags", "+faststart", "-f", "mp4", str(output),
     ]
+    assert "-vf" not in argv
 
 
 def test_convert_mp4_copy_both_argv(tmp_path: Path) -> None:
@@ -612,3 +624,99 @@ def test_merge_cancellation_removes_partial_output(
     assert not output.exists()
     assert video.read_text() == "v"
     assert audio.read_text() == "a"
+
+
+@pytest.mark.parametrize(
+    ("script", "written"), [(NO_OUTPUT_OK_SCRIPT, False), (EMPTY_OUTPUT_OK_SCRIPT, True)]
+)
+def test_convert_without_output_fails_and_removes_file(
+    tmp_path: Path, script: str, written: bool
+) -> None:
+    binary = _write_script(tmp_path, "ffmpeg", script)
+    processor = FFmpegProcessor(binary=binary)
+    source, output = _convert_paths(tmp_path, "flac")
+
+    with pytest.raises(FFmpegError) as exc_info:
+        asyncio.run(processor.convert(source, output, "flac"))
+
+    assert exc_info.value.kind is FFmpegFailureKind.FAILED
+    assert exc_info.value.detail == "ffmpeg produced no output"
+    assert not output.exists()
+    assert source.read_text() == "source-media"
+
+
+def test_merge_does_not_require_output(tmp_path: Path) -> None:
+    binary = _write_script(tmp_path, "ffmpeg", NO_OUTPUT_OK_SCRIPT)
+    processor = FFmpegProcessor(binary=binary, timeout_seconds=10)
+    video, audio, output = _merge_inputs(tmp_path)
+
+    asyncio.run(processor.merge_streams(video, audio, output))
+
+    assert not output.exists()
+
+
+def test_second_cancel_during_grace_kills_child_and_removes_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Real second task.cancel() while the first cancel waits out the grace period."""
+    monkeypatch.setattr(ffmpeg_module, "_TERMINATION_GRACE_SECONDS", 10.0)
+    started = tmp_path / "started"
+    binary = _write_script(
+        tmp_path, "ffmpeg", PARTIAL_IGNORE_TERM_SCRIPT.format(started=started)
+    )
+    processor = FFmpegProcessor(binary=binary)
+    source, output = _convert_paths(tmp_path, "mp3")
+    seen: list[asyncio.subprocess.Process] = []
+
+    async def run() -> None:
+        task = asyncio.create_task(
+            processor.convert(source, output, "mp3", on_process_started=seen.append)
+        )
+        await _wait_for_started(started)
+        task.cancel()
+        await asyncio.sleep(0.3)
+        # The child ignores SIGTERM, so the task is still inside the grace wait.
+        assert not task.done()
+        assert seen[0].returncode is None
+        began = time.monotonic()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert time.monotonic() - began < 5.0
+        await asyncio.wait_for(seen[0].wait(), timeout=5.0)
+
+    asyncio.run(run())
+
+    assert seen[0].returncode == -9
+    assert not output.exists()
+    assert source.read_text() == "source-media"
+
+
+def test_interrupted_termination_on_timeout_kills_child_and_removes_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Deterministic variant: termination itself raises CancelledError on timeout."""
+
+    async def cancelled_termination(
+        process: asyncio.subprocess.Process, grace_seconds: float
+    ) -> None:
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(ffmpeg_module, "ensure_process_terminated", cancelled_termination)
+    started = tmp_path / "started"
+    binary = _write_script(tmp_path, "ffmpeg", PARTIAL_SLOW_SCRIPT.format(started=started))
+    processor = FFmpegProcessor(binary=binary, conversion_timeout_seconds=0.5)
+    source, output = _convert_paths(tmp_path, "wav")
+    seen: list[asyncio.subprocess.Process] = []
+
+    async def run() -> None:
+        with pytest.raises(asyncio.CancelledError):
+            await processor.convert(source, output, "wav", on_process_started=seen.append)
+        await asyncio.wait_for(seen[0].wait(), timeout=5.0)
+
+    asyncio.run(run())
+
+    assert started.exists()
+    assert seen[0].returncode == -9
+    assert not output.exists()
+    assert source.read_text() == "source-media"

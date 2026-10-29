@@ -339,7 +339,7 @@ async def test_audio_profile_downloads_then_converts_once(
     assert result.read_text() == "converted-media"
     assert [call[0] for call in pipeline.calls] == ["audio", "status"]
     assert recorded(log) == [[
-        "-hide_banner", "-nostdin", "-y", "-i", str(staging / "media.mp4"),
+        "-hide_banner", "-nostats", "-nostdin", "-y", "-i", str(staging / "media.mp4"),
         "-map", "0:a:0", "-vn", "-sn", "-dn", *encoder, str(result),
     ]]
     # Download and conversion processes both went through the attempt hook.

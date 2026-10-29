@@ -8,6 +8,7 @@ conversion, never a quality increase.
 """
 
 import asyncio
+import contextlib
 from collections.abc import Callable
 from enum import StrEnum
 from pathlib import Path
@@ -38,11 +39,11 @@ _FASTSTART = ("-movflags", "+faststart")
 _PROFILES: dict[ConversionProfile, _Profile] = {
     "mp3": _Profile(
         "mp3", "mp3", _AUDIO_STREAMS, (),
-        ("-c:a", "libmp3lame", "-q:a", "0", "-id3v2_version", "3"), (),
+        ("-c:a", "libmp3lame", "-q:a", "0"), ("-id3v2_version", "3"),
     ),
     "wav": _Profile(
         "wav", "wav", _AUDIO_STREAMS, (),
-        ("-c:a", "pcm_s16le", "-rf64", "auto"), (),
+        ("-c:a", "pcm_s16le"), ("-rf64", "auto"),
     ),
     "m4a": _Profile(
         "m4a", "ipod", _AUDIO_STREAMS, (),
@@ -58,7 +59,10 @@ _PROFILES: dict[ConversionProfile, _Profile] = {
     ),
     "mp4": _Profile(
         "mp4", "mp4", ("-map", "0:v:0", "-map", "0:a:0", "-sn", "-dn"),
-        ("-c:v", "libx264", "-preset", "medium", "-crf", "20",
+        # libx264 + yuv420p rejects odd dimensions; the filter is part of the
+        # encode group because stream copy cannot be combined with filters.
+        ("-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+         "-c:v", "libx264", "-preset", "medium", "-crf", "20",
          "-pix_fmt", "yuv420p", "-profile:v", "high"),
         ("-c:a", "aac", "-b:a", "192k"), _FASTSTART,
     ),
@@ -154,6 +158,7 @@ class FFmpegProcessor:
         command = [
             self._binary,
             "-hide_banner",
+            "-nostats",
             "-nostdin",
             "-y",
             "-i",
@@ -167,7 +172,11 @@ class FFmpegProcessor:
             str(output_path),
         ]
         await self._run(
-            command, output_path, on_process_started, self._conversion_timeout_seconds
+            command,
+            output_path,
+            on_process_started,
+            self._conversion_timeout_seconds,
+            require_output=True,
         )
 
     async def _run(
@@ -176,6 +185,7 @@ class FFmpegProcessor:
         output_path: Path,
         on_process_started: Callable[[asyncio.subprocess.Process], None] | None,
         timeout_seconds: float,
+        require_output: bool = False,
     ) -> None:
         try:
             process = await asyncio.create_subprocess_exec(
@@ -199,8 +209,10 @@ class FFmpegProcessor:
                 on_process_started(process)
             _, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout_seconds)
         except TimeoutError:
-            await ensure_process_terminated(process, _TERMINATION_GRACE_SECONDS)
-            _discard_output(output_path)
+            try:
+                await _terminate(process)
+            finally:
+                _discard_output(output_path)
             raise FFmpegError(
                 FFmpegFailureKind.TIMEOUT,
                 detail=f"ffmpeg exceeded {timeout_seconds}s",
@@ -208,11 +220,35 @@ class FFmpegProcessor:
         except BaseException:
             # Task cancellation or another interruption: terminate the child so
             # it cannot outlive us, drop its partial output, then propagate.
-            await ensure_process_terminated(process, _TERMINATION_GRACE_SECONDS)
-            _discard_output(output_path)
+            try:
+                await _terminate(process)
+            finally:
+                _discard_output(output_path)
             raise
 
         if process.returncode != 0:
             _discard_output(output_path)
             tail = stderr[-_STDERR_TAIL_BYTES:].decode("utf-8", errors="replace")
             raise FFmpegError(FFmpegFailureKind.FAILED, detail=tail)
+        if require_output and not _has_output(output_path):
+            _discard_output(output_path)
+            raise FFmpegError(FFmpegFailureKind.FAILED, detail="ffmpeg produced no output")
+
+
+async def _terminate(process: asyncio.subprocess.Process) -> None:
+    # A second cancellation during the grace period must not leave the child
+    # running: force kill it, then re-raise the interruption unchanged.
+    try:
+        await ensure_process_terminated(process, _TERMINATION_GRACE_SECONDS)
+    except BaseException:
+        if process.returncode is None:
+            with contextlib.suppress(ProcessLookupError):
+                process.kill()
+        raise
+
+
+def _has_output(output_path: Path) -> bool:
+    try:
+        return output_path.stat().st_size > 0
+    except OSError:
+        return False
