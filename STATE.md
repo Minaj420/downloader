@@ -5,6 +5,8 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-29.
 ## Şu an
 
 - M0–M5 kabul edildi (M5: playlist/album, `d37b78f`); child dosya izni artık `0644`.
+- Kullanıcı dağıtım hedefini netleştirdi: uygulama açık kaynak dağıtılacak; bu, otomatik olarak
+  ticari olmayan kullanım veya kapakların açık lisanslı olduğu anlamına gelmez.
 - OpenCode: GPT-6.1 Sol lead/reviewer; Sonnet varsayılan, Opus uzman implementer; Luna mekanik/checker.
 - Danışman/review Opus kalır. Lead uygulayıcıyı ve gerekçesini iş başında açıklar;
   model değişimi sessiz yapılmaz, implement resume açık --model ister.
@@ -43,6 +45,10 @@ Kural: review ve kontroller sonrası görev başına otomatik commit; push yaln�
 - 2026-10-29 resmî web kontrolü: MusicBrainz ticari olmayan API araması ücretsiz/anahtarsız;
   User-Agent uygulama/sürüm/iletişim içermeli, uygulama/IP için en çok 1 istek/sn; 503 mümkün.
   Çekirdek veri CC0; ek veri CC BY-NC-SA 3.0. Açık kaynak dağıtım/ticari kullanım ayrı incelenmeli.
+  MetaBrainz account-type açık kaynak yazarlarını nonprofit tier'a yönlendiriyor; tier 8 bireysel
+  kullanıcılar için personal seçeneğini söylüyor (metabrainz.org/supporters/tiers/8 canlı okundu).
+  Bu supporter yönlendirmesi API anahtarı zorunluluğu değildir. Yayın öncesi proje erişim koşullarını
+  netleştir; sağlayıcı verisi/görsel lisanslarını kod lisansıyla aynı sayma, kapakları paketle dağıtma.
 - MB + CAA ilk kaynak önerisi (tek zincir): CAA GET/HEAD, orijinal ve 250/500/1200 önizleme uçları;
   görsel istekleri CAA üzerinden başlamalı. Belgede CAA hız limiti yok; sınırsızlık/SLA garantisi değil.
 - Uygunluk: API yönü olumlu; kapak telifleri sahiplerinde, MB lisansı görselleri kapsamaz.
