@@ -5,7 +5,7 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-30.
 ## Şu an
 
 - Mod: Claude-only (GPT kotası bitti, 2026-10-30); lead Claude Code. Bu moddaki commit'ler: `f926a63`
-  (yalnız mod altyapısı), M6.4c (`dc0142b`), M6.4d-d1 (hash aşağıda). GPT review bekliyor: M6.4c FFmpeg
+  (yalnız mod altyapısı), M6.4c (`dc0142b`), M6.4d-d1 (`9ee4c3f`). GPT review bekliyor: M6.4c FFmpeg
   adaptörü ve M6.4d-d1 dönüşüm çekirdeği (ikisini de Opus yazdı, bu modda review edilmedi).
   Dönüş: `/normal-mod`, sonra OpenCode `/continue`.
 - M6.4d Opus görüşü alındı; dört dilim: d1 ortak çekirdek (bitti) → d2 tekli runner (Sonnet) → d3 koleksiyon
