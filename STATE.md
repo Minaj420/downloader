@@ -32,8 +32,9 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-29.
 
 ## Sıradaki iş
 
-1. M6.4 FFmpeg etiket/remux adaptör desteği; mevcut adapter ve fake-binary testlerini incele,
-   uygulama öncesi Opus teknik görüşüyle biçim/hata sınırlarını netleştir. Henüz pipeline'a bağlama.
+1. M6.4 öncesi dönüşüm kapsamını Opus'a danışıp plan/spec'i güncelle: kullanıcı indirme sırasında
+   seçtiği desteklenen çıktı biçimine dönüşümü zorunlu ürün özelliği olarak netleştirdi.
+   Eski yalnız etiket/remux kapsamıyla uygulamaya devam etme; profil seti ve hata davranışı açık.
 2. Takip: M6.5 pipeline bağlantısı →
    M6.6 müzik yolları/katalog → M6.7 kaynak kapak → M6.8 metadata/kapak önizleme-düzenleme →
    M6.9 harici kapak arama (haklar koşullu) → M6.10 kapanış gate. Başlıklar küçük işlere bölünebilir.
@@ -44,6 +45,12 @@ Kural: review ve kontroller sonrası görev başına otomatik commit; push yaln�
 
 ## Açık kararlar
 
+- Kullanıcı: bu bir bağımsız converter değil, dönüşüm seçenekleri sunan indirme uygulaması;
+  yeni indirmede seçilen desteklenen çıktı biçimi gerektiğinde dönüştürülerek üretilmeli.
+  WAV/MP3 örnekleri istendi; somut ses/video profil seti ve kalite ayarları henüz netleşmedi.
+  Original varsayılanı ile isteğe bağlı transcode ayrı: kaynak kalite kuralı transcode yasağı değil.
+  Mevcut Library veya dosya yükleyerek dönüşüm bu istekle kapsama alınmadı. Açık çıktı seçimi
+  karşılanamazsa hata/fallback ve completed davranışı henüz kararlaştırılmadı; kullanıcıya sorulmalı.
 - Onaylı M6: kayıpsız WebM/Opus → .opus remux; AAC/M4A korunur. Metadata uydurulmaz;
   sanatçı/albüm yoksa düz yerleşim, parça adı için kaynak başlığı. Özgün playlist sırası korunur,
   numaralar sıkıştırılmaz; otomatik başlık eki temizliği yok.
