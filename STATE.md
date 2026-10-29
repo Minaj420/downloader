@@ -19,11 +19,13 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-29.
 - Otomatik izleyici Sonnet ile geliştirildi; bağımsız GPT review: must-fix yok;
   lead hedefli kontrolleri tekrar doğruladı. Uygulamanın indirme davranışı değişmedi.
 - M6 başlangıç Opus görüşü alındı; requested opus / observed claude-opus-5-5 eşleşti,
-  çağrı başarılı ve izin reddi yok. Uygulama başlamadı; kullanıcı aşağıdaki tercihleri onayladı.
+  çağrı başarılı ve izin reddi yok. Kullanıcı tercihleri PRODUCT_SPEC ve ARCHITECTURE'a işlendi;
+  M6 davranışları planlandı, uygulama kodu henüz değişmedi. Sonnet belge işi GPT review'dan geçti.
 
 ## Sıradaki iş
 
-1. M6 kaynak metadata için tek bounded iş seç; ürün/spec kayıtlarını worker ile eşitle.
+1. M6 kaynak metadata yakalama/normalizasyonu için tek bounded iş: açık kaynak alanları,
+   eski analiz kayıtlarıyla uyumluluk, çıkarım yapmama ve hedefli testler. Belgeler eşitlendi.
 2. Opus planı: kaynak metadata → merkezi güvenli yollar → playlist video adları →
    staging'de etiket/remux → müzik yolları/katalog → kapak → metadata düzenleme →
    kullanıcı tetiklemeli harici kapak arama (koşullu) → kapanış gate.
@@ -76,6 +78,9 @@ Kaynaklar: PRODUCT_SPEC §13–16, ARCHITECTURE §30–34 ve §59 M6.
 
 - 2026-10-29 Fedora, kapak sağlayıcı uygunluğu: resmî web belgeleri incelendi, API/image smoke yok;
   uygulama/test/config değişmedi; hedefli test/full gate yok. IA tam koşulları eksik doğrulandı.
+- 2026-10-29 Fedora, M6 belge eşitleme: Sonnet/claude-sonnet-5-5 eşleşti, izin reddi yok;
+  worker ve lead belge tutarlılık kontrolü yaptı, GPT review must-fix yok, lead diff --check PASS.
+  Belgeye özel otomatik test tanımlı değil; test/full gate çalıştırılmadı, runtime değişmedi.
 - 2026-10-29 Fedora, otomatik izleme: worker ve lead pytest `test_claude_bridge.py` 43 PASS;
   test+izleyici ruff ve hedefli mypy PASS. Önceki model seçimi işinde adaptör ruff PASS.
   Bu çağrıda full gate çalıştırılmadı; test değişikliği bağımsız GPT review'dan geçti.

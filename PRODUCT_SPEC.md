@@ -300,6 +300,8 @@ The application must not imply that increasing a numeric bitrate creates quality
 
 FFmpeg may be used for conversion and metadata processing.
 
+M6 decision (approved; planned, not implemented): `Original / Best Available` audio preserves source quality. Opus audio delivered inside a WebM container is remuxed losslessly into an `.opus` container; AAC/M4A is kept as-is. MP3 or AAC re-encoding is not a default behaviour. No conversion matrix is defined for unknown codecs; that is left to later technical design. Past Library items are not reprocessed.
+
 ---
 
 # 9. Video Downloads
@@ -455,6 +457,14 @@ Generic names such as:
 
 must not be used when real titles are known.
 
+M6 decisions (approved; planned, not implemented):
+
+- Artist and album come only from explicit source metadata or user-provided metadata. They are never invented from the title, the channel name is never used as the artist, and a playlist name is not automatically an album.
+- When artist or album is missing, audio uses a flat layout without the missing `Artist/Album` folders. When the track name is missing, the source title is used.
+- Collection numbering (`NN`) follows the original source playlist order instead of preferring a metadata track number. Numbers of unselected items are not compacted. This is a filename-numbering rule; it does not by itself decide the embedded track-number tag.
+- No automatic title cleanup is applied (for example removing `Official Video`, `Live`, `Remastered`). The name is an explicit source track name or the source title, and the user can edit it manually.
+- Exact folder layouts for partial metadata and edit UI are technical/UX design follow-ups.
+
 ---
 
 # 14. Music Metadata
@@ -473,9 +483,13 @@ Where metadata can be determined reliably, files should contain embedded metadat
 
 Users should be able to inspect or correct important album metadata before the download when automatic metadata is uncertain.
 
-When an automatic album artwork match is medium or low confidence, the UI should present candidate covers for review and explicit selection.
+M6 artwork decision (approved; planned, not implemented): for every artwork candidate, regardless of confidence, the UI shows a preview and requires explicit user selection. Even a trusted source never causes silent embedding. If the user selects nothing, the download continues without artwork. A selection is used for embedding where the audio format supports it and, when an album folder exists, for `cover.jpg`. Format support is not guaranteed; details are a later design item. For a playlist with different albums, one cover is never applied automatically to all tracks.
 
-An ambiguous artwork candidate must not be silently embedded as if authoritative; explicit user selection is required to confirm artwork before embedding.
+Alternative cover search (approved; planned, not implemented): only when the user presses an `Alternative cover search` button, the UI offers editable artist/album fields and searches an external catalog. Candidates are shown with source/release information and, where verifiable, resolution; the user chooses one. High pixel size is not proof of the correct release. There is no silent search, selection, or replacement, and choosing a cover does not change other metadata on its own. A failed search or a missing cover never blocks the download. This is the last separate M6 sub-task and is not started: provider and rights terms must be clarified first. It is neither deferred nor completed automatically.
+
+Provider and rights status: MusicBrainz search plus Cover Art Archive is only the first provider candidate, as a single chain rather than two independent catalogs. It is not a final provider choice and no integration is complete. No new provider framework, plugin system or separate service is planned. The application will be distributed as open source; code, data and image licenses are separate, open source does not automatically mean non-commercial, and covers are not bundled with the software package. API access or a user's selection does not replace copyright permission, and rights for external preview/cache/embed are not yet verified. The research is not full legal approval. Official terms: https://musicbrainz.org/doc/MusicBrainz_API , https://musicbrainz.org/doc/About/Data_License , https://musicbrainz.org/doc/Cover_Art_Archive , https://metabrainz.org/supporters/account-type .
+
+Tag, artwork or remux processing failure (approved; planned, not implemented): the safe original is kept and the job completes with an Activity warning. Cancellation, security, storage and catalog errors are not swallowed by this fallback.
 
 Downloader must avoid confidently inventing metadata from ambiguous titles.
 
@@ -496,6 +510,8 @@ Video inside a playlist:
 02 - Title.ext
 03 - Title.ext
 ```
+
+In a playlist, `NN` follows the original source playlist order; numbers of unselected items are not compacted (M6 decision, planned, not implemented). Automatic title cleanup is not applied; the title is the source title, which the user can edit.
 
 Technical IDs such as a YouTube video ID should not be included in the visible filename by default.
 

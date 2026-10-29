@@ -509,6 +509,8 @@ However, application-level metadata and naming rules must remain controlled by D
 
 FFmpeg processes should use argument arrays, not shell-concatenated command strings.
 
+M6 decisions (approved; planned, not implemented; PRODUCT_SPEC §8, §14): Original / Best Available keeps source quality. WebM-contained Opus audio is remuxed losslessly into `.opus`; AAC/M4A is kept; MP3/AAC re-encoding is not a default; no codec conversion matrix is defined for unknown codecs; past Library items are not reprocessed. Tagging, artwork and remux run on staged files only. If they fail, the safe original is kept and the job completes with an Activity warning; cancellation, security, storage and catalog errors are not swallowed by this fallback, and staging and storage containment boundaries are unchanged. Current code (`prepared_media.py`) only downloads and merges streams; it does no tagging, artwork or remux.
+
 ---
 
 # 15. Queue Architecture
@@ -1257,6 +1259,15 @@ For multi-disc albums, disc information may be included in the track prefix when
 
 The path builder must not depend on Plex being present.
 
+M6 decisions (approved; planned, not implemented; PRODUCT_SPEC §13):
+
+- Artist and album come only from explicit source or user metadata; never from the title, never the channel name as artist, and a playlist name is not automatically an album.
+- Missing artist/album gives a flat audio layout without the missing folders; a missing track name falls back to the source title.
+- `NN` for collections follows the original source playlist order, not a metadata track number, and numbers of unselected items are not compacted. This does not decide the embedded track-number tag.
+- No automatic title cleanup; the user may edit the name manually.
+- The cover selection (§34) may supply `cover.jpg` when an album folder exists.
+- These rules go through the single centralized builder and `sanitize_media_filename` / `StorageService`; no new path logic elsewhere. Exact layouts for partial metadata are a design follow-up.
+
 ---
 
 # 32. Video Path Builder
@@ -1274,6 +1285,8 @@ NN - Title.ext
 ```
 
 Source IDs should remain database metadata rather than default visible filenames.
+
+M6 (approved; planned, not implemented): playlist `NN` follows the original source playlist order and is not compacted for unselected items; no automatic title cleanup; the title is the source title and may be edited.
 
 ---
 
@@ -1320,11 +1333,13 @@ from arbitrary video titles and treat it as guaranteed truth.
 
 When metadata is uncertain, the UI may allow editing before starting the download.
 
-Album artwork follows the same confidence treatment: medium- or low-confidence automatic artwork matches should be presented as candidates for user review and selection before embedding.
-
-An ambiguous artwork candidate must not be silently embedded as if authoritative; explicit user selection makes it user-confirmed artwork.
-
 This is especially important for Plex Music destinations.
+
+M6 artwork decision (approved; planned, not implemented; supersedes the earlier medium/low-only rule): every artwork candidate, at any confidence and from any source including a trusted one, is previewed and requires explicit user selection; explicit selection makes it user-confirmed artwork. There is no silent embedding. With no selection the download continues without artwork. A selection is used for embedding in supported audio formats and for `cover.jpg` when an album folder exists; format support is not guaranteed and details come later. A single cover is not applied automatically to all tracks of a playlist with different albums. Selecting a cover does not change other metadata by itself.
+
+Alternative cover search (approved; planned, not implemented): triggered only by the user pressing the `Alternative cover search` button, with editable artist/album, an external catalog search, candidates shown with source/release information and, where verifiable, resolution, and a user choice. High pixel size is not proof of the correct release. No silent search, selection or replacement. A failed search or missing cover never blocks the download. This is the last separate M6 sub-task, not started; provider and rights terms must be clarified first, and it is not deferred or completed automatically. MusicBrainz + Cover Art Archive is only the first provider candidate and a single chain, not two independent catalogs; it is not a final provider decision and no integration exists. No new provider framework, plugin system or separate service is planned.
+
+Rights: the application will be distributed as open source; code, data and image licenses are separate, open source does not automatically mean non-commercial, and covers are not bundled with the software package. API access or user selection does not replace copyright permission; external preview/cache/embed rights are not yet verified, and the research is not full legal approval. Official terms: https://musicbrainz.org/doc/MusicBrainz_API , https://musicbrainz.org/doc/About/Data_License , https://musicbrainz.org/doc/Cover_Art_Archive , https://metabrainz.org/supporters/account-type .
 
 ---
 
@@ -1735,7 +1750,6 @@ http://
 ```
 
 More advanced SSRF policy can be added if the application is ever exposed beyond a trusted private network.
-
 ---
 
 # 51. Database/Filesystem Consistency
@@ -2044,12 +2058,16 @@ Implement in dependency-ordered bounded tasks, preserving single-item behaviour 
 
 ## Milestone 6 — Metadata and Naming
 
-- artist/album paths
-- embedded metadata
-- artwork
-- artwork candidate review/selection for medium/low-confidence matches
-- metadata review/editing
-- playlist video naming
+Approved decisions below are planned, not implemented (see §14, §31, §32, §34).
+
+- source-quality audio handling: lossless WebM/Opus → `.opus` remux, AAC/M4A kept, no default MP3/AAC re-encode, no matrix for unknown codecs, no reprocessing of past Library items
+- artist/album paths from explicit source/user metadata only; flat audio layout when missing; source title as fallback track name
+- embedded metadata, written on staged files
+- source playlist order numbering for collection audio and playlist video names, not compacted
+- no automatic title cleanup; manual metadata/name review and editing
+- artwork preview with explicit user selection for every candidate (no silent embedding, no selection means no artwork), embedding where supported and `cover.jpg` with an album folder
+- tag/artwork/remux failure fallback to the safe original with an Activity warning; cancel/security/storage/catalog errors not swallowed
+- last separate sub-task, not started and gated on provider/rights clarification: user-triggered alternative cover search (MusicBrainz + Cover Art Archive as the first candidate, single chain, not a final choice)
 
 ## Milestone 7 — Plex Destinations
 
