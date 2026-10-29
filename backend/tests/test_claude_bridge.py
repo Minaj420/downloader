@@ -3,9 +3,12 @@
 import importlib.util
 import io
 import json
+import os
 import signal
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -309,3 +312,140 @@ def test_watcher_render_and_sigint_does_not_signal_worker(tmp_path):
         observer.wait(timeout=5)
         worker.terminate()
         worker.wait(timeout=5)
+
+
+def watcher_process(tmp_path, *args):
+    scripts = tmp_path / "scripts"
+    scripts.mkdir(exist_ok=True)
+    script = scripts / "claude-watch.py"
+    script.write_text((REPO / "scripts" / "claude-watch.py").read_text())
+    return subprocess.Popen(
+        [sys.executable, str(script), *args],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+
+
+def read_until(observer, needle, timeout=10):
+    """Read stdout lines until one contains needle; bounded by a reader thread."""
+    seen = []
+
+    def reader():
+        assert observer.stdout is not None
+        for line in observer.stdout:
+            seen.append(line)
+            if needle in line:
+                return
+
+    thread = threading.Thread(target=reader, daemon=True)
+    thread.start()
+    thread.join(timeout)
+    assert seen and needle in seen[-1], f"{needle!r} not seen in {seen!r}"
+    return seen
+
+
+def write_log(tmp_path, name, *items, complete=True):
+    log = tmp_path / "tmp" / "claude" / name
+    log.parent.mkdir(parents=True, exist_ok=True)
+    text = "".join(json.dumps(item) + "\n" for item in items)
+    log.write_text(text if complete else text.rstrip("\n"))
+    return log
+
+
+def text_event(text):
+    return {"type": "assistant", "message": {"content": [{"type": "text", "text": text}]}}
+
+
+def stop(observer):
+    if observer.poll() is None:
+        observer.send_signal(signal.SIGINT)
+    observer.wait(timeout=5)
+    for stream in (observer.stdout, observer.stderr):
+        if stream is not None:
+            stream.close()
+
+
+def test_follow_latest_waits_without_creating_then_picks_new_log(tmp_path):
+    observer = watcher_process(tmp_path, "--follow-latest")
+    try:
+        read_until(observer, "bekleniyor")
+        assert not (tmp_path / "tmp").exists()
+        write_log(tmp_path, "20260101-000001-000000-1.jsonl", text_event("ilk gorev"))
+        read_until(observer, "ilk gorev")
+        assert observer.poll() is None
+    finally:
+        stop(observer)
+    assert observer.returncode == 0
+
+
+def test_follow_latest_startup_picks_newest_and_ignores_old_append(tmp_path):
+    old = write_log(tmp_path, "20260101-000001-000000-1.jsonl", text_event("eski"))
+    write_log(tmp_path, "20260101-000002-000000-2.jsonl", text_event("yeni"))
+    observer = watcher_process(tmp_path, "--follow-latest")
+    try:
+        lines = read_until(observer, "yeni")
+        assert "eski" not in "".join(lines)
+        assert "20260101-000002-000000-2.jsonl" in lines[0]
+        with old.open("a") as handle:
+            handle.write(json.dumps(text_event("eski ek")) + "\n")
+        os.utime(old, (time.time() + 100, time.time() + 100))
+        write_log(tmp_path, "20260101-000003-000000-3.jsonl", text_event("ucuncu"))
+        lines = read_until(observer, "ucuncu")
+        assert "eski ek" not in "".join(lines)
+    finally:
+        stop(observer)
+
+
+def test_follow_latest_stays_open_after_result_and_switches_with_partial_buffer(tmp_path):
+    write_log(tmp_path, "20260101-000001-000000-1.jsonl", *events()[1:])
+    observer = watcher_process(tmp_path, "--follow-latest")
+    try:
+        lines = read_until(observer, "bekleniyor")
+        assert "must-fix yok" in "".join(lines)
+        write_log(tmp_path, "20260101-000002-000000-2.jsonl", text_event("ikinci"),
+                  complete=False)
+        partial = tmp_path / "tmp" / "claude" / "20260101-000002-000000-2.jsonl"
+        partial.write_text(partial.read_text() + "\n" + json.dumps(text_event("yarim"))[:10])
+        read_until(observer, "ikinci")
+        # Switch away from an unfinished log with a partial line; the buffer must reset.
+        write_log(tmp_path, "20260101-000003-000000-3.jsonl", text_event("ucuncu"))
+        lines = read_until(observer, "ucuncu")
+        assert '{"type": "assi' not in "".join(lines)
+        assert observer.poll() is None
+    finally:
+        stop(observer)
+    assert observer.returncode == 0
+
+
+def test_follow_latest_sigint_does_not_signal_worker(tmp_path):
+    worker = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    observer = watcher_process(tmp_path, "--follow-latest")
+    try:
+        read_until(observer, "bekleniyor")
+        observer.send_signal(signal.SIGINT)
+        observer.wait(timeout=5)
+        assert observer.returncode == 0 and worker.poll() is None
+        assert not (tmp_path / "tmp").exists()
+    finally:
+        stop(observer)
+        worker.terminate()
+        worker.wait(timeout=5)
+
+
+def test_legacy_single_log_exits_on_result(tmp_path):
+    write_log(tmp_path, "sample.jsonl", *events()[1:])
+    observer = watcher_process(tmp_path, "tmp/claude/sample.jsonl")
+    try:
+        assert observer.wait(timeout=10) == 0
+        assert observer.stdout is not None and "must-fix yok" in observer.stdout.read()
+    finally:
+        stop(observer)
+
+
+@pytest.mark.parametrize("args", [[], ["--follow-latest", "tmp/claude/x.jsonl"]])
+def test_watcher_requires_exactly_one_selection(tmp_path, args):
+    observer = watcher_process(tmp_path, *args)
+    try:
+        assert observer.wait(timeout=10) == 2
+        assert observer.stderr is not None and "--follow-latest" in observer.stderr.read()
+    finally:
+        stop(observer)

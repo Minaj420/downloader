@@ -9,11 +9,13 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-29.
 - Danışman/review Opus kalır. Lead uygulayıcıyı ve gerekçesini iş başında açıklar;
   model değişimi sessiz yapılmaz, implement resume açık --model ister.
 - İnce CLI adaptörü kuruldu: özel görev deposu, kilit ve test yürütücüsü yok; isteğe bağlı canlı log var.
+- Otomatik izleme: `bash scripts/claude-watch.sh --follow-latest`; en yeni logu gösterir, yeni göreve
+  geçer, result sonrası bekler. Claude çağrıları `--log` kullanmalı; Ctrl+C yalnız izleyiciyi kapatır.
 - Gerçek salt-okunur Opus review ve aynı oturuma dönüş PASS: `claude-opus-5-5`, izin reddi yok.
 - Gerçek Sonnet uygulama/test döngüsü PASS: `claude-sonnet-5-5`, yalnız izinli test dosyası değişti;
   pytest/ruff/mypy komutlarını kendisi çalıştırdı, açık aynı-model resume takip çağrısı PASS, izin reddi yok.
-- Eksik/tanınmayan gözlenen modelin doğrulamasını lead'e bırakan sözleşmeye 4 regresyon vakası eklendi.
-- Bağımsız GPT review: must-fix yok; lead hedefli kontrolleri tekrar doğruladı. Üretim kodu değişmedi.
+- Otomatik izleyici Sonnet ile geliştirildi; bağımsız GPT review: must-fix yok;
+  lead hedefli kontrolleri tekrar doğruladı. Uygulamanın indirme davranışı değişmedi.
 - M6 metadata/isimlendirme planlama aşamasında; uygulaması başlamadı.
 
 ## Sıradaki iş
@@ -38,11 +40,13 @@ Kaynaklar: PRODUCT_SPEC §13–16, ARCHITECTURE §30–34 ve §59 M6.
   Opus uygulama/test ve farklı-rol resume izolasyonu denenmedi. Native bg/attach kullanılmıyor.
 - should-fix: WORKFLOW kullanımına, modelsiz implement resume'ın CLI hatası verdiği açıkça eklenebilir;
   aynı modelin açık yeniden seçimi zaten kuraldır. Gözlenen model yalnız init'ten, lead de doğrular.
+- should-fix: izleyicinin partial-line testinde buffer adımları daha deterministik doğrulanabilir;
+  reviewer uygulamada ilgili bir hata görmedi, otomatik takip için bloklamıyor.
 
 ## Son gate
 
-- 2026-10-29 Fedora, gerçek Sonnet denemesi: worker ve lead pytest `test_claude_bridge.py` 36 PASS;
-  test dosyası ruff/mypy PASS. Önceki model seçimi işinde adaptör+izleyici ruff PASS.
+- 2026-10-29 Fedora, otomatik izleme: worker ve lead pytest `test_claude_bridge.py` 43 PASS;
+  test+izleyici ruff ve hedefli mypy PASS. Önceki model seçimi işinde adaptör ruff PASS.
   Bu çağrıda full gate çalıştırılmadı; test değişikliği bağımsız GPT review'dan geçti.
 - Önceki full gate: macOS backend ruff/mypy PASS, pytest 1466 PASS; frontend 147 test ve tüm gate'ler PASS.
 - Önceki Fedora Python 3.14 full gate: ruff/mypy PASS, pytest 1462 PASS/1 skip/3 FAIL;

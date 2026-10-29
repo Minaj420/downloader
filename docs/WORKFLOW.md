@@ -108,6 +108,15 @@ anında ulaşacağı garanti değildir. Gerekirse kullanıcı logu tmp/claude al
 seçer. Final result yoksa izleyici bekler; Ctrl+C ile çıkılır, adapter eksik finali
 başarılı saymaz. İzleyici final result'ta çıkar; process exit doğrulamasının kaynağı
 adapter'ın son raporudur. Stderr asıl terminaldedir. Log hassas kaynak metni içerebilir.
+Tek komutlu izleme: ikinci terminalde bir kez
+`bash scripts/claude-watch.sh --follow-latest` çalıştırılır; lead Claude çağrıları `--log`
+ile başlatılmalıdır. Mod tmp/claude altındaki en yeni (dosya adı sıralı) logu baştan
+gösterir, her saniye yeni log arar, yeni log çıkınca (eskisi bitmemiş olsa da) başlık
+basıp ona geçer ve ekranı temizlemez. Log yoksa dizini oluşturmadan “Yeni görev
+bekleniyor” der; final result'ta çıkmaz, bekleme mesajını bir kez basıp yeni görevi
+bekler (Ctrl+C ile çıkılır). Böylece OpenCode araç çıktısının gecikmesi yüzünden WATCH
+dosya adını beklemek gerekmez. Mod yalnız okur; tekli `claude-watch.sh <log>` kullanımı
+ve final result'ta çıkışı aynen sürer; ikisi birlikte veya hiçbiri verilmesi CLI hatasıdır.
 Bu yalnız canlı günlük fallback'idir; native `--bg`/attach kullanılmaz veya
 doğrulanmış iddia edilmez. Server/tmux/ek altyapı yoktur.
 
