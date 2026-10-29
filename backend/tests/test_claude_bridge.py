@@ -247,6 +247,22 @@ def test_explicit_opposite_observed_family_fails(bridge, capsys, requested, obse
     assert len(bridge.calls) == 1
 
 
+@pytest.mark.parametrize("requested", ["sonnet", "opus"])
+@pytest.mark.parametrize("observed", [None, "claude-x-fake"])
+def test_missing_or_unknown_observed_model_is_left_to_lead_verification(
+    bridge, capsys, requested, observed
+):
+    # Documents the current contract only: the adapter keeps no model registry, so a
+    # missing/unrecognised observation is NOT verified here; the lead checks family match.
+    bridge.events[0]["model"] = observed
+    assert bridge.run("implement", "task", model=requested) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["requested_model"] == requested
+    assert report["observed_model"] == observed
+    assert report["success"] is True
+    assert len(bridge.calls) == 1  # No adapter retry or fallback.
+
+
 def test_git_snapshot_is_fixed_read_only(monkeypatch):
     module = load("claude-agent")
     calls = []

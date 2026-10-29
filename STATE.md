@@ -10,17 +10,16 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-29.
   model değişimi sessiz yapılmaz, implement resume açık --model ister.
 - İnce CLI adaptörü kuruldu: özel görev deposu, kilit ve test yürütücüsü yok; isteğe bağlı canlı log var.
 - Gerçek salt-okunur Opus review ve aynı oturuma dönüş PASS: `claude-opus-5-5`, izin reddi yok.
-- Opus önerisi: ince adaptörü koru; sonraki adım tek dosyalık uygulama + hedefli test, sonra aynı-rol resume.
-- GPT ve Opus son review: must-fix yok. Yapılandırma için OpenCode yeniden başlatılmalı;
-  mevcut reviewer oturumunun yeni modeli kullandığı iddia edilmez.
+- Gerçek Sonnet uygulama/test döngüsü PASS: `claude-sonnet-5-5`, yalnız izinli test dosyası değişti;
+  pytest/ruff/mypy komutlarını kendisi çalıştırdı, açık aynı-model resume takip çağrısı PASS, izin reddi yok.
+- Eksik/tanınmayan gözlenen modelin doğrulamasını lead'e bırakan sözleşmeye 4 regresyon vakası eklendi.
+- Bağımsız GPT review: must-fix yok; lead hedefli kontrolleri tekrar doğruladı. Üretim kodu değişmedi.
 - M6 metadata/isimlendirme planlama aşamasında; uygulaması başlamadı.
 
 ## Sıradaki iş
 
-1. Yeniden başlatılmış OpenCode'dan küçük, geri alınabilir bir gerçek Sonnet uygulama/test denemesi;
-   sonra aynı modelle açık resume. Sonnet/Opus implementer canlı test döngüleri henüz denenmedi.
-2. M6 öncesi Opus planlama görüşü ve kullanıcı ürün kararları. Görüş alınamazsa açık onay olmadan ilerleme.
-3. Lead Opus önerisi/gerekçe/alternatif-risk ve kendi kararını burada özetler.
+1. M6 öncesi Opus planlama görüşü ve kullanıcı ürün kararları. Görüş alınamazsa açık onay olmadan ilerleme.
+2. Lead Opus önerisi/gerekçe/alternatif-risk ve kendi kararını burada özetler; ürün tercihlerini kullanıcı verir.
 Kural: review ve kontroller sonrası görev başına otomatik commit; push yalnız açık taleple.
 
 ## Açık kararlar
@@ -35,15 +34,16 @@ Kaynaklar: PRODUCT_SPEC §13–16, ARCHITECTURE §30–34 ve §59 M6.
 
 - should-fix: boş kuyrukta container SIGTERM sonrası 10 sn içinde kapanmadı; Podman SIGKILL kullandı.
 - should-fix: Fedora Python 3.14'te mevcut 3 backend test hatası (aşağıda).
-- Uygulayıcı dosya kapsamı prompt kuralıdır; gerçek implementer/test ve farklı-rol resume izolasyonu
-  doğrulanmadı. Native bg/attach kullanılmıyor; izleme salt-okunur canlı günlük üzerinden.
+- Uygulayıcı dosya kapsamı prompt kuralıdır. Sonnet uygulama/test ve aynı-rol oturum dönüşü görüldü;
+  Opus uygulama/test ve farklı-rol resume izolasyonu denenmedi. Native bg/attach kullanılmıyor.
 - should-fix: WORKFLOW kullanımına, modelsiz implement resume'ın CLI hatası verdiği açıkça eklenebilir;
   aynı modelin açık yeniden seçimi zaten kuraldır. Gözlenen model yalnız init'ten, lead de doğrular.
 
 ## Son gate
 
-- 2026-10-29 Fedora, model seçimi işi: lead pytest `test_claude_bridge.py` 32 PASS;
-  test+adaptör+izleyici ruff PASS; hedefli mypy PASS; diff-check PASS. Full gate çalıştırılmadı.
+- 2026-10-29 Fedora, gerçek Sonnet denemesi: worker ve lead pytest `test_claude_bridge.py` 36 PASS;
+  test dosyası ruff/mypy PASS. Önceki model seçimi işinde adaptör+izleyici ruff PASS.
+  Bu çağrıda full gate çalıştırılmadı; test değişikliği bağımsız GPT review'dan geçti.
 - Önceki full gate: macOS backend ruff/mypy PASS, pytest 1466 PASS; frontend 147 test ve tüm gate'ler PASS.
 - Önceki Fedora Python 3.14 full gate: ruff/mypy PASS, pytest 1462 PASS/1 skip/3 FAIL;
   `test_rejected_output_closes_all_walk_descriptors` os.close monkeypatch/pidfd çakışması.
