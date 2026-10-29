@@ -5,7 +5,7 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-30.
 ## Şu an
 
 - Mod: Claude-only (GPT kotası bitti, 2026-10-30); lead Claude Code. Bu moddaki commit'ler: `f926a63`
-  (yalnız mod altyapısı), M6.4c (hash aşağıda). GPT review bekliyor: M6.4c FFmpeg adaptörü
+  (yalnız mod altyapısı), M6.4c (`dc0142b`). GPT review bekliyor: M6.4c FFmpeg adaptörü
   (Opus yazdı, bu modda review edilmedi). Dönüş: `/normal-mod`, sonra OpenCode `/continue`.
 - M6.4c tamamlandı: `FFmpegProcessor.convert` tek profil tablosuyla mp3/wav/m4a/opus/flac/mp4; ortak `_run`,
   başarısızlık/timeout/iptalde yalnız kendi çıktısını silme, `input==output` ve uzantı `ValueError`,
