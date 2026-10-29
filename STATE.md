@@ -4,15 +4,19 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-30.
 
 ## Şu an
 
-- Mod: Claude-only (GPT kotası bitti, 2026-10-30); lead Claude Code. Bu moddaki commit'ler: `f926a63`
+- Mod: Normal; lead OpenCode. Kullanıcı Claude tarafında `/normal-mod` uyguladı;
+  `.claude/settings.json` normal mod kaynağıyla eşleşiyor (2026-10-30 doğrulandı).
+  Önceki Claude-only dönemindeki commit'ler: `f926a63`
   (yalnız mod altyapısı), M6.4c (`dc0142b`), M6.4d-d1 (`9ee4c3f`). GPT review bekliyor: M6.4c FFmpeg
   adaptörü ve M6.4d-d1 dönüşüm çekirdeği (ikisini de Opus yazdı; GPT yok). Bu modda `/code-review high`
   ile bağımsız review yapıldı, tek düzeltme turu uygulandı (aşağıda); GPT'nin ikinci bakışı yine beklenir.
-  Dönüş: `/normal-mod`, sonra OpenCode `/continue`.
-- Duraklatma noktası (2026-10-30): d1 ve review düzeltmesi commit'li (`83fbcd3`), çalışma ağacı temiz
-  (yalnız mod nedeniyle `.claude/settings.json` değişik, commit edilmez). Sıradaki iş d2 (aşağıda). Claude-only
-  modunda devam: `/devam-claude`. GPT dönünce: `/normal-mod`, ardından OpenCode `/continue`; lead önce GPT
-  review'u bekleyen M6.4c ve d1'i (`dc0142b`..`83fbcd3`) inceletir, sonra d2'ye geçer.
+  GPT review bekleme kaydı inceleme tamamlanana kadar korunur.
+- Duraklatma noktası (2026-10-30): d1 ve review düzeltmesi commit'li (`83fbcd3`).
+  Kullanıcı GPT review'u yarına (2026-10-31) erteledi; bu oturum yalnız durum kaydı güncellemesidir,
+  review veya uygulama başlatılmaz. Sonraki geliştirme öncesi lead önce GPT review'u bekleyen
+  M6.4c ve d1'i (`dc0142b`..`83fbcd3`) inceletir, sonra d2'ye geçer.
+  Güncelleme öncesi git durumu: çalışma ağacı temiz, `main` kayıtlı `origin/main`'in 24 commit önünde;
+  uzak durum fetch ile yenilenmedi, push yapılmadı.
 - M6.4c/d1 review düzeltme turu (kullanıcı onaylı, aynı Opus session): mp4 transcode tek sayılı boyut için
   `-vf scale=trunc(iw/2)*2:trunc(ih/2)*2` (copy_video'da yok); `-id3v2_version`/`-rf64` container grubunda
   (copy_audio'da da kalır); convert argv'sine `-nostats` (merge değişmedi); convert'te 0 bayt/eksik çıktı
@@ -53,6 +57,9 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-30.
   kayıtlı non-Original runner'da medya I/O öncesi reddedilir. Arayüz/preset/FFmpeg aktivasyonu yok.
 
 ## Sıradaki iş
+
+Ön koşul: 2026-10-31 veya kullanıcının sonraki talebiyle bekleyen M6.4c/d1 GPT review'u;
+inceleme tamamlanmadan aşağıdaki uygulama işine geçilmez.
 
 1. M6.4d-d2 (Sonnet): tekli runner. `require_runnable_output_profile` yerine fail-closed çözümleyici
    (bilinmeyen/türle uyumsuz profil medya I/O öncesi INVALID_PROFILE), `prepare_media(output=...)` bağlantısı,
