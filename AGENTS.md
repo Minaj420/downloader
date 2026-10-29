@@ -20,6 +20,9 @@ This repository is developed with AI coding agents.
   On resume, lead explicitly resends the initial requested_model via --model; no silent
   family switch or quota retry. Model changes do not reset the single review fix round.
 
+GPT quota exhausted: the user may start the temporary Claude-only mode (`/claude-only`,
+then `/devam-claude`; back with `/normal-mod`). Rules in `docs/WORKFLOW.md`.
+
 ## Starting a task
 
 1. Read the `PRODUCT_SPEC.md` and `ARCHITECTURE.md` sections that are authoritative for the task at hand; you do not need to re-read whole documents for every task.

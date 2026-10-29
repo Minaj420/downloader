@@ -4,6 +4,9 @@ Tek yönetim OpenCode `lead` ve `/continue`'dur. Claude Code `/devam` pasiftir;
 Claude child başka ajan/CLI çağırmaz. Kurallar AGENTS.md, durum STATE.md,
 ürün PRODUCT_SPEC.md, mimari ARCHITECTURE.md'dir.
 
+GPT kotası bittiğinde yalnız kullanıcının başlattığı geçici istisna:
+"Geçici Claude-only modu" (aşağıda).
+
 ## Roller ve modeller
 
 | Rol | Model / çalıştırma | Görev |
@@ -161,6 +164,33 @@ doğrulanmış iddia edilmez. Server/tmux/ek altyapı yoktur.
 
 CLI semantics kaynakları: https://code.claude.com/docs/en/cli-reference ,
 https://code.claude.com/docs/en/settings , https://code.claude.com/docs/en/headless .
+
+## Geçici Claude-only modu
+
+OpenAI/GPT kotası bittiğinde, yalnız kullanıcı isterse. Normal akış (OpenCode lead) değişmez;
+kota açılınca geri dönülür.
+
+**Geçiş.** Kullanıcı `/claude-only` yazar (`bash scripts/mode.sh claude-only` çalışır). Betik
+`.claude/modes/claude-only.settings.json` dosyasını `.claude/settings.json` üzerine kopyalar:
+`STATE.md` düzenleme ile `git add/commit` yasakları kalkar, `git push`, `opencode` ve
+`commit --amend` yasakları kalır. Mod dosyaları (`.claude/modes/normal.settings.json` ve
+`claude-only.settings.json`) kaynaktır; ayarlar settings.json'a yalnız betikle yazılır. Betik
+settings.json hiçbir mod dosyasıyla eşleşmiyorsa üzerine yazmaz. İzinler yenilenmezse oturum
+yeniden başlatılır (ilk denemede doğrulanacak). `/claude-only` ve `/normal-mod` yalnız kullanıcı
+tarafından çağrılır; model bu geçişi kendiliğinden başlatmaz. Ardından `/devam-claude` döngüyü yürütür.
+
+**Roller.** lead: Claude Code ana oturumu. danışman ve implementer: değişmez (adapter, Opus/Sonnet).
+reviewer: Sonnet kodunu Opus `scripts/claude-review.sh` ile inceler; **Opus kodu bu modda
+review edilmez**, STATE'e "GPT review bekliyor" yazılır. Luna/checker yoktur; lead hedefli kontrolleri
+ve milestone gate'lerini kendisi çalıştırır. Diğer tüm kurallar (Opus görüşü, tek yazıcı, bir review
+düzeltme turu, “Uygulayıcı: ...” duyurusu, otomatik commit, push yalnız kullanıcı) aynen geçerlidir.
+
+**STATE işareti.** `Şu an` bölümünde `Mod: Claude-only (<tarih>); commit'ler: <hash>, ...` ve
+bekleyen GPT review satırları. Yalnız lead yazar.
+
+**Dönüş.** Kullanıcı `/normal-mod` yazar (`bash scripts/mode.sh normal`); STATE yasağı geri gelir.
+Sonraki ilk OpenCode `/continue`'da lead mod işaretini okur, o commit'leri GPT reviewer'a
+inceletir (bekleyen Opus-kodu review'ları dahil), bulguları normal sınıflara göre işler ve işareti kaldırır.
 
 ## Gate ve STATE
 

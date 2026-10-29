@@ -1,0 +1,24 @@
+{
+  "disableAllHooks": true,
+  "permissions": {
+    "allow": [
+      "Edit(./STATE.md)",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git show*)",
+      "Bash(git branch --show-current)",
+      "Bash(git add -- *)",
+      "Bash(git commit -m *)",
+      "Bash(scripts/claude-review.sh *)",
+      "Bash(bash scripts/claude-agent.sh consult *)",
+      "Bash(bash scripts/claude-agent.sh implement *)",
+      "Bash(bash scripts/mode.sh status)"
+    ],
+    "deny": [
+      "Bash(opencode *)",
+      "Bash(git push *)",
+      "Bash(git commit *--amend*)"
+    ]
+  }
+}
