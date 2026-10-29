@@ -1,13 +1,17 @@
+import copy
 import re
 from typing import Any
 
 import pytest
 
-from app.domain.analysis import NormalizedAnalysis
+from app.domain.analysis import NormalizedAnalysis, SourceMetadata
 from app.services.analysis_normalizer import (
+    SOURCE_METADATA_LIST_MAX_ITEMS,
+    SOURCE_METADATA_TEXT_MAX_LENGTH,
     build_normalized_analysis,
     normalize_collection,
     normalize_formats,
+    normalize_source_metadata,
 )
 from tests.yt_dlp_samples import playlist_payload, single_video_payload
 
@@ -1122,3 +1126,305 @@ def test_normalized_analysis_without_source_id_is_backward_compatible() -> None:
     parsed = NormalizedAnalysis.model_validate(legacy_json)
 
     assert parsed.source_id is None
+    assert parsed.source_metadata is None
+
+
+def _music_fields() -> dict[str, Any]:
+    return {
+        "track": "Black Dog (Remaster)",
+        "artists": ["Led Zeppelin"],
+        "album": "Led Zeppelin IV",
+        "album_artists": ["Led Zeppelin"],
+        "track_number": 1,
+        "disc_number": 1,
+        "release_year": 1971,
+        "release_date": "19711108",
+    }
+
+
+def _build_single(payload: dict[str, Any]) -> NormalizedAnalysis:
+    return build_normalized_analysis(
+        payload,
+        analysis_id="a" * 32,
+        original_url="https://www.youtube.com/watch?v=abc123",
+        platform_hint=None,
+    )
+
+
+def test_source_metadata_happy_path_carries_all_explicit_fields() -> None:
+    analysis = _build_single({**single_video_payload(), **_music_fields()})
+
+    assert analysis.source_metadata == SourceMetadata(**_music_fields())
+
+
+def test_source_metadata_absent_is_none() -> None:
+    assert _build_single(single_video_payload()).source_metadata is None
+    assert normalize_source_metadata({}) is None
+
+
+@pytest.mark.parametrize("raw", [None, [], "track", 3, ("track", "x")])
+def test_source_metadata_non_dict_is_none(raw: object) -> None:
+    assert normalize_source_metadata(raw) is None
+
+
+def test_source_metadata_only_unusable_fields_is_none() -> None:
+    raw = {
+        "track": "   ",
+        "artists": [None, ""],
+        "artist": 5,
+        "album": ["x"],
+        "track_number": 0,
+        "disc_number": True,
+        "release_year": 999,
+        "release_date": "20230230",
+    }
+    assert normalize_source_metadata(raw) is None
+
+
+def test_source_metadata_never_infers_from_title_channel_or_playlist() -> None:
+    raw = {
+        **single_video_payload(),
+        "title": "Some Artist - Some Song",
+        "uploader": "Some Artist",
+        "channel": "Some Artist - Topic",
+        "uploader_id": "@someartist",
+        "playlist_title": "Some Album",
+        "playlist": "Some Album",
+        "playlist_index": 3,
+        "playlist_count": 12,
+        "n_entries": 12,
+        "track_count": 12,
+        "disc_count": 2,
+        "upload_date": "20200101",
+        "timestamp": 1577836800,
+    }
+    assert normalize_source_metadata(raw) is None
+    assert _build_single(raw).source_metadata is None
+
+
+def test_source_metadata_does_not_carry_non_whitelisted_raw_fields() -> None:
+    metadata = normalize_source_metadata(
+        {"track": "Song", "genre": "Rock", "composer": "X", "track_count": 9}
+    )
+    assert metadata is not None
+    assert set(metadata.model_dump()) == {
+        "track", "artists", "album", "album_artists",
+        "track_number", "disc_number", "release_year", "release_date",
+    }
+    assert metadata.model_dump()["track"] == "Song"
+
+
+def test_source_metadata_list_precedes_singular_string() -> None:
+    metadata = normalize_source_metadata(
+        {
+            "artists": ["A", "B"], "artist": "Ignored",
+            "album_artists": ["C"], "album_artist": "Ignored too",
+        }
+    )
+    assert metadata is not None
+    assert metadata.artists == ["A", "B"]
+    assert metadata.album_artists == ["C"]
+
+
+@pytest.mark.parametrize("bad_list", [None, [], ["", "  ", None, 3], "A, B", {"A": 1}])
+def test_source_metadata_invalid_list_falls_back_to_unsplit_singular(
+    bad_list: object,
+) -> None:
+    metadata = normalize_source_metadata(
+        {
+            "artists": bad_list, "artist": "Simon & Garfunkel, Live",
+            "album_artists": bad_list, "album_artist": "Crosby, Stills & Nash",
+        }
+    )
+    assert metadata is not None
+    assert metadata.artists == ["Simon & Garfunkel, Live"]
+    assert metadata.album_artists == ["Crosby, Stills & Nash"]
+
+
+def test_source_metadata_list_cleanup_strips_dedupes_and_keeps_order() -> None:
+    metadata = normalize_source_metadata(
+        {"artists": [" B ", "A", None, 7, "", "B", "a", "A", "x" * 513, "  Ç  é  "]}
+    )
+    assert metadata is not None
+    # Exact duplicates go after stripping; case and inner spacing are kept.
+    assert metadata.artists == ["B", "A", "a", "Ç  é"]
+
+
+def test_source_metadata_list_keeps_first_distinct_names_up_to_bound() -> None:
+    """Bound: the first 32 distinct valid names are kept, later ones ignored."""
+    names = [f"Artist {index}" for index in range(SOURCE_METADATA_LIST_MAX_ITEMS + 8)]
+    raw_names = [None, names[0], *names]
+    metadata = normalize_source_metadata({"artists": raw_names})
+    assert SOURCE_METADATA_LIST_MAX_ITEMS == 32
+    assert metadata is not None
+    assert metadata.artists == names[:SOURCE_METADATA_LIST_MAX_ITEMS]
+
+
+def test_source_metadata_does_not_mutate_raw_input() -> None:
+    raw = {
+        **single_video_payload(),
+        **_music_fields(),
+        "artists": [" B ", "B", None, "A"],
+        "artist": "Fallback",
+        "track": "  Song  ",
+    }
+    snapshot = copy.deepcopy(raw)
+    normalize_source_metadata(raw)
+    _build_single(raw)
+    assert raw == snapshot
+
+
+def test_source_metadata_strings_strip_keep_inner_text_and_drop_overlong() -> None:
+    limit = SOURCE_METADATA_TEXT_MAX_LENGTH
+    metadata = normalize_source_metadata(
+        {
+            "track": "  Song  (Official Video)  [Live]\t",
+            "album": "x" * limit,
+            "artist": "y" * (limit + 1),
+        }
+    )
+    assert limit == 512
+    assert metadata is not None
+    assert metadata.track == "Song  (Official Video)  [Live]"
+    assert metadata.album == "x" * limit
+    assert metadata.artists == []
+
+
+@pytest.mark.parametrize("value", [None, 5, 1.0, b"Song", ["Song"], "", " \n "])
+def test_source_metadata_non_string_or_blank_text_is_dropped(value: object) -> None:
+    metadata = normalize_source_metadata({"track": value, "album": "Album"})
+    assert metadata is not None
+    assert metadata.track is None
+    assert metadata.album == "Album"
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [(1, 1), (9999, 9999), ("7", 7), ("0007", 7), ("9999", 9999)],
+)
+def test_source_metadata_track_and_disc_numbers_accept_strict_values(
+    value: object, expected: int
+) -> None:
+    metadata = normalize_source_metadata({"track_number": value, "disc_number": value})
+    assert metadata is not None
+    assert metadata.track_number == expected
+    assert metadata.disc_number == expected
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        0, -1, 10000, 10**400, True, False, 3.0, 3.5,
+        float("nan"), float("inf"), float("-inf"),
+        "0", "-3", "+3", " 3", "3 ", "3/12", "1.0", "abc", "", "١٢", "３",
+        "00003", "9" * 5000, None, [3], {"n": 3},
+    ],
+)
+def test_source_metadata_track_and_disc_numbers_reject_malformed(value: object) -> None:
+    metadata = normalize_source_metadata(
+        {"track_number": value, "disc_number": value, "track": "Song"}
+    )
+    assert metadata is not None
+    assert metadata.track_number is None
+    assert metadata.disc_number is None
+    assert metadata.track == "Song"
+
+
+@pytest.mark.parametrize(("value", "expected"), [(1000, 1000), (9999, 9999), ("1971", 1971)])
+def test_source_metadata_release_year_accepts_four_digit_years(
+    value: object, expected: int
+) -> None:
+    metadata = normalize_source_metadata({"release_year": value})
+    assert metadata is not None
+    assert metadata.release_year == expected
+
+
+@pytest.mark.parametrize(
+    "value",
+    [999, 10000, 0, -1971, True, 1971.0, float("nan"), float("inf"), 10**400,
+     "999", "19710", "1971-11", "9" * 5000, "١٩٧١", None],
+)
+def test_source_metadata_release_year_rejects_malformed(value: object) -> None:
+    assert normalize_source_metadata({"release_year": value}) is None
+
+
+@pytest.mark.parametrize("value", ["20240229", "20000229", "19711108"])
+def test_source_metadata_release_date_accepts_real_dates(value: str) -> None:
+    metadata = normalize_source_metadata({"release_date": value})
+    assert metadata is not None
+    assert metadata.release_date == value
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["20230229", "19000229", "20241301", "20240001", "20240100", "20240431",
+     "2024-02-29", "2024022", "202402290", " 20240229", "２０２４０２２９",
+     20240229, None, True],
+)
+def test_source_metadata_release_date_rejects_invalid(value: object) -> None:
+    assert normalize_source_metadata({"release_date": value}) is None
+
+
+def test_source_metadata_year_and_date_are_independent() -> None:
+    date_only = normalize_source_metadata(
+        {"release_date": "19711108", "upload_date": "20200101"}
+    )
+    assert date_only is not None
+    assert date_only.release_year is None
+    assert date_only.release_date == "19711108"
+
+    year_only = normalize_source_metadata(
+        {"release_year": 1971, "upload_date": "20200101"}
+    )
+    assert year_only is not None
+    assert year_only.release_year == 1971
+    assert year_only.release_date is None
+
+    mismatched = normalize_source_metadata(
+        {"release_year": 1990, "release_date": "19711108"}
+    )
+    assert mismatched is not None
+    assert (mismatched.release_year, mismatched.release_date) == (1990, "19711108")
+
+
+def test_source_metadata_malformed_field_keeps_analysis_and_formats() -> None:
+    plain = _build_single(single_video_payload())
+    noisy = _build_single(
+        {
+            **single_video_payload(),
+            **_music_fields(),
+            "track_number": "3/12",
+            "release_date": "20230230",
+        }
+    )
+    assert noisy.formats == plain.formats
+    assert noisy.model_dump(exclude={"source_metadata"}) == plain.model_dump(
+        exclude={"source_metadata"}
+    )
+    assert noisy.source_metadata is not None
+    assert noisy.source_metadata.track_number is None
+    assert noisy.source_metadata.release_date is None
+    assert noisy.source_metadata.album == "Led Zeppelin IV"
+
+
+def test_collection_parent_never_gets_source_metadata() -> None:
+    plain = build_normalized_analysis(
+        playlist_payload(),
+        analysis_id="b" * 32,
+        original_url="https://soundcloud.com/artist/sets/test-album",
+        platform_hint=None,
+    )
+    with_music = build_normalized_analysis(
+        {**playlist_payload(), **_music_fields(), "artist": "Test Artist"},
+        analysis_id="b" * 32,
+        original_url="https://soundcloud.com/artist/sets/test-album",
+        platform_hint=None,
+    )
+    assert plain.source_metadata is None
+    assert with_music.source_metadata is None
+    assert with_music.collection is not None and plain.collection is not None
+    assert [item.item_id for item in with_music.collection.items] == [
+        item.item_id for item in plain.collection.items
+    ]
+    assert with_music.collection == plain.collection
+    assert "source_metadata" not in with_music.collection.items[0].model_dump()

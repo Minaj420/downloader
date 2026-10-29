@@ -30,6 +30,14 @@ def _fetch_session_row(db_path: Path, analysis_id: str) -> tuple[str, str | None
         ).fetchone()
 
 
+def _fetch_normalized_json(db_path: Path, analysis_id: str) -> str:
+    with sqlite3.connect(db_path) as connection:
+        return connection.execute(
+            "SELECT normalized_result_json FROM analysis_sessions WHERE id = ?",
+            (analysis_id,),
+        ).fetchone()[0]
+
+
 def _insert_session(
     settings: Settings,
     analysis_id: str,
@@ -123,12 +131,59 @@ class TestAnalyzeEndpoint:
         assert body["status"] == "completed"
         assert body["result"]["analysis_id"] == created["analysis_id"]
         assert body["result"]["title"] == "Test Video"
+        assert body["result"]["source_metadata"] is None
         assert body["error"] is None
+
+    def test_source_metadata_is_whitelisted_persisted_and_returned_by_get(
+        self, client: TestClient, analyzer: FakeAnalyzer, settings: Settings
+    ) -> None:
+        analyzer.result = {
+            **single_video_payload(),
+            "track": " Black Dog ",
+            "artists": ["Led Zeppelin", "Led Zeppelin", None],
+            "artist": "Ignored",
+            "album": "Led Zeppelin IV",
+            "album_artist": "Led Zeppelin",
+            "track_number": "1",
+            "disc_number": 1,
+            "release_year": 1971,
+            "release_date": "19711108",
+            "genre": "Rock",
+            "track_count": 8,
+            "upload_date": "20200101",
+        }
+        expected = {
+            "track": "Black Dog",
+            "artists": ["Led Zeppelin"],
+            "album": "Led Zeppelin IV",
+            "album_artists": ["Led Zeppelin"],
+            "track_number": 1,
+            "disc_number": 1,
+            "release_year": 1971,
+            "release_date": "19711108",
+        }
+
+        created = client.post("/api/v1/analysis", json={"url": YOUTUBE_URL})
+        assert created.status_code == 200
+        body = created.json()
+        assert body["source_metadata"] == expected
+        assert "genre" not in json.dumps(body)
+
+        stored = json.loads(
+            _fetch_normalized_json(settings.state_dir / "downloader.db", body["analysis_id"])
+        )
+        assert stored["source_metadata"] == expected
+
+        analyzer.result = single_video_payload()
+        fetched = client.get(f"/api/v1/analysis/{body['analysis_id']}")
+        assert fetched.status_code == 200
+        assert fetched.json()["result"] == body
+        assert len(analyzer.calls) == 1
 
     def test_analyzes_playlist_collection(
         self, client: TestClient, analyzer: FakeAnalyzer
     ) -> None:
-        analyzer.result = playlist_payload()
+        analyzer.result = {**playlist_payload(), "artist": "Test Artist", "album": "Test Album"}
 
         response = client.post(
             "/api/v1/analysis",
@@ -140,6 +195,7 @@ class TestAnalyzeEndpoint:
         assert body["content_type"] == "collection"
         assert body["detected_platform"] == "soundcloud"
         assert body["formats"] == []
+        assert body["source_metadata"] is None
         assert body["collection"]["total_items"] == 8
         assert len(body["collection"]["preview_items"]) == 3
         assert body["collection"]["truncated"] is True
@@ -203,6 +259,7 @@ class TestAnalyzeEndpoint:
         assert collection["selected_item_limit"] == 200
         assert collection["total_items_known"] is False
         assert collection["selection_truncated"] is True
+        assert response.json()["result"]["source_metadata"] is None
 
     def test_old_stored_single_payload_still_loads(
         self, client: TestClient, settings: Settings
@@ -219,6 +276,7 @@ class TestAnalyzeEndpoint:
         assert response.status_code == 200
         result = response.json()["result"]
         assert result["collection"] is None
+        assert result["source_metadata"] is None
         assert result["formats"][0]["variant_id"] == "audio-aac-128"
 
     def test_platform_hint_is_forwarded_and_mismatch_reported(

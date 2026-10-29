@@ -20,19 +20,24 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-29.
   lead hedefli kontrolleri tekrar doğruladı. Uygulamanın indirme davranışı değişmedi.
 - M6 başlangıç Opus görüşü alındı; requested opus / observed claude-opus-5-5 eşleşti,
   çağrı başarılı ve izin reddi yok. Kullanıcı tercihleri PRODUCT_SPEC ve ARCHITECTURE'a işlendi;
-  M6 davranışları planlandı, uygulama kodu henüz değişmedi. Sonnet belge işi GPT review'dan geçti.
+  M6.0 hazırlık tamamlandı (`29206a9`).
+- M6.1 tamamlandı: tekli analiz POST/GET ve saklanan JSON'da opsiyonel source_metadata;
+  yalnız açık kaynak alanları, bozuk alan izolasyonu, eski JSON uyumu. Collection parent None;
+  child probe bağlantısı, frontend gösterimi, adlandırma, etiketleme ve kapak henüz uygulanmadı.
+- M6.1 için Opus uygulama/test çağrısı doğrulandı: opus / claude-opus-5-5, başarı ve izin reddi yok;
+  bağımsız GPT review must-fix yok. Kaynak model adı source-only provenance için yeterli;
+  artist listeleri korunur, başlık/kanal/yükleme tarihi üzerinden metadata çıkarılmaz.
 
 ## Sıradaki iş
 
-1. M6 kaynak metadata yakalama/normalizasyonu için tek bounded iş: açık kaynak alanları,
-   eski analiz kayıtlarıyla uyumluluk, çıkarım yapmama ve hedefli testler. Belgeler eşitlendi.
-2. Opus planı: kaynak metadata → merkezi güvenli yollar → playlist video adları →
-   staging'de etiket/remux → müzik yolları/katalog → kapak → metadata düzenleme →
-   kullanıcı tetiklemeli harici kapak arama (koşullu) → kapanış gate.
+1. M6.2 merkezi güvenli dosya/klasör yolu oluşturucu; path güvenliği nedeniyle Opus.
+   Uygulamadan önce mevcut storage containment ve testlerini incele, dar teknik kapsamı danış.
+2. Takip: M6.3 playlist video adları → M6.4 FFmpeg etiket/remux → M6.5 pipeline bağlantısı →
+   M6.6 müzik yolları/katalog → M6.7 kaynak kapak → M6.8 metadata/kapak önizleme-düzenleme →
+   M6.9 harici kapak arama (haklar koşullu) → M6.10 kapanış gate. Başlıklar küçük işlere bölünebilir.
 3. Lead: mevcut staging/yayınlama sınırlarını koru; kaynak alanlarını tahmin etmeden taşı.
    Playlist adı otomatik albüm değildir; albüm alanı tek başına küçük resmi güvenilir yapmaz.
    Kayıpsız remux kaliteyi korur; yeniden kodlama ve başlık temizliği kayıp riski taşır.
-   Sonraki aday: kaynak metadata modeli/normalizasyonu; API sözleşmesi değişirse Opus.
 Kural: review ve kontroller sonrası görev başına otomatik commit; push yalnız açık taleple.
 
 ## Açık kararlar
@@ -67,8 +72,10 @@ Kaynaklar: PRODUCT_SPEC §13–16, ARCHITECTURE §30–34 ve §59 M6.
 
 - should-fix: boş kuyrukta container SIGTERM sonrası 10 sn içinde kapanmadı; Podman SIGKILL kullandı.
 - should-fix: Fedora Python 3.14'te mevcut 3 backend test hatası (aşağıda).
+- should-fix: test_jobs.py iptal testi DOWNLOADING görünür görünmez staging.exists varsayıyor;
+  claim commit'i mkdir'den önce olduğundan yarış var. M6.1 bu sırayı değiştirmedi; kapsam dışı.
 - Uygulayıcı dosya kapsamı prompt kuralıdır. Sonnet uygulama/test ve aynı-rol oturum dönüşü görüldü;
-  Opus uygulama/test ve farklı-rol resume izolasyonu denenmedi. Native bg/attach kullanılmıyor.
+  Opus uygulama/test de görüldü; farklı-rol resume izolasyonu denenmedi. Native bg/attach yok.
 - should-fix: WORKFLOW kullanımına, modelsiz implement resume'ın CLI hatası verdiği açıkça eklenebilir;
   aynı modelin açık yeniden seçimi zaten kuraldır. Gözlenen model yalnız init'ten, lead de doğrular.
 - should-fix: izleyicinin partial-line testinde buffer adımları daha deterministik doğrulanabilir;
@@ -76,6 +83,10 @@ Kaynaklar: PRODUCT_SPEC §13–16, ARCHITECTURE §30–34 ve §59 M6.
 
 ## Son gate
 
+- 2026-10-29 Fedora Python 3.14.8, M6.1: worker hedefli normalizer+API+jobs 281 PASS;
+  lead tekrarı 280 PASS/1 FAIL (yukarıdaki iptal testi yarışı), ayrı diagnostic 1 PASS.
+  Lead normalizer+API ayrı koşu 208 PASS; worker/lead dört değişen dosya ruff ve mypy PASS.
+  GPT review must-fix yok; iptal testi should-fix. Full gate/frontend bu işte çalıştırılmadı.
 - 2026-10-29 Fedora, kapak sağlayıcı uygunluğu: resmî web belgeleri incelendi, API/image smoke yok;
   uygulama/test/config değişmedi; hedefli test/full gate yok. IA tam koşulları eksik doğrulandı.
 - 2026-10-29 Fedora, M6 belge eşitleme: Sonnet/claude-sonnet-5-5 eşleşti, izin reddi yok;

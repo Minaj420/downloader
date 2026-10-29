@@ -13,6 +13,7 @@ still carries a real raw yt-dlp ``format_id`` for job execution.
 
 import hashlib
 import re
+from datetime import date
 from math import isfinite
 from typing import Any
 
@@ -25,6 +26,7 @@ from app.domain.analysis import (
     MediaFormatKind,
     NormalizedAnalysis,
     NormalizedFormat,
+    SourceMetadata,
 )
 from app.domain.platforms import (
     detect_platform,
@@ -65,6 +67,12 @@ _VARIANT_ID_MAX_LENGTH = 128
 # Axis-aware identity ordering: heights, then width-only, then exact
 # labels, then the unknown sentinel.
 _AXIS_ORDER = {"height": 0, "width": 1, "label": 2, "unknown": 3}
+
+# Source music metadata representation bounds (not truncation lengths).
+SOURCE_METADATA_TEXT_MAX_LENGTH = 512
+SOURCE_METADATA_LIST_MAX_ITEMS = 32
+_ASCII_DIGITS = re.compile(r"[0-9]+")
+_SOURCE_DATE = re.compile(r"[0-9]{8}")
 
 _CODEC_LABELS = {
     "avc1": "h264",
@@ -739,6 +747,106 @@ def _first_thumbnail(raw_info: dict[str, Any]) -> str | None:
     return None
 
 
+def _metadata_text(value: object) -> str | None:
+    """Stripped non-empty source string; over-long values are dropped, never cut.
+
+    Inner Unicode, whitespace and title suffixes are kept verbatim.
+    """
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text or len(text) > SOURCE_METADATA_TEXT_MAX_LENGTH:
+        return None
+    return text
+
+
+def _metadata_names(values: object, single: object) -> list[str]:
+    """Source name list, falling back to one singular name string.
+
+    Invalid, empty and non-string items are removed, exact duplicates are
+    dropped keeping first-seen order, and only the first
+    ``SOURCE_METADATA_LIST_MAX_ITEMS`` distinct names are kept; later ones
+    are ignored. When the list yields nothing, the singular string becomes a
+    one-item list as-is: it is never split on commas or ampersands.
+    """
+    names: list[str] = []
+    if isinstance(values, list):
+        for value in values:
+            name = _metadata_text(value)
+            if name is not None and name not in names:
+                names.append(name)
+                if len(names) == SOURCE_METADATA_LIST_MAX_ITEMS:
+                    break
+    if not names:
+        name = _metadata_text(single)
+        if name is not None:
+            names.append(name)
+    return names
+
+
+def _metadata_int(value: object, *, minimum: int, maximum: int) -> int | None:
+    """Strict whole number: an ``int`` or an ASCII-digit-only string in range.
+
+    Bools, floats (including NaN/inf and whole floats), signs, fractions such
+    as ``3/12`` and out-of-range values are rejected. Digit strings with more
+    digits than ``maximum`` are rejected before conversion, so very long
+    inputs never reach ``int()``'s digit limit.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        number = value
+    elif (
+        isinstance(value, str)
+        and len(value) <= len(str(maximum))
+        and _ASCII_DIGITS.fullmatch(value)
+    ):
+        number = int(value)
+    else:
+        return None
+    return number if minimum <= number <= maximum else None
+
+
+def _metadata_date(value: object) -> str | None:
+    """``YYYYMMDD`` that is a real calendar date, kept in source form."""
+    if not isinstance(value, str) or not _SOURCE_DATE.fullmatch(value):
+        return None
+    try:
+        date(int(value[:4]), int(value[4:6]), int(value[6:]))
+    except ValueError:
+        return None
+    return value
+
+
+def normalize_source_metadata(raw: object) -> SourceMetadata | None:
+    """Explicit source music fields only; ``None`` when nothing is usable.
+
+    Pure and non-mutating. Only the whitelisted extractor keys are read and
+    each malformed field drops just itself. Title, uploader, channel,
+    playlist and upload-date fields are never used as fallbacks, and year
+    and date are independent of each other.
+    """
+    if not isinstance(raw, dict):
+        return None
+    metadata = SourceMetadata(
+        track=_metadata_text(raw.get("track")),
+        artists=_metadata_names(raw.get("artists"), raw.get("artist")),
+        album=_metadata_text(raw.get("album")),
+        album_artists=_metadata_names(
+            raw.get("album_artists"), raw.get("album_artist")
+        ),
+        track_number=_metadata_int(raw.get("track_number"), minimum=1, maximum=9999),
+        disc_number=_metadata_int(raw.get("disc_number"), minimum=1, maximum=9999),
+        release_year=_metadata_int(
+            raw.get("release_year"), minimum=1000, maximum=9999
+        ),
+        release_date=_metadata_date(raw.get("release_date")),
+    )
+    if metadata == SourceMetadata():
+        return None
+    return metadata
+
+
 def build_normalized_analysis(
     raw_info: dict[str, Any],
     *,
@@ -769,6 +877,7 @@ def build_normalized_analysis(
         collection=(
             normalize_collection(raw_info, analysis_id=analysis_id) if is_collection else None
         ),
+        source_metadata=None if is_collection else normalize_source_metadata(raw_info),
         platform_hint=platform_hint,
         platform_mismatch=has_platform_mismatch(platform_hint, detected),
     )

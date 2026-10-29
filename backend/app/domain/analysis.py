@@ -193,6 +193,23 @@ class CollectionInfo(BaseModel):
     )
 
 
+class SourceMetadata(BaseModel):
+    """Explicit source-provided music fields of a single item (ARCHITECTURE.md §34).
+
+    Only whitelisted extractor fields are carried; nothing is derived from
+    titles, channels, playlists or upload dates.
+    """
+
+    track: str | None = None
+    artists: list[str] = Field(default_factory=list)
+    album: str | None = None
+    album_artists: list[str] = Field(default_factory=list)
+    track_number: int | None = None
+    disc_number: int | None = None
+    release_year: int | None = None
+    release_date: str | None = None
+
+
 class NormalizedAnalysis(BaseModel):
     """The normalized analysis result returned to the frontend."""
 
@@ -209,6 +226,8 @@ class NormalizedAnalysis(BaseModel):
     content_type: Literal["single", "collection"]
     formats: list[NormalizedFormat] = Field(default_factory=list)
     collection: CollectionInfo | None = None
+    # Single items only; older persisted results without it stay readable.
+    source_metadata: SourceMetadata | None = None
     platform_hint: str | None = None
     platform_mismatch: bool = False
 
