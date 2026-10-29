@@ -4,12 +4,14 @@ from datetime import UTC, datetime
 from typing import Literal, cast
 
 from app.domain.jobs import (
+    ORIGINAL_OUTPUT_PROFILE,
     CollectionProfile,
     JobDto,
     JobErrorBody,
     JobItemDto,
     JobProgress,
     JobStatus,
+    OutputProfile,
     collection_child_retryable,
     collection_retryable,
     job_error_code_retryable,
@@ -43,6 +45,12 @@ def job_to_dto(record: DownloadJob, items: list[JobItem] | None = None) -> JobDt
             CollectionProfile.model_validate_json(record.collection_profile_json)
             if record.collection_profile_json else CollectionProfile()
         ) if record.job_type == "collection" else None,
+        # Only NULL means legacy Original; any other stored value is validated
+        # as-is, so corrupt values fail instead of silently reading Original.
+        output_profile=cast(
+            OutputProfile,
+            ORIGINAL_OUTPUT_PROFILE if record.output_profile is None else record.output_profile,
+        ),
         total_items=record.total_items if record.job_type == "collection" else None,
         completed_items=record.completed_items if record.job_type == "collection" else None,
         failed_items=record.failed_items if record.job_type == "collection" else None,

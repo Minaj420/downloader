@@ -53,13 +53,15 @@ def test_upgrade_0004_preserves_every_legacy_single_field(tmp_path: Path) -> Non
         before = [dict(row) for row in connection.execute(
             text("SELECT * FROM download_jobs ORDER BY id")
         ).mappings()]
-    upgrade(database, "0006")
+    # Head: the ORM reads every current column, including later additive ones.
+    upgrade(database, "head")
     with Session(engine) as session:
         for old in before:
             job = session.get(DownloadJob, old["id"])
             assert job is not None
             assert job.status == old["status"] and job.variant_id == old["variant_id"]
             assert job.final_path == old["final_path"] and job.job_type == "single"
+            assert job.output_profile is None
     with engine.connect() as connection:
         after = [dict(row) for row in connection.execute(
             text("SELECT * FROM download_jobs ORDER BY id")
@@ -74,7 +76,8 @@ def test_upgrade_0004_preserves_every_legacy_single_field(tmp_path: Path) -> Non
         assert connection.scalar(text("SELECT count(*) FROM library_items")) == 0
         assert connection.scalar(text("SELECT count(*) FROM media_files")) == 0
         assert all(row["collection_cancel_requested_at"] is None for row in after)
-        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0006"
+        assert all(row["output_profile"] is None for row in after)
+        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0007"
     engine.dispose()
 
 
@@ -133,10 +136,94 @@ def test_0006_preserves_0005_collections_children_catalog_and_downgrades(tmp_pat
     engine.dispose()
 
 
+def test_0007_adds_nullable_output_profile_preserving_0006_rows_and_downgrades(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "output-profile-legacy.sqlite"
+    upgrade(database, "0006")
+    engine = create_engine(f"sqlite:///{database}")
+    tables = ("download_jobs", "job_items", "library_items", "media_files", "activity_events")
+    with engine.begin() as connection:
+        connection.execute(text("""
+            INSERT INTO download_jobs (id, owner_id, analysis_id, source_url, title,
+                variant_id, destination, conflict_policy, keep_app_copy, status,
+                progress_percent, downloaded_bytes, total_bytes, speed_bytes_per_second,
+                eta_seconds, staging_path, final_path, error_code, error_message,
+                error_detail, created_at, updated_at, started_at, completed_at,
+                job_type, total_items, completed_items, failed_items, collection_mode,
+                collection_profile_json, collection_cancel_requested_at)
+            VALUES ('parent', 'owner', 'analysis', 'url', 'title', '', 'app_library',
+                'skip', 0, 'cancelled', 50, NULL, NULL, NULL, NULL, NULL, NULL,
+                'cancelled', 'Cancelled', NULL, '2026-01-01', '2026-01-02', '2026-01-01',
+                '2026-01-02', 'collection', 2, 1, 0, 'video', '{"max_height": 720}',
+                '2026-01-02'),
+                ('single', 'owner', 'analysis', 'url', 'single', 'audio-opus', 'app_library',
+                'skip', 0, 'failed', 40, 4, 10, 2, 3, 'staging', NULL, 'network_error',
+                'message', 'detail', '2026-01-01', '2026-01-02', '2026-01-01', '2026-01-02',
+                'single', 1, 0, 0, NULL, NULL, NULL)
+        """))
+        connection.execute(text("""
+            INSERT INTO job_items (id, job_id, item_id, source_order, source_id, source_url,
+                title, playlist_index, status, progress_percent, final_path, error_code,
+                created_at, updated_at)
+            VALUES ('done', 'parent', 'item1', 1, 'src1', 'url1', 'One', 3, 'completed', 100,
+                    'video/01 - One.mp4', NULL, '2026-01-01', '2026-01-01'),
+                ('stopped', 'parent', 'item2', 4, NULL, 'url2', NULL, NULL, 'cancelled', 0,
+                    NULL, 'cancelled', '2026-01-01', '2026-01-01')
+        """))
+        connection.execute(text("""
+            INSERT INTO library_items
+                (id, job_id, owner_id, source_url, title, media_type, format, created_at)
+            VALUES ('done', 'parent', 'owner', 'url1', 'One', 'video', 'mp4', '2026-01-01')
+        """))
+        connection.execute(text("""
+            INSERT INTO media_files (library_item_id, storage_type, path, size_bytes, created_at)
+            VALUES ('done', 'app_library', 'video/01 - One.mp4', 10, '2026-01-01')
+        """))
+        connection.execute(text("""
+            INSERT INTO activity_events (job_id, level, event_type, message, created_at)
+            VALUES ('parent', 'info', 'job', 'Queued', '2026-01-01'),
+                ('single', 'error', 'job', 'Failed: x', '2026-01-02')
+        """))
+        before = {table: [dict(row) for row in connection.execute(
+            text(f"SELECT * FROM {table}")
+        ).mappings()] for table in tables}
+    upgrade(database, "0007")
+    with engine.connect() as connection:
+        after = {table: [dict(row) for row in connection.execute(
+            text(f"SELECT * FROM {table}")
+        ).mappings()] for table in tables}
+        for row in after["download_jobs"]:
+            assert row.pop("output_profile") is None
+        assert after == before
+        column = next(c for c in inspect(connection).get_columns("download_jobs")
+                      if c["name"] == "output_profile")
+        assert column["nullable"] and column["default"] is None
+        assert str(column["type"]) == "VARCHAR(16)"
+        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0007"
+    with Session(engine) as session:
+        assert {job.id: job.output_profile for job in session.query(DownloadJob)} == {
+            "parent": None, "single": None,
+        }
+    config = Config()
+    config.set_main_option("script_location", str(MIGRATIONS_DIR))
+    config.set_main_option("sqlalchemy.url", f"sqlite:///{database}")
+    command.downgrade(config, "0006")
+    with engine.connect() as connection:
+        assert {table: [dict(row) for row in connection.execute(
+            text(f"SELECT * FROM {table}")
+        ).mappings()] for table in tables} == before
+        assert "output_profile" not in {
+            c["name"] for c in inspect(connection).get_columns("download_jobs")
+        }
+        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0006"
+    engine.dispose()
+
+
 @pytest.mark.parametrize("table_name", ["download_jobs", "job_items"])
 def test_clean_migration_matches_orm_schema(tmp_path: Path, table_name: str) -> None:
     database = tmp_path / "clean.sqlite"
-    upgrade(database, "0006")
+    upgrade(database, "head")
     engine = create_engine(f"sqlite:///{database}")
     inspector = inspect(engine)
     table = Base.metadata.tables[table_name]

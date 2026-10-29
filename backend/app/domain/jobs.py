@@ -93,7 +93,7 @@ _MESSAGES_BY_CODE: dict[JobErrorCode, str] = {
     JobErrorCode.INVALID_SELECTION: (
         "Select 1 to 200 distinct available items from this analysis snapshot."
     ),
-    JobErrorCode.INVALID_PROFILE: "This collection output preference is not supported.",
+    JobErrorCode.INVALID_PROFILE: "This output preference is not supported.",
     JobErrorCode.INVALID_STATE: "This job has already finished.",
     JobErrorCode.UNSUPPORTED_URL: "The source is no longer supported for download.",
     JobErrorCode.YT_DLP_MISSING: (
@@ -180,6 +180,35 @@ def collection_retryable(
     )
 
 
+# Output format choice, separate from the source variant / quality preference.
+# Exact codec/bitrate presets are not defined here.
+OutputProfile = Literal["original", "mp3", "wav", "m4a", "opus", "flac", "mp4"]
+ORIGINAL_OUTPUT_PROFILE: OutputProfile = "original"
+AUDIO_OUTPUT_PROFILES: frozenset[str] = frozenset(
+    {"original", "mp3", "wav", "m4a", "opus", "flac"}
+)
+VIDEO_OUTPUT_PROFILES: frozenset[str] = frozenset({"original", "mp4"})
+
+
+def output_profile_allowed(media_kind: str, profile: OutputProfile) -> bool:
+    """Whether ``profile`` belongs to the audio or video output set."""
+    allowed = AUDIO_OUTPUT_PROFILES if media_kind == "audio" else VIDEO_OUTPUT_PROFILES
+    return profile in allowed
+
+
+def require_runnable_output_profile(stored: str | None) -> None:
+    """Temporary fail-closed gate until conversion runtime exists (M6.4b).
+
+    Only NULL (legacy) and ``original`` run; every other stored value, known
+    or not, fails with INVALID_PROFILE before any analysis or media I/O.
+    """
+    if stored is not None and stored != ORIGINAL_OUTPUT_PROFILE:
+        raise JobError(
+            JobErrorCode.INVALID_PROFILE,
+            detail=f"output profile {stored!r} is not runnable yet",
+        )
+
+
 class JobProgress(BaseModel):
     percent: float = 0.0
     downloaded_bytes: int | None = None
@@ -229,6 +258,7 @@ class JobDto(BaseModel):
     job_type: Literal["single", "collection"] = "single"
     collection_mode: Literal["audio", "video"] | None = None
     collection_profile: CollectionProfile | None = None
+    output_profile: OutputProfile = ORIGINAL_OUTPUT_PROFILE
     # Single migration counters are structural defaults, not runtime facts.
     total_items: int | None = None
     completed_items: int | None = None

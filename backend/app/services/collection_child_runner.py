@@ -17,7 +17,13 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.domain.jobs import CollectionProfile, JobError, JobErrorCode, JobStatus
+from app.domain.jobs import (
+    CollectionProfile,
+    JobError,
+    JobErrorCode,
+    JobStatus,
+    require_runnable_output_profile,
+)
 from app.domain.platforms import detect_platform
 from app.integrations.ffmpeg import FFmpegError, FFmpegProcessor
 from app.integrations.ytdlp import DownloadProgress, YtDlpAnalyzer, YtDlpDownloader, YtDlpError
@@ -222,6 +228,9 @@ class _ChildExecution:
                     select(DownloadJob, JobItem).join(JobItem, JobItem.job_id == DownloadJob.id)
                     .where(DownloadJob.id == self.job_id, JobItem.id == self.child_id)
                 )).one()
+            # Parent-level output choice; fail this child closed before probe
+            # until conversion exists. Parent settlement stays with the caller.
+            require_runnable_output_profile(parent.output_profile)
             await self.check()
             source = await self.deps.analyzer.probe_child(child.source_url)
             await self.check()

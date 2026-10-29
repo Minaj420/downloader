@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.api.dependencies import get_actor
 from app.domain.actors import Actor
-from app.domain.jobs import CollectionProfile, JobError
+from app.domain.jobs import CollectionProfile, JobError, OutputProfile
 from app.models.jobs import ActivityEvent, DownloadJob
 from app.repositories import activity
 from app.services.job_mapping import job_to_dto
@@ -23,6 +23,8 @@ class CreateJobRequest(BaseModel):
     item_ids: list[str] | None = Field(default=None, min_length=1, max_length=200, strict=True)
     collection_mode: Literal["audio", "video"] | None = None
     collection_profile: CollectionProfile | None = None
+    # Common to single and collection; outside the mutual-exclusion set.
+    output_profile: OutputProfile | None = None
     destination: str = APP_LIBRARY_DESTINATION
 
     @model_validator(mode="after")
@@ -89,6 +91,7 @@ async def create_job(
             item_ids=request.item_ids,
             collection_mode=request.collection_mode,
             collection_profile=request.collection_profile,
+            output_profile=request.output_profile,
         )
     except JobError as exc:
         return _error_response(exc)

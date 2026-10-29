@@ -18,11 +18,15 @@ from app.domain.actors import Actor
 from app.domain.analysis import COLLECTION_SELECTED_ITEM_LIMIT, NormalizedAnalysis
 from app.domain.jobs import (
     ACTIVE_JOB_STATUSES,
+    ORIGINAL_OUTPUT_PROFILE,
     CollectionProfile,
     JobError,
     JobErrorCode,
     JobStatus,
+    OutputProfile,
     job_error_code_retryable,
+    output_profile_allowed,
+    require_runnable_output_profile,
 )
 from app.models.analysis import AnalysisSession
 from app.models.jobs import DownloadJob, JobItem
@@ -65,6 +69,7 @@ class JobService:
         item_ids: list[str] | None = None,
         collection_mode: str | None = None,
         collection_profile: CollectionProfile | None = None,
+        output_profile: OutputProfile | None = None,
     ) -> DownloadJob:
         if destination != APP_LIBRARY_DESTINATION:
             raise JobError(JobErrorCode.INVALID_DESTINATION)
@@ -114,10 +119,23 @@ class JobService:
             )
         elif item_ids is not None or collection_mode is not None or collection_profile is not None:
             raise JobError(JobErrorCode.INVALID_SELECTION)
-        elif not any(fmt.variant_id == variant_id for fmt in normalized.formats):
+        selected = None if is_collection else next(
+            (fmt for fmt in normalized.formats if fmt.variant_id == variant_id), None
+        )
+        if not is_collection and selected is None:
             raise JobError(
                 JobErrorCode.INVALID_VARIANT, detail=f"unknown variant {variant_id}"
             )
+        output = ORIGINAL_OUTPUT_PROFILE if output_profile is None else output_profile
+        media_kind = (
+            collection_mode if selected is None
+            else "audio" if selected.kind == "audio_only" else "video"
+        )
+        if not output_profile_allowed(media_kind or "", output):
+            raise JobError(JobErrorCode.INVALID_PROFILE)
+        # Temporary M6.4b gate: conversion runtime is not implemented, so a
+        # non-Original choice is rejected before any row, Activity or notify.
+        require_runnable_output_profile(output)
 
         now = datetime.now(UTC)
         record = DownloadJob(
@@ -133,6 +151,8 @@ class JobService:
                 profile.model_dump_json()
                 if is_collection and profile.max_height is not None else None
             ),
+            # Original (explicit, omitted or null) is stored as NULL, like legacy rows.
+            output_profile=None if output == ORIGINAL_OUTPUT_PROFILE else output,
             destination=destination,
             conflict_policy=SKIP_EXISTING_POLICY,
             keep_app_copy=False,

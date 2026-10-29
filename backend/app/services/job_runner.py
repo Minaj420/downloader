@@ -25,7 +25,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.domain.analysis import NormalizedAnalysis, NormalizedFormat
-from app.domain.jobs import ACTIVE_JOB_STATUSES, JobError, JobErrorCode, JobStatus
+from app.domain.jobs import (
+    ACTIVE_JOB_STATUSES,
+    JobError,
+    JobErrorCode,
+    JobStatus,
+    require_runnable_output_profile,
+)
 from app.domain.library import MediaStorageType
 from app.integrations.ffmpeg import FFmpegError, FFmpegFailureKind, FFmpegProcessor
 from app.integrations.ytdlp import (
@@ -267,6 +273,8 @@ class _JobExecution:
             await self._fail(JobError(JobErrorCode.INTERNAL_ERROR, detail=repr(exc)))
 
     async def _execute(self, record: DownloadJob) -> None:
+        # Fail closed before analysis/download/storage until conversion exists.
+        require_runnable_output_profile(record.output_profile)
         analysis = await _get_analysis(
             self._deps.session_factory, record.analysis_id, record.owner_id
         )

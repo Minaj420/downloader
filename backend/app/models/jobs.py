@@ -61,6 +61,9 @@ class DownloadJob(Base):
     collection_profile_json: Mapped[str | None] = mapped_column(Text)
     # Internal durable request for this attempt; retained through terminal settlement.
     collection_cancel_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Shared single/collection output choice; NULL is legacy Original. No
+    # CHECK constraint: readers reject unknown values instead of falling back.
+    output_profile: Mapped[str | None] = mapped_column(String(16))
     variant_id: Mapped[str] = mapped_column(String(128), nullable=False)
     destination: Mapped[str] = mapped_column(String(32), nullable=False)
     conflict_policy: Mapped[str] = mapped_column(String(16), nullable=False)
