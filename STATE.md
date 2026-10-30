@@ -4,6 +4,15 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-30.
 
 ## Şu an
 
+- M6 — Metadata ve Adlandırma → M6.4f-f2 — İkinci iptalde süreç reap TAMAMLANDI.
+  Opus görüşü alındı; uygulayıcı requested Opus / observed claude-opus-5-5 eşleşti,
+  başarı ve izin reddi yok. Kill sonrası ek iptale dayanıklı, 5 sn reap + en fazla
+  1 sn waiter drain; özgün kesinti ve çıktı temizliği korunur. D-state istisnası aşağıda.
+  Testlerin maskeleyen wait çağrıları kaldırıldı; dönüş anında returncode/PID,
+  üçüncü iptal ve bounded waiter sahipliği testli. Worker eski kodda regresyonu gösterdi.
+  Bağımsız GPT review must-fix/should-fix yok; düzeltme turu kullanılmadı.
+  Worker ve lead: adaptör + gerçek smoke 78 PASS/0 skip, hedefli Ruff/Mypy ve
+  lead diff --check PASS. Yalnız adaptör/test + STATE; full gate yok, f3 açık.
 - M6 — Metadata ve Adlandırma → M6.4f-f1 — Gerçek FFmpeg smoke TAMAMLANDI.
   Önceden alınan Opus görüşüyle yalnız test kapsamında çalışıldı. Opus uygulayıcı
   çağrısı session limit ile başarısız kaldı (requested Opus / observed claude-opus-5-5);
@@ -124,15 +133,11 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-30.
 ## Sıradaki iş
 
 WF-R1 ve dar reviewer smoke takibi tamamlandı; restart/model reload kanıtlanmadı.
-M6.4d-d1–d4, M6.4e ve M6.4f-f1 tamamlandı; sıradaki iş f2.
+M6.4d-d1–d4, M6.4e ve M6.4f-f1/f2 tamamlandı; sıradaki iş f3.
 
-1. M6 — Metadata ve Adlandırma → M6.4f-f2 — İkinci iptalde süreç reap garantisi:
-   mevcut Opus görüşünü kullanarak dar kapsamı netleştir; adapter dönüşünde returncode
-   testi kendi wait çağrısıyla eksik reap durumunu maskelemesin. OpenAI uygulaması
-   mevcut rol kurallarında yetkili değil; kullanıcı isteğiyle yalnız mevcut f1 çıktısı
-   salt-okunur doğrulandı, genel uygulayıcı politikası değiştirilmedi.
-   Ardından f3 kaba codec etiketleri/uyumlu MP4 değerlendirmesi; ürün tercihi gerekirse
-   kullanıcıya sor. F1 bu iki riski kapatmaz, M6.4f açık kalır.
+1. M6 — Metadata ve Adlandırma → M6.4f-f3 — Kaba codec etiketleri/uyumlu MP4:
+   Opus görüşüyle dar teknik kapsamı netleştir; ürün tercihi gerekirse kullanıcıya sor.
+   F1/f2 codec uyumluluğu riskini kapatmaz, M6.4f açık kalır.
 2. Takip: M6.5 metadata/etiket pipeline bağlantısı →
    M6.6 müzik yolları/katalog → M6.7 kaynak kapak → M6.8 metadata/kapak önizleme-düzenleme →
    M6.9 harici kapak arama (haklar koşullu) → M6.10 kapanış gate. Başlıklar küçük işlere bölünebilir.
@@ -189,9 +194,6 @@ Kaynaklar: PRODUCT_SPEC §13–16, ARCHITECTURE §30–34 ve §59 M6.
   ve ayrıca dönüşün tamamlandığını assert etme ayrı scoped takip; üretim hatası bulunmadı.
 - should-fix: child hata/iptal sonrası staging temizliği mevcut akışta yapılmıyor;
   dönüşüm ara dosyaları disk kullanımını artırabilir. D3 kapsamına alınmadı.
-- should-fix (M6.4c/d1 GPT review): FFmpeg `_terminate` ikinci iptalde kill gönderiyor ancak
-  process.wait tamamlanmadan dönüyor; kalıcı çalışan süreç kanıtı yok, adaptör dönüşünde reap
-  garantisi eksik. Ayrı scoped takipte iptale dayanıklı wait ve adaptör dönüşünde returncode testi.
 - should-fix: boş kuyrukta container SIGTERM sonrası 10 sn içinde kapanmadı; Podman SIGKILL kullandı.
 - should-fix: Fedora Python 3.14'te mevcut 3 backend test hatası (aşağıda).
 - should-fix (d2 GPT review): dönüşüm başarıyla dönerken iptal gelmesi senaryosu için ek test;
@@ -207,6 +209,10 @@ Kaynaklar: PRODUCT_SPEC §13–16, ARCHITECTURE §30–34 ve §59 M6.
 
 ## Son gate
 
+- 2026-10-30 macOS Python 3.14.9, M6.4f-f2 worker ve lead: adaptör + gerçek smoke
+  78 PASS/0 skip (bir Starlette deprecation uyarısı); iki değişen dosyada Ruff/Mypy
+  PASS, lead diff --check PASS. Bağımsız GPT review must-fix yok. Full gate ve
+  frontend çalıştırılmadı; M6/M6.4f kapanışı değil.
 - 2026-10-30 macOS Python 3.14.9, M6.4f-f1: OpenAI checker gerçek smoke
   19 PASS/0 skip; adaptör+smoke 76 PASS/0 skip. Lead adaptör+smoke tekrarı
   76 PASS/0 skip (bir Starlette deprecation uyarısı); yeni test Ruff ve adapter+test
@@ -264,6 +270,10 @@ Kaynaklar: PRODUCT_SPEC §13–16, ARCHITECTURE §30–34 ve §59 M6.
 
 ## Bilinen riskler
 
+- Accepted (M6.4f-f2): kill sonrası 5 sn reap + en fazla 1 sn waiter drain sınırı;
+  D-state gibi takılı süreçlerde dönüş anında reap garantisi yok. Standart asyncio
+  waiter iptalle drain edilir; sınırsız kapanış beklemesi eklenmedi. Ek iptaller özgün
+  kesintiyi değiştirmez. Test shell torun süreçleri/process-group kapsam dışı.
 - Claude tool izinleri OS sandbox değil; testler kod çalıştırır. Built-in plugin'ler CLI'da kalıyor;
   canlı review araçları yalnız Read/Grep/Glob, MCP/skills boş. Kota hatasında sessiz fallback yok.
 - Canlı log kaynak metni içerebilir; ignored tmp altında. İzleyiciden çıkış işi durdurmaz;

@@ -18,6 +18,8 @@ from app.utils.processes import ensure_process_terminated
 
 _STDERR_TAIL_BYTES = 4_000
 _TERMINATION_GRACE_SECONDS = 5.0
+_REAP_TIMEOUT_SECONDS = 5.0
+_REAP_DRAIN_SECONDS = 1.0
 
 # Local mirror of the domain output profiles minus ``original``; the adapter
 # does not import the domain layer.
@@ -237,14 +239,46 @@ class FFmpegProcessor:
 
 async def _terminate(process: asyncio.subprocess.Process) -> None:
     # A second cancellation during the grace period must not leave the child
-    # running: force kill it, then re-raise the interruption unchanged.
+    # running: force kill it, reap it, then re-raise the interruption unchanged.
     try:
         await ensure_process_terminated(process, _TERMINATION_GRACE_SECONDS)
     except BaseException:
         if process.returncode is None:
             with contextlib.suppress(ProcessLookupError):
                 process.kill()
+            await _reap_after_kill(process)
         raise
+
+
+async def _reap_after_kill(process: asyncio.subprocess.Process) -> None:
+    # Bounded and immune to further cancellations; the caller re-raises the
+    # original interruption. A child stuck in the kernel past the bound is an
+    # accepted risk. The waiter is owned here and never outlives this call.
+    loop = asyncio.get_running_loop()
+    waiter = asyncio.ensure_future(process.wait())
+    waiter.add_done_callback(_consume_outcome)
+    try:
+        await _await_until(waiter, loop.time() + _REAP_TIMEOUT_SECONDS)
+    finally:
+        if not waiter.done():
+            waiter.cancel()
+            await _await_until(waiter, loop.time() + _REAP_DRAIN_SECONDS)
+
+
+async def _await_until(waiter: asyncio.Future[int], deadline: float) -> None:
+    loop = asyncio.get_running_loop()
+    while not waiter.done():
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            return
+        # asyncio.wait leaves ``waiter`` untouched when we are cancelled.
+        with contextlib.suppress(asyncio.CancelledError):
+            await asyncio.wait({waiter}, timeout=remaining)
+
+
+def _consume_outcome(waiter: asyncio.Future[int]) -> None:
+    if not waiter.cancelled():
+        waiter.exception()
 
 
 def _has_output(output_path: Path) -> bool:

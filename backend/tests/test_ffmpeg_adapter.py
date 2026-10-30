@@ -1,5 +1,8 @@
 import asyncio
+import contextlib
+import os
 import time
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import get_args
 
@@ -655,6 +658,26 @@ def test_merge_does_not_require_output(tmp_path: Path) -> None:
     assert not output.exists()
 
 
+def _assert_reaped_now(process: asyncio.subprocess.Process) -> None:
+    # Synchronous on purpose: no await between the adapter returning and this
+    # check, so nothing else can reap the child and mask a missing reap.
+    assert process.returncode == -9
+    with pytest.raises(ProcessLookupError):
+        os.kill(process.pid, 0)
+
+
+async def _reap_leftovers(
+    processes: list[asyncio.subprocess.Process],
+    wait: Callable[[], Awaitable[int]] | None = None,
+) -> None:
+    # Test fallback only, after all observations.
+    for process in processes:
+        if process.returncode is None:
+            with contextlib.suppress(ProcessLookupError):
+                process.kill()
+            await asyncio.wait_for((wait or process.wait)(), timeout=5.0)
+
+
 def test_second_cancel_during_grace_kills_child_and_removes_output(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -672,22 +695,24 @@ def test_second_cancel_during_grace_kills_child_and_removes_output(
         task = asyncio.create_task(
             processor.convert(source, output, "mp3", on_process_started=seen.append)
         )
-        await _wait_for_started(started)
-        task.cancel()
-        await asyncio.sleep(0.3)
-        # The child ignores SIGTERM, so the task is still inside the grace wait.
-        assert not task.done()
-        assert seen[0].returncode is None
-        began = time.monotonic()
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-        assert time.monotonic() - began < 5.0
-        await asyncio.wait_for(seen[0].wait(), timeout=5.0)
+        try:
+            await _wait_for_started(started)
+            task.cancel()
+            await asyncio.sleep(0.3)
+            # The child ignores SIGTERM, so the task is still inside the grace wait.
+            assert not task.done()
+            assert seen[0].returncode is None
+            began = time.monotonic()
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            _assert_reaped_now(seen[0])
+            assert time.monotonic() - began < 5.0
+        finally:
+            await _reap_leftovers(seen)
 
     asyncio.run(run())
 
-    assert seen[0].returncode == -9
     assert not output.exists()
     assert source.read_text() == "source-media"
 
@@ -710,13 +735,189 @@ def test_interrupted_termination_on_timeout_kills_child_and_removes_output(
     seen: list[asyncio.subprocess.Process] = []
 
     async def run() -> None:
-        with pytest.raises(asyncio.CancelledError):
-            await processor.convert(source, output, "wav", on_process_started=seen.append)
-        await asyncio.wait_for(seen[0].wait(), timeout=5.0)
+        try:
+            with pytest.raises(asyncio.CancelledError):
+                await processor.convert(source, output, "wav", on_process_started=seen.append)
+            _assert_reaped_now(seen[0])
+        finally:
+            await _reap_leftovers(seen)
 
     asyncio.run(run())
 
     assert started.exists()
-    assert seen[0].returncode == -9
+    assert not output.exists()
+    assert source.read_text() == "source-media"
+
+
+class _GatedReap:
+    """Holds the post-kill ``process.wait()`` until released.
+
+    Only waits issued after the adapter's own ``kill()`` are gated, so the
+    grace-period wait inside ``ensure_process_terminated`` stays real.
+    """
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._monkeypatch = monkeypatch
+        self.task: asyncio.Task[None] | None = None
+        self.terminate_sent = asyncio.Event()
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+        self.extra_cancels: list[bool] = []
+        self.waiter: asyncio.Task[object] | None = None
+        self.waiter_cancelled = False
+        self.waiter_completed = False
+        self.original_wait: Callable[[], Awaitable[int]] | None = None
+        self._armed = False
+        self._cancel_on_enter = False
+
+    def cancel_on_enter(self) -> None:
+        self._cancel_on_enter = True
+
+    def install(self, process: asyncio.subprocess.Process) -> None:
+        original_wait = process.wait
+        original_kill = process.kill
+        original_terminate = process.terminate
+        self.original_wait = original_wait
+
+        def terminate() -> None:
+            original_terminate()
+            self.terminate_sent.set()
+
+        def kill() -> None:
+            self._armed = True
+            original_kill()
+
+        async def wait() -> int:
+            if not self._armed:
+                return await original_wait()
+            self.waiter = asyncio.current_task()
+            self.entered.set()
+            if self._cancel_on_enter:
+                asyncio.get_running_loop().call_soon(self._extra_cancel)
+            try:
+                await self.release.wait()
+            except asyncio.CancelledError:
+                self.waiter_cancelled = True
+                raise
+            result = await original_wait()
+            self.waiter_completed = True
+            return result
+
+        self._monkeypatch.setattr(process, "terminate", terminate)
+        self._monkeypatch.setattr(process, "kill", kill)
+        self._monkeypatch.setattr(process, "wait", wait)
+
+    def _extra_cancel(self) -> None:
+        assert self.task is not None
+        self.extra_cancels.append(self.task.cancel())
+
+
+def test_extra_cancel_during_reap_does_not_abort_reap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A third cancel while the killed child is being reaped is absorbed."""
+    monkeypatch.setattr(ffmpeg_module, "_TERMINATION_GRACE_SECONDS", 10.0)
+    started = tmp_path / "started"
+    binary = _write_script(
+        tmp_path, "ffmpeg", PARTIAL_IGNORE_TERM_SCRIPT.format(started=started)
+    )
+    processor = FFmpegProcessor(binary=binary)
+    source, output = _convert_paths(tmp_path, "opus")
+    seen: list[asyncio.subprocess.Process] = []
+
+    async def run() -> None:
+        gate = _GatedReap(monkeypatch)
+        gate.cancel_on_enter()
+
+        def on_started(process: asyncio.subprocess.Process) -> None:
+            seen.append(process)
+            gate.install(process)
+
+        task = asyncio.create_task(
+            processor.convert(source, output, "opus", on_process_started=on_started)
+        )
+        gate.task = task
+        try:
+            await _wait_for_started(started)
+            assert output.read_text() == "partial"
+            task.cancel()
+            await asyncio.wait_for(gate.terminate_sent.wait(), timeout=5.0)
+            began = time.monotonic()
+            task.cancel()
+            await asyncio.wait_for(gate.entered.wait(), timeout=5.0)
+            for _ in range(10):
+                await asyncio.sleep(0)
+            # The third cancel was applied to the live task but did not end it
+            # nor tear down the single reap waiter.
+            assert gate.extra_cancels == [True]
+            assert task.cancelling() == 3
+            assert not task.done()
+            assert gate.waiter is not None and not gate.waiter.done()
+            assert not gate.waiter_cancelled
+            gate.release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            _assert_reaped_now(seen[0])
+            assert gate.waiter_completed
+            assert gate.waiter.done() and not gate.waiter.cancelled()
+            assert asyncio.all_tasks() == {asyncio.current_task()}
+            assert time.monotonic() - began < 5.0
+        finally:
+            gate.release.set()
+            await _reap_leftovers(seen, gate.original_wait)
+
+    asyncio.run(run())
+
+    assert not output.exists()
+    assert source.read_text() == "source-media"
+
+
+def test_reap_wait_is_bounded_and_waiter_is_drained(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If the reap never completes, the adapter gives up after the bound and
+    cancels and drains its own waiter instead of leaking it."""
+    monkeypatch.setattr(ffmpeg_module, "_TERMINATION_GRACE_SECONDS", 10.0)
+    monkeypatch.setattr(ffmpeg_module, "_REAP_TIMEOUT_SECONDS", 0.3)
+    started = tmp_path / "started"
+    binary = _write_script(
+        tmp_path, "ffmpeg", PARTIAL_IGNORE_TERM_SCRIPT.format(started=started)
+    )
+    processor = FFmpegProcessor(binary=binary)
+    source, output = _convert_paths(tmp_path, "flac")
+    seen: list[asyncio.subprocess.Process] = []
+
+    async def run() -> None:
+        gate = _GatedReap(monkeypatch)
+
+        def on_started(process: asyncio.subprocess.Process) -> None:
+            seen.append(process)
+            gate.install(process)
+
+        task = asyncio.create_task(
+            processor.convert(source, output, "flac", on_process_started=on_started)
+        )
+        try:
+            await _wait_for_started(started)
+            task.cancel()
+            await asyncio.wait_for(gate.terminate_sent.wait(), timeout=5.0)
+            began = time.monotonic()
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            elapsed = time.monotonic() - began
+            assert gate.entered.is_set()
+            assert gate.waiter is not None
+            assert gate.waiter.done() and gate.waiter.cancelled()
+            assert gate.waiter_cancelled
+            assert not gate.waiter_completed
+            assert asyncio.all_tasks() == {asyncio.current_task()}
+            assert 0.3 <= elapsed < 5.0
+        finally:
+            gate.release.set()
+            await _reap_leftovers(seen, gate.original_wait)
+
+    asyncio.run(run())
+
     assert not output.exists()
     assert source.read_text() == "source-media"
