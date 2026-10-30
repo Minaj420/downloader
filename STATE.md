@@ -4,6 +4,16 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-30.
 
 ## Şu an
 
+- M6 — Metadata ve Adlandırma → M6.4f-f3b — H.264 profil uyumluluğu TAMAMLANDI.
+  Kullanıcının 1. seçenek onayı ve Opus teknik görüşüyle uygulandı. Uygulayıcı
+  requested Opus / observed claude-opus-5-5 eşleşti; başarı, izin reddi yok.
+  Opsiyonel h264_profile_idc tam ASCII avc1/avc3.PPCCLL kaynağından taşınır;
+  MP4'te 44/110/122/244 video transcode, diğer/eksik profil copy. AAC kuralı ve
+  Original değişmedi. Eski JSON None okur; seçim/kimlik/sıralama korunur.
+  Bağımsız GPT review bulgu yok; düzeltme turu kullanılmadı. Worker ve lead:
+  753 PASS/0 skip (21 gerçek smoke dahil), hedefli Ruff/Mypy ve lead diff --check PASS.
+  Gerçek 4:4:4 → High/yuv420p, ses paketleri ve kaynak korunması testli.
+  Üç üretim/beş test/ARCHITECTURE + STATE; full gate yok, M6.4f kapanmadı.
 - M6 — Metadata ve Adlandırma → M6.4f-f3a — MP4A alt türlerini ayırma TAMAMLANDI.
   Opus görüşü sonrası f3 ses/video olarak ayrıldı; bu iş yalnız ses etiketleme.
   Uygulayıcı requested Sonnet / observed claude-sonnet-5-5 eşleşti, başarı/izin reddi yok.
@@ -143,16 +153,14 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-30.
 ## Sıradaki iş
 
 WF-R1 ve dar reviewer smoke takibi tamamlandı; restart/model reload kanıtlanmadı.
-M6.4d-d1–d4, M6.4e ve M6.4f-f1/f2/f3a tamamlandı; sıradaki iş onaylanan f3b uygulaması.
+M6.4d-d1–d4, M6.4e ve M6.4f-f1/f2/f3a/f3b tamamlandı.
 
-1. M6 — Metadata ve Adlandırma → M6.4f-f3b — H.264 profil uyumluluğu:
-   Opus görüşü alındı; kullanıcı 1. seçeneği onayladı (2026-10-30): bilinen
-   High10/4:2:2/4:4:4 profilleri transcode, olağan 8-bit 4:2:0 profilleri copy;
-   profil bilgisi olmayan H.264 kaynaklar copy. Original değişmez. Bu yalnız karar
-   kaydıdır, f3b uygulanmadı. Opsiyonel profil alanı/geriye uyum tasarımını Opus ile
-   netleştirip scoped Opus uygulaması ve bağımsız GPT review ile ilerle.
-   F3c runtime ffprobe/interlaced doğrulaması bu onaya dahil değil; ek altyapı ekleme.
-   Her cihazda uyumluluk garantisi yok; f3a video uyumluluk riskini kapatmaz.
+1. M6 — Metadata ve Adlandırma → M6.4f-f4 — Smoke encoder önkontrolü takibi:
+   f1 GPT should-fix: MP4 kaynak üretimindeki ffv1/pcm_s16le bağımlılıklarını
+   önkontrole ekleyen ayrı mekanik iş. Ardından M6.4f kapanış değerlendirmesi;
+   milestone full gate checker ile, eski full gate güncel sayılmaz.
+   F3c runtime ffprobe/interlaced doğrulaması kullanıcı 1. seçenek kapsamı dışında;
+   ek altyapı ekleme. Eksik/yanlış profil, interlaced ve eski snapshot riski kabul.
 2. Takip: M6.5 metadata/etiket pipeline bağlantısı →
    M6.6 müzik yolları/katalog → M6.7 kaynak kapak → M6.8 metadata/kapak önizleme-düzenleme →
    M6.9 harici kapak arama (haklar koşullu) → M6.10 kapanış gate. Başlıklar küçük işlere bölünebilir.
@@ -229,6 +237,11 @@ Kaynaklar: PRODUCT_SPEC §13–16, ARCHITECTURE §30–34 ve §59 M6.
 
 ## Son gate
 
+- 2026-10-30 macOS Python 3.14.9, M6.4f-f3b worker ve lead: normalizer/plan/
+  collection resolver/single conversion/collection conversion/prepared media/
+  output profiles/jobs/gerçek smoke dokuz dosyada 753 PASS/0 skip, iki deprecation
+  uyarısı. Değişen sekiz Python dosyasında Ruff/Mypy PASS; lead diff --check PASS.
+  GPT review bulgu yok. Full gate/frontend çalıştırılmadı; milestone kapanışı değil.
 - 2026-10-30 macOS Python 3.14.9, M6.4f-f3a: worker ve lead yedi dosyada
   474 pytest PASS/0 skip (20 gerçek smoke dahil, bir Starlette deprecation uyarısı).
   Lead son ağaçta değişen beş dosyada Ruff/Mypy ve diff --check PASS; worker Ruff
@@ -309,8 +322,10 @@ Kaynaklar: PRODUCT_SPEC §13–16, ARCHITECTURE §30–34 ve §59 M6.
   snapshot aac etiketleri yeniden yazılmadı, yanlış copy seçimi riski devam eder.
   MPEG audio 69/6b (ve 40.34) layer bilgisini kesinleştirmez; nadir MP3 dışı layer
   mp3 sayılabilir. Staged runtime probe bu işte eklenmedi.
-- Accepted (M6.4c/d1, f3b/c kararını bekliyor): avc1/avc3→h264 etiketi kaba;
-  High10/4:4:4/interlaced copy edilip oynatıcıda açılmayan "uyumlu MP4" üretebilir.
+- Accepted (M6.4f-f3b, kullanıcı 1. seçenek): bilinen 44/110/122/244 profiller artık
+  transcode. Eski snapshot'larda profil alanı yoktur, copy sürer. Eksik/bozuk/ondalık
+  codec dizesi, diğer idc veya interlaced kaynaklarda copy uyumsuzluğu kalabilir;
+  kaynak yanlış etiketlemesi/runtime probe kapsam dışı, her cihazda garanti yok.
   Ayrıca conversion timeout sabit 3600 sn ve alt sınır doğrulaması yok (düşük etki).
 - Accepted (M6.4b tasarım): elle bozulmuş bilinmeyen output profili DTO/list/SSE doğrulamasını
   ve ilk snapshot nedeniyle normal failed sonlandırmayı bozabilir; Original'a sessiz düşüş yok.

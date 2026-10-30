@@ -1,8 +1,9 @@
 """Pure stream-copy vs. transcode decision for an explicit output profile.
 
 Copy is chosen only on an exact normalized codec match; an unknown or missing
-codec always transcodes. WAV and FLAC are always encoded with their fixed
-profile. Incompatible source/profile combinations fail before any media I/O.
+codec always transcodes; MP4 also transcodes denylisted H.264 profiles. WAV and
+FLAC are always encoded with their fixed profile. Incompatible source/profile
+combinations fail before any media I/O.
 """
 
 from typing import NamedTuple, cast, get_args
@@ -22,6 +23,9 @@ _OUTPUT_CODECS: dict[str, str] = {
 }
 _COPYABLE_AUDIO: dict[str, str] = {"mp3": "mp3", "m4a": "aac", "opus": "opus", "mp4": "aac"}
 _MP4_COPYABLE_VIDEO = "h264"
+# Known poorly supported H.264 profiles (CAVLC 4:4:4 Intra, High 10, High 4:2:2,
+# High 4:4:4 Predictive) are transcoded; missing or other profile_idc copies.
+_MP4_TRANSCODE_H264_PROFILES = frozenset({44, 110, 122, 244})
 
 
 class ConversionPlan(NamedTuple):
@@ -78,6 +82,9 @@ def plan_conversion(
         audio_codec = companion.audio_codec
     else:
         audio_codec = selected.audio_codec
-    copy_video = selected.video_codec == _MP4_COPYABLE_VIDEO
+    copy_video = (
+        selected.video_codec == _MP4_COPYABLE_VIDEO
+        and selected.h264_profile_idc not in _MP4_TRANSCODE_H264_PROFILES
+    )
     copy_audio = audio_codec == _COPYABLE_AUDIO["mp4"]
     return ConversionPlan(copy_audio, copy_video, output_codec, copy_audio and copy_video)

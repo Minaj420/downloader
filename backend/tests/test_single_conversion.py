@@ -126,6 +126,7 @@ class SingleRun:
 
     async def seed(
         self, formats: list[NormalizedFormat], variant: str, profile: str | None,
+        *, legacy_formats: bool = False,
     ) -> None:
         now = datetime.now(UTC)
         analysis = NormalizedAnalysis(
@@ -133,6 +134,11 @@ class SingleRun:
             detected_platform="generic", detected_platform_label="Generic",
             content_type="single", formats=formats, duration_seconds=60.0,
         )
+        # Snapshots persisted before ``h264_profile_idc`` existed lack the key.
+        result_json = analysis.model_dump_json(
+            exclude={"formats": {"__all__": {"h264_profile_idc"}}} if legacy_formats else None
+        )
+        assert ("h264_profile_idc" in result_json) is not legacy_formats
         job = DownloadJob(
             id="job", owner_id="owner", analysis_id="analysis", source_url="https://example.com/v",
             title=TITLE, variant_id=variant, destination="app_library", conflict_policy="skip",
@@ -143,7 +149,7 @@ class SingleRun:
         async with self.sessions() as session:
             session.add(AnalysisSession(
                 id="analysis", owner_id="owner", source_url="https://example.com/v",
-                status="completed", normalized_result_json=analysis.model_dump_json(),
+                status="completed", normalized_result_json=result_json,
                 created_at=now, expires_at=now + timedelta(hours=1),
             ))
             await job_repo.add_job(session, job)
@@ -170,11 +176,11 @@ class SingleRun:
 
 async def execute_run(
     tmp_path: Path, formats: list[NormalizedFormat], variant: str, profile: str | None,
-    *, prepare: Callable[[SingleRun], None] | None = None,
+    *, prepare: Callable[[SingleRun], None] | None = None, legacy_formats: bool = False,
 ) -> tuple[SingleRun, Facts]:
     run = SingleRun(tmp_path)
     try:
-        await run.seed(formats, variant, profile)
+        await run.seed(formats, variant, profile, legacy_formats=legacy_formats)
         if prepare is not None:
             prepare(run)
         await run.run()
@@ -272,6 +278,28 @@ async def test_mp4_video_only_merge_then_convert_with_single_post_processing_ste
     ]
     [item] = facts.items
     assert (item.codec, item.bitrate) == ("h264", bitrate)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("legacy_formats, copy_video, bitrate", [
+    (False, False, None),
+    (True, True, 1500.0),
+])
+async def test_mp4_stored_h264_profile_drives_video_copy_and_catalog(
+    tmp_path: Path, legacy_formats: bool, copy_video: bool, bitrate: float | None,
+) -> None:
+    high10 = fmt("m", MUXED, video="h264", audio="aac", bitrate=1500.0).model_copy(
+        update={"h264_profile_idc": 110}
+    )
+    run, facts = await execute_run(
+        tmp_path, [high10], "m", "mp4", legacy_formats=legacy_formats,
+    )
+    assert (facts.record.status, facts.record.final_path) == ("completed", f"video/{TITLE}.mp4")
+    assert run.media.calls == ["download:raw-m", "convert:mp4"]
+    assert run.media.conversions == [("media.mp4", "converted.mp4", True, copy_video)]
+    [item] = facts.items
+    assert (item.media_type, item.format, item.codec, item.bitrate) == (
+        "video", "mp4", "h264", bitrate)
 
 
 # --- Original regression ------------------------------------------------------------

@@ -30,6 +30,24 @@ def test_preserves_all_source_streams_not_ui_representatives() -> None:
     assert plan.companion is not None
 
 
+@pytest.mark.parametrize("vcodec, idc", [
+    ("avc1.6e0028", 110), ("avc3.f4001e", 244), ("avc1.640028", 100), ("avc1", None),
+])
+def test_selected_child_carries_h264_profile_idc(vcodec: str, idc: int | None) -> None:
+    source = {"formats": [
+        stream("small", height=360, vcodec="avc1.42e01e", acodec="none"),
+        stream("big", height=1080, vcodec=vcodec, acodec="none"),
+        stream("audio", vcodec="none", acodec="mp4a.40.2", ext="m4a", abr=128),
+    ]}
+    plan = resolve_native_child(source, mode="video")
+    assert plan.selected.format_id == "big"
+    assert (plan.selected.video_codec, plan.selected.h264_profile_idc) == ("h264", idc)
+    assert plan.companion is not None
+    assert plan.companion.h264_profile_idc is None
+    small = resolve_native_child(source, mode="video", profile=CollectionProfile(max_height=720))
+    assert small.selected.h264_profile_idc == 66
+
+
 def test_audio_uses_extractor_preference_not_cross_codec_bitrate() -> None:
     source = {"formats": [
         stream("a", vcodec="none", acodec="aac", ext="m4a", abr=256),

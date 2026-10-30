@@ -136,6 +136,9 @@ class NormalizedFormat(BaseModel):
     UI never displays it. ``label`` is the application-level display label
     for the primary choices list (e.g. ``Best Available (1080p)`` or
     ``1080p``); it describes the chosen output, not the low-level stream.
+    ``h264_profile_idc`` is the H.264 ``profile_idc`` from an exact
+    ``avc1/avc3.PPCCLL`` source codec string; ``None`` when unknown, and on
+    older persisted results without the field.
     """
 
     variant_id: str
@@ -148,6 +151,7 @@ class NormalizedFormat(BaseModel):
     height: int | None = None
     fps: float | None = None
     video_codec: str | None = None
+    h264_profile_idc: int | None = None
     audio_codec: str | None = None
     bitrate_kbps: float | None = None
     filesize_bytes: int | None = None

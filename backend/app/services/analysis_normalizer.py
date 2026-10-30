@@ -113,6 +113,11 @@ _MP4A_DETAIL_LABELS = {
 }
 
 
+# RFC 6381 ``avc1/avc3.PPCCLL``: exactly six hex digits, the first byte is
+# ``profile_idc``. Bare or other forms (decimal ``avc1.100.40``) are unknown.
+_AVC_CODEC = re.compile(r"avc[13]\.([0-9a-f]{2})[0-9a-f]{4}")
+
+
 def _optional_number(value: object) -> float | None:
     if isinstance(value, (int, float)) and value > 0:
         return float(value)
@@ -152,6 +157,14 @@ def _codec_label(value: str | None) -> str | None:
     if base == "mp4a":
         return _MP4A_DETAIL_LABELS.get(detail, "mp4a")
     return _CODEC_LABELS.get(base, base)
+
+
+def _h264_profile_idc(value: str | None) -> int | None:
+    if value is None:
+        return None
+    codec = value.strip()
+    match = _AVC_CODEC.fullmatch(codec.lower()) if codec.isascii() else None
+    return int(match.group(1), 16) if match else None
 
 
 def _codec_value(value: object) -> str | None:
@@ -470,6 +483,7 @@ def _parse_format(entry: Any) -> NormalizedFormat | None:
         height=height,
         fps=_optional_number(entry.get("fps")),
         video_codec=_codec_label(video_codec_raw) if has_video else None,
+        h264_profile_idc=_h264_profile_idc(video_codec_raw),
         audio_codec=_codec_label(audio_codec_raw) if has_audio else None,
         bitrate_kbps=bitrate,
         filesize_bytes=exact_size,

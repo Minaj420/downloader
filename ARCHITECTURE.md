@@ -514,6 +514,8 @@ M6 decisions (approved; planned, not implemented; PRODUCT_SPEC §8, §14): Origi
 
 Explicit conversion (approved; planned, not implemented): conversion runs through this FFmpeg adapter and the existing prepared_media/staging/storage boundaries; there is no separate converter or runner. An explicitly selected output that cannot be produced fails the job/child; no silent publish of the original in a different format. Optional tag/artwork failure never reverts a ready target to the pre-conversion source format. Missing/unsupported encoder error handling is later technical design; no encoder is guaranteed per FFmpeg build. MP4 (compatible) requires real H.264/AAC output (copy/remux of compatible streams, transcode otherwise). Current runtime (`prepared_media.py`, `integrations/ffmpeg.py`) only downloads and merges streams with copy; it does no conversion, tagging, artwork or remux. Historical M5 contracts that rejected conversion/accepted native-only remain a record of M5 and are superseded for new downloads by the M6 plan.
 
+H.264 profile compatibility (approved, M6.4f-f3b): normalized formats carry an additive optional `h264_profile_idc` parsed only from an exact source `avc1/avc3.PPCCLL` codec string (codec label stays `h264`; older persisted results without it read as unknown). MP4 (compatible) transcodes video only for the denylisted profiles High 10, High 4:2:2, High 4:4:4 Predictive and CAVLC 4:4:4 Intra (`profile_idc` 110/122/244/44); usual, other and missing profiles keep stream copy, and the AAC audio rule is unchanged. There is no runtime probe or interlace detection, so player compatibility is not guaranteed for sources with missing profile information; Original is unchanged.
+
 ---
 
 # 15. Queue Architecture

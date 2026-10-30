@@ -100,6 +100,66 @@ def test_mp4_video_only_uses_companion_audio(
     )
 
 
+_DENIED_H264_IDC = [44, 110, 122, 244]  # CAVLC 4:4:4, High 10, High 4:2:2, High 4:4:4
+_COPIED_H264_IDC = [None, 66, 77, 88, 100, 0, 1, 118, 128, 255]  # usual, missing, other
+
+
+def h264(
+    kind: MediaFormatKind, idc: int | None, audio_codec: str | None = None,
+) -> NormalizedFormat:
+    return fmt(kind, "h264", audio_codec).model_copy(update={"h264_profile_idc": idc})
+
+
+@pytest.mark.parametrize("idc", _DENIED_H264_IDC)
+@pytest.mark.parametrize("audio_codec, copy_audio", [("aac", True), ("opus", False)])
+def test_mp4_denylisted_h264_profile_transcodes_video(
+    idc: int, audio_codec: str, copy_audio: bool,
+) -> None:
+    muxed_plan = plan_conversion("mp4", h264(MediaFormatKind.MUXED, idc, audio_codec), None)
+    companion_plan = plan_conversion(
+        "mp4", h264(MediaFormatKind.VIDEO_ONLY, idc), audio(audio_codec),
+    )
+    for plan in (muxed_plan, companion_plan):
+        assert plan == ConversionPlan(copy_audio, False, "h264", False)
+
+
+@pytest.mark.parametrize("idc", _COPIED_H264_IDC)
+@pytest.mark.parametrize("audio_codec, copy_audio", [("aac", True), ("opus", False)])
+def test_mp4_usual_missing_or_unlisted_h264_profile_copies_video(
+    idc: int | None, audio_codec: str, copy_audio: bool,
+) -> None:
+    muxed_plan = plan_conversion("mp4", h264(MediaFormatKind.MUXED, idc, audio_codec), None)
+    companion_plan = plan_conversion(
+        "mp4", h264(MediaFormatKind.VIDEO_ONLY, idc), audio(audio_codec),
+    )
+    for plan in (muxed_plan, companion_plan):
+        assert plan == ConversionPlan(copy_audio, True, "h264", copy_audio)
+
+
+@pytest.mark.parametrize("idc", [*_DENIED_H264_IDC, None, 100])
+def test_profile_idc_without_h264_label_never_copies_video(idc: int | None) -> None:
+    source = fmt(MediaFormatKind.MUXED, "hevc", "aac").model_copy(
+        update={"h264_profile_idc": idc}
+    )
+    assert plan_conversion("mp4", source, None) == ConversionPlan(True, False, "h264", False)
+
+
+@pytest.mark.parametrize("raw_vcodec, copy_video", [
+    ("avc1.6e0028", False), ("avc1.7a0028", False), ("avc3.f4001e", False),
+    ("avc1.2c001f", False), ("avc1.42e01e", True), ("avc1.4d401f", True),
+    ("avc1.58a01e", True), ("avc1.640028", True), ("avc1", True), ("avc1.100.40", True),
+])
+def test_normalized_h264_profile_drives_mp4_video_copy(raw_vcodec: str, copy_video: bool) -> None:
+    muxed_source = source_stream("m", raw_vcodec, "mp4a.40.2")
+    video_only_source = source_stream("v", raw_vcodec, "none")
+    audio_source = source_stream("a", "none", "mp4a.40.2")
+    for plan in (
+        plan_conversion("mp4", muxed_source, None),
+        plan_conversion("mp4", video_only_source, audio_source),
+    ):
+        assert plan == ConversionPlan(True, copy_video, "h264", copy_video)
+
+
 @pytest.mark.parametrize("profile", ["mp3", "wav", "m4a", "opus", "flac"])
 @pytest.mark.parametrize("source", [muxed("h264", "aac"), video_only("h264")])
 def test_audio_profile_rejects_non_audio_source(

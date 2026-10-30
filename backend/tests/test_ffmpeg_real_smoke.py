@@ -466,6 +466,54 @@ def test_normalized_mp3_in_mp4a_source_is_transcoded_to_aac(tmp_path: Path) -> N
     assert _file_digest(source) == before
 
 
+# --- denylisted H.264 profile (High 4:4:4) to MP4 ---------------------------
+
+
+@requires_ffmpeg
+def test_high444_h264_source_video_is_transcoded_audio_copied(tmp_path: Path) -> None:
+    # Source and target both use libx264 + aac; the MP4 transcode adds scale.
+    _require(("libx264", "aac"), ("scale",))
+    frames = _write_raw_frames(tmp_path / "frames_even.rgb", _EVEN_SIZE)
+    tone = _write_tone_wav(tmp_path / "high444_tone.wav")
+    source = _encode(
+        [*_raw_video_input(frames, _EVEN_SIZE), "-i", str(tone),
+         "-map", "0:v:0", "-map", "1:a:0",
+         "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv444p",
+         "-c:a", "aac", "-b:a", "128k", "-shortest", "-f", "mp4"],
+        tmp_path / "source_high444.mp4",
+    )
+    source_info = _probe(source)
+    assert _stream_types(source_info) == [("video", "h264"), ("audio", "aac")]
+    [source_video] = _streams_of(source_info, "video")
+    assert source_video["profile"] == "High 4:4:4 Predictive"
+    assert source_video["pix_fmt"] == "yuv444p"
+
+    [selected] = normalize_source_formats([
+        {"format_id": "m", "ext": "mp4", "height": _EVEN_SIZE[1],
+         "vcodec": "avc1.f4001e", "acodec": "mp4a.40.2"},
+    ])
+    assert (selected.video_codec, selected.h264_profile_idc) == ("h264", 244)
+    plan = plan_conversion("mp4", selected, None)
+    assert (plan.copy_video, plan.copy_audio, plan.keep_source_bitrate) == (False, True, False)
+    before = _file_digest(source)
+    output = tmp_path / "out.mp4"
+
+    asyncio.run(_processor().convert(
+        source, output, "mp4", copy_audio=plan.copy_audio, copy_video=plan.copy_video,
+    ))
+
+    info = _probe(output)
+    assert _stream_types(info) == [("video", "h264"), ("audio", "aac")]
+    assert "mp4" in _format_names(info)
+    [video] = _streams_of(info, "video")
+    assert video["profile"] == "High"
+    assert video["pix_fmt"] == "yuv420p"
+    assert _packet_hash(output, "0:a:0") == _packet_hash(source, "0:a:0")
+    assert _packet_hash(output, "0:v:0") != _packet_hash(source, "0:v:0")
+    _assert_faststart(output)
+    assert _file_digest(source) == before
+
+
 # --- missing encoder --------------------------------------------------------
 
 _MISSING_ENCODER = "nonexistent_encoder_m64f"

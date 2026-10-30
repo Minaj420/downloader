@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from app.domain.analysis import NormalizedAnalysis, SourceMetadata
+from app.domain.analysis import NormalizedAnalysis, NormalizedFormat, SourceMetadata
 from app.services.analysis_normalizer import (
     SOURCE_METADATA_LIST_MAX_ITEMS,
     SOURCE_METADATA_TEXT_MAX_LENGTH,
@@ -39,6 +39,75 @@ def test_audio_codec_labels_split_mp4a_subtypes(path: str, raw_codec: str, label
     parsed = normalize_formats(raw) if path == "formats" else normalize_source_formats(raw)
     codecs = {f.format_id: f.audio_codec for f in parsed}
     assert codecs == {"a": label, "m": label}
+
+
+@pytest.mark.parametrize("raw_codec, idc", [
+    ("avc1.6e001f", 110), ("avc1.7a0028", 122), ("avc1.f4001e", 244), ("avc1.2c001f", 44),
+    ("avc1.42e01e", 66), ("avc1.4d401f", 77), ("avc1.58a01e", 88), ("avc1.640028", 100),
+    ("avc3.640028", 100), ("AVC1.6E001F", 110), ("  Avc3.F4001E\t", 244),
+    ("avc1", None), ("avc3", None), ("h264", None), ("avc1.", None), ("avc1.6e00", None),
+    ("avc1.6e001", None), ("avc1.6e001f0", None), ("avc1.6e001f.1", None),
+    ("avc1.100.40", None), ("avc1.66.30", None), ("avc1.6g001f", None),
+    ("avc1.6e_01f", None), ("avc1.６e001f", None), ("avc1.6e001fé", None),
+    ("avc2.6e001f", None), ("hvc1.6e001f", None), ("vp09.00.10.08", None),
+    ("avc1 .6e001f", None), ("avc1.+6e001f", None),
+])
+@pytest.mark.parametrize("path", ["formats", "source_formats"])
+def test_h264_profile_idc_parsed_only_from_exact_avc_codec_string(
+    path: str, raw_codec: str, idc: int | None,
+) -> None:
+    raw = [
+        {"format_id": "m", "ext": "mp4", "height": 720, "vcodec": raw_codec,
+         "acodec": "mp4a.40.2"},
+        {"format_id": "v", "ext": "mp4", "height": 360, "vcodec": raw_codec, "acodec": "none"},
+        {"format_id": "a", "ext": "m4a", "vcodec": "none", "acodec": "mp4a.40.2", "abr": 128},
+    ]
+    parsed = normalize_formats(raw) if path == "formats" else normalize_source_formats(raw)
+    assert {f.format_id for f in parsed} == {"m", "v", "a"}
+    for entry_format in parsed:
+        expected = None if entry_format.kind == "audio_only" else idc
+        assert entry_format.h264_profile_idc == expected, entry_format.format_id
+
+
+def test_h264_profile_idc_survives_best_available_and_model_copies() -> None:
+    raw: list[dict[str, Any]] = [
+        {"format_id": "hi10", "ext": "mp4", "height": 1080, "vcodec": "avc1.6e0028",
+         "acodec": "none", "tbr": 4000.0},
+        {"format_id": "main", "ext": "mp4", "height": 720, "vcodec": "avc1.4d401f",
+         "acodec": "none", "tbr": 2000.0},
+        {"format_id": "bare", "ext": "mp4", "height": 480, "vcodec": "avc1",
+         "acodec": "none", "tbr": 1000.0},
+        {"format_id": "aud", "ext": "m4a", "vcodec": "none", "acodec": "mp4a.40.2",
+         "abr": 128.0},
+    ]
+    formats = normalize_formats(raw)
+    plain = normalize_formats([
+        {**entry, "vcodec": "avc1"} if entry["vcodec"] != "none" else entry for entry in raw
+    ])
+    # Identity, dedup and ordering do not depend on the profile.
+    assert [(f.variant_id, f.format_id, f.label) for f in formats] == [
+        (f.variant_id, f.format_id, f.label) for f in plain
+    ]
+    by_id = {f.variant_id: f for f in formats}
+    assert by_id["video-best"].format_id == "hi10"
+    assert by_id["video-best"].h264_profile_idc == 110
+    assert by_id["video-1080"].h264_profile_idc == 110
+    assert by_id["video-720"].h264_profile_idc == 77
+    assert by_id["video-480"].h264_profile_idc is None
+    assert by_id["audio-aac-128"].h264_profile_idc is None
+    assert all(f.video_codec == "h264" for f in formats if f.kind != "audio_only")
+
+
+def test_h264_profile_idc_json_roundtrip_and_legacy_default() -> None:
+    [parsed] = normalize_source_formats([
+        {"format_id": "v", "ext": "mp4", "height": 360, "vcodec": "avc1.f4001e",
+         "acodec": "mp4a.40.2"},
+    ])
+    assert parsed.h264_profile_idc == 244
+    assert NormalizedFormat.model_validate_json(parsed.model_dump_json()) == parsed
+    legacy = parsed.model_dump(exclude={"h264_profile_idc"})
+    assert "h264_profile_idc" not in legacy
+    assert NormalizedFormat.model_validate(legacy).h264_profile_idc is None
 
 
 def test_collection_identity_uses_snapshot_and_uncompacted_source_order() -> None:
