@@ -1,5 +1,6 @@
 import asyncio
 import threading
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,7 @@ from app.models.jobs import ActivityEvent, DownloadJob, JobItem
 from app.models.library import LibraryItem, MediaFile
 from app.repositories import jobs
 from app.services import collection_persistence as persistence
+from app.services.conversion_plan import ConversionPlan
 from app.services.library_service import LibraryService
 from app.services.storage_service import (
     MediaFileMissingError,
@@ -570,6 +572,44 @@ def test_atomic_completion_identity_order_and_truthful_aggregates(tmp_path: Path
                 assert len(copies) == 2
                 assert all(i.path == placement.relative_path
                            and i.size_bytes == placement.size_bytes for i in copies)
+        finally:
+            await engine.dispose()
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("plan,skipped,expected", [
+    (None, False, ("opus", 128)),
+    (None, True, ("opus", 128)),
+    (ConversionPlan(True, False, "opus", True), False, ("opus", 128)),
+    (ConversionPlan(False, False, "mp3", False), False, ("mp3", None)),
+    (ConversionPlan(True, False, "opus", True), True, (None, None)),
+    (ConversionPlan(False, False, "flac", False), True, (None, None)),
+])
+def test_completion_catalog_codec_bitrate_follow_output_plan(
+    tmp_path: Path, plan: ConversionPlan | None, skipped: bool,
+    expected: tuple[str | None, int | None],
+) -> None:
+    async def scenario() -> None:
+        engine, sessions = factory(tmp_path)
+        storage, placement = await placed(tmp_path)
+        try:
+            async with sessions() as session:
+                await jobs.stage_collection_job(
+                    session, parent(status="analyzing"), [child(2, status="finalizing")],
+                    owner_id="owner",
+                )
+                await session.commit()
+            async with sessions() as session:
+                assert await complete(session, storage,
+                                      replace(placement, skipped_existing=skipped), plan=plan)
+                await session.commit()
+            async with sessions() as session:
+                entry = await session.get(LibraryItem, "child-2")
+                assert entry is not None
+                assert (entry.codec, entry.bitrate) == expected
+                assert (entry.format, entry.media_type, entry.duration) == ("opus", "audio", 12.5)
+                record = await session.get(DownloadJob, "parent")
+                assert record is not None and record.completed_items == 1
         finally:
             await engine.dispose()
     asyncio.run(scenario())

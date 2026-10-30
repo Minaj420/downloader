@@ -22,7 +22,7 @@ from app.domain.jobs import (
     JobError,
     JobErrorCode,
     JobStatus,
-    require_runnable_output_profile,
+    output_profile_allowed,
 )
 from app.domain.platforms import detect_platform
 from app.integrations.ffmpeg import FFmpegError, FFmpegProcessor
@@ -34,6 +34,7 @@ from app.services.collection_persistence import (
     stage_child_transition,
 )
 from app.services.collection_profile_resolver import resolve_native_child
+from app.services.conversion_plan import plan_conversion, resolve_output_profile
 from app.services.job_runner import _FFMPEG_KIND_TO_JOB_CODE, _YT_DLP_KIND_TO_JOB_CODE
 from app.services.prepared_media import prepare_media
 from app.services.storage_service import PlacementCancelled, StorageService
@@ -228,9 +229,19 @@ class _ChildExecution:
                     select(DownloadJob, JobItem).join(JobItem, JobItem.job_id == DownloadJob.id)
                     .where(DownloadJob.id == self.job_id, JobItem.id == self.child_id)
                 )).one()
-            # Parent-level output choice; fail this child closed before probe
-            # until conversion exists. Parent settlement stays with the caller.
-            require_runnable_output_profile(parent.output_profile)
+            # Parent-level output choice; an unknown target or one outside the
+            # collection mode's set fails this child closed before probe.
+            # Parent settlement stays with the caller.
+            output = resolve_output_profile(parent.output_profile)
+            if output is not None and (
+                parent.collection_mode not in {"audio", "video"}
+                or not output_profile_allowed(parent.collection_mode, output)
+            ):
+                raise JobError(
+                    JobErrorCode.INVALID_PROFILE,
+                    detail=f"output profile {output!r} does not fit "
+                    f"{parent.collection_mode!r} collections",
+                )
             await self.check()
             source = await self.deps.analyzer.probe_child(child.source_url)
             await self.check()
@@ -240,6 +251,10 @@ class _ChildExecution:
             except ValidationError as exc:
                 raise JobError(JobErrorCode.INVALID_PROFILE) from exc
             plan = resolve_native_child(source, mode=parent.collection_mode or "", profile=profile)
+            # Pure check: an incompatible resolved source fails before the
+            # DOWNLOADING claim, staging and any media I/O.
+            conversion = (plan_conversion(output, plan.selected, plan.companion)
+                          if output is not None else None)
             await self.transition(JobStatus.DOWNLOADING)
 
             async def before_merge() -> None:
@@ -250,7 +265,7 @@ class _ChildExecution:
                 staging_key=child.id, storage=self.deps.storage, downloader=self.deps.downloader,
                 ffmpeg=self.deps.ffmpeg, check_cancelled=self.check,
                 on_process_started=self.register, progress_forwarder=self.forwarder,
-                before_merge=before_merge, child_output=True,
+                before_merge=before_merge, child_output=True, output=output,
             )
             await self.transition(JobStatus.FINALIZING)
             # Storage owns the shielded thread drain. Signal cancellation through
@@ -280,7 +295,7 @@ class _ChildExecution:
                 if not await stage_child_completion(
                     session, self.deps.storage, job_id=self.job_id, owner_id=self.owner_id,
                     child_id=child.id, selected=plan.selected, placement=placement,
-                    duration_seconds=duration_seconds, platform=platform,
+                    duration_seconds=duration_seconds, platform=platform, plan=conversion,
                 ):
                     raise _LostClaim
                 await session.commit()

@@ -24,6 +24,7 @@ from app.models.jobs import ActivityEvent, DownloadJob, JobItem
 from app.models.library import LibraryItem, MediaFile
 from app.repositories import jobs
 from app.repositories.activity import add_activity_event
+from app.services.conversion_plan import ConversionPlan
 from app.services.library_service import stage_media_catalog_reference
 from app.services.storage_service import PlacementResult, StorageService
 
@@ -434,11 +435,15 @@ async def stage_child_completion(
     session: AsyncSession, storage: StorageService, *, job_id: str, owner_id: str,
     child_id: str, selected: NormalizedFormat, placement: PlacementResult,
     duration_seconds: float | None = None, platform: str | None = None,
+    plan: ConversionPlan | None = None,
 ) -> bool:
     """CAS -> catalog insert/reverify -> aggregates, all in one caller transaction.
 
     Placement must already be finalized by StorageService. Losing CAS never
     builds/inserts catalog rows; stable identity collision raises, never upserts.
+    A converted output takes its codec from ``plan`` and keeps the source
+    bitrate only for a pure stream copy; a kept existing file (Skip Existing)
+    has unknown content, so both stay null.
     """
     now = datetime.now(UTC)
     won = await jobs._stage_collection_child_cas(
@@ -456,6 +461,14 @@ async def stage_child_completion(
         .execution_options(populate_existing=True)
     )).one()
     audio = selected.kind == "audio_only"
+    if plan is None:
+        codec = selected.audio_codec if audio else selected.video_codec
+        bitrate = selected.bitrate_kbps
+    elif placement.skipped_existing:
+        codec = bitrate = None
+    else:
+        codec = plan.output_codec
+        bitrate = selected.bitrate_kbps if plan.keep_source_bitrate else None
     item = LibraryItem(
         id=child.id, job_id=parent.id, owner_id=parent.owner_id,
         source_url=child.source_url, source_id=child.source_id,
@@ -463,8 +476,7 @@ async def stage_child_completion(
         disc_number=child.disc_number, platform=platform,
         media_type="audio" if audio else "video",
         format=placement.final_path.suffix.lstrip(".") or None,
-        codec=selected.audio_codec if audio else selected.video_codec,
-        bitrate=selected.bitrate_kbps, resolution=selected.resolution_label,
+        codec=codec, bitrate=bitrate, resolution=selected.resolution_label,
         duration=duration_seconds, created_at=now,
     )
     media = MediaFile(

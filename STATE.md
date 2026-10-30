@@ -4,6 +4,17 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-30.
 
 ## Şu an
 
+- M6 — Metadata ve Adlandırma → M6.4d-d3 — Koleksiyon child dönüşüm bağlantısı TAMAMLANDI.
+  Opus danışmanlığı alındı; uygulayıcı requested Opus / observed claude-opus-5-5 eşleşti,
+  başarı ve izin reddi yok. Bağımsız GPT review tamam: must-fix yok, bir test should-fix.
+  Worker ve lead: hedefli 11 dosyada 885 pytest PASS, altı dosyada Ruff/Mypy PASS;
+  lead diff --check temiz. Review düzeltme turu kullanılmadı.
+  Child dönüşümü tek POST_PROCESSING CAS ile bağlı; plan medya I/O öncesi doğrulanır,
+  katalog codec/bitrate plandan, dönüşümlü Skip Existing için ikisi None.
+  İptal/retry/recovery testli; API create kapısı ve arayüz kapalı kalır.
+  İlk review çağrısı komut biçimi nedeniyle reddedildi; kullanıcı düzeltmesi sonrası
+  aynı reviewer ayrı doğrudan git status/diff ve Read ile tamamladı. Config/izin değişmedi.
+  Kapsam altı uygulama/test dosyası ve STATE; dört eski untracked arşiv korunur, push yok.
 - Kalıcı kullanıcı iletişim tercihi: ilerleme ve sıradaki iş özetlerinde her zaman
   milestone numarası/adı, alt iş kodu ve kısa açıklamayı belirt. Örnek:
   M6 — Metadata ve Adlandırma → M6.4d-d3 — Koleksiyon indirmelerine dönüşüm bağlantısı.
@@ -12,7 +23,8 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-30.
   Lead macOS doğrulaması: 430 test, hedefli Ruff/Mypy PASS. Review düzeltme turu gerekmedi.
   Bilinen profillerde plan staging/medya I/O öncesi doğrulanır; katalog codec/bitrate çıktı planından,
   dönüşümlü Skip Existing'de ikisi None; iptal/hata/retry/recovery yolları testli.
-  API non-Original create ve collection child kapıları kapalı; arayüz aktivasyonu yok.
+  D2 kapanışında API non-Original create ve collection child kapıları kapalıydı;
+  child bağlantısı d3 ile tamamlandı; arayüz aktivasyonu yok.
   test_jobs.py staging beklemesi kullanıcı onayıyla kapsama alındı; test yarışı çözüldü.
   Reviewer izin engeli teşhis edildi: git --no-pager ve zincirli cat izin kalıbı dışında.
   Kullanıcının devam onayıyla ayrı git diff/status ve Read kullanıldı; izin/config değişmedi.
@@ -61,15 +73,14 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-30.
   Opus ve açık --model opus aynı-rol resume: claude-opus-5-5, başarı ve izin reddi yok;
   bağımsız GPT review must-fix yok, review rework gerekmedi.
 - API non-Original create halen yan etkisiz INVALID_PROFILE; kayıtlı bilinen non-Original
-  tekli işler artık dönüşebilir. Collection child dönüşümü ve arayüz aktivasyonu henüz yok.
+  tekli işler ve koleksiyon child işleri dönüşebilir. Arayüz aktivasyonu henüz yok.
 
 ## Sıradaki iş
 
-M6.4c/d1 ve d2 bağımsız incelemeleri tamamlandı; sonraki çağrı yeni bounded d3 işidir.
+M6.4d-d3 bağımsız review ve lead hedefli doğrulaması tamamlandı; sırada d4 var.
 
-1. M6.4d-d3 collection child (Opus): tek POST_PROCESSING geçişi (child CAS aynı durumu tekrar
-   kabul etmiyor), stage_child_completion katalog override, çıktı planı/iptal/retry bağlantısı.
-   En son d4 API kapısı; bu çağrıda d3/d4 başlamadı.
+1. M6.4d-d4 — API kapısı: runner bağlantıları tamamlandıktan sonra non-Original create
+   desteğini aç; d4 henüz başlamadı. Arayüz ayrı M6.4e işi.
 2. Takip: M6.4e arayüz → M6.4f gerçek binary/çıktı smoke (encoder var/yok, ffprobe codec/faststart,
    gerçek iptalde artık süreç yok; ffmpeg yoksa skip).
    M6.5 metadata/etiket pipeline bağlantısı →
@@ -93,8 +104,8 @@ Kural: review ve kontroller sonrası görev başına otomatik commit; push yaln�
   retry aynı seçimi kullanır, eski eksik profil Original olur. M6.4b ortak nullable
   download_jobs.output_profile String(16), API/DTO original/mp3/wav/m4a/opus/flac/mp4 seçildi.
   CollectionProfile native/max_height olarak kalır; ikinci çıktı alanı ve child profili yok.
-  API non-Original create INVALID_PROFILE ve child kapısı kapalı; tekli runner bilinen
-  uyumlu profilleri dönüştürür. Bozuk profil DTO riski aşağıda; sessiz Original fallback yok.
+   API non-Original create INVALID_PROFILE; tekli ve child runner bilinen uyumlu profilleri
+   dönüştürür. Bozuk profil DTO riski aşağıda; sessiz Original fallback yok.
   Ayrı converter/runner yok; mevcut FFmpeg/prepared_media/staging/storage sınırları korunacak.
   Açık dönüşüm hatası ile opsiyonel etiket/kapak fallback'i ayrı sözleşmeler olarak netleştirilecek.
   Fake argv testine ek gerçek codec/container doğrulaması planlandı; encoder/build garantisi yok.
@@ -116,6 +127,12 @@ Kaynaklar: PRODUCT_SPEC §13–16, ARCHITECTURE §30–34 ve §59 M6.
 
 ## Açık bulgular
 
+- should-fix (d3 GPT review): test_collection_conversion.py caller iptaliyle başarılı
+  dönüşün çakışması testinde yayınlama/katalog oluşmadığı doğrulanıyor, ancak sleep(0)
+  fake convert başarıyla dönmeden iptale izin verebilir. Deterministik başarılı dönüş
+  ve ayrıca dönüşün tamamlandığını assert etme ayrı scoped takip; üretim hatası bulunmadı.
+- should-fix: child hata/iptal sonrası staging temizliği mevcut akışta yapılmıyor;
+  dönüşüm ara dosyaları disk kullanımını artırabilir. D3 kapsamına alınmadı.
 - should-fix (M6.4c/d1 GPT review): FFmpeg `_terminate` ikinci iptalde kill gönderiyor ancak
   process.wait tamamlanmadan dönüyor; kalıcı çalışan süreç kanıtı yok, adaptör dönüşünde reap
   garantisi eksik. Ayrı scoped takipte iptale dayanıklı wait ve adaptör dönüşünde returncode testi.
@@ -134,6 +151,9 @@ Kaynaklar: PRODUCT_SPEC §13–16, ARCHITECTURE §30–34 ve §59 M6.
 
 ## Son gate
 
+- 2026-10-30 macOS Python 3.14.9, M6.4d-d3 worker ve lead: hedefli 11 test dosyası
+  885 PASS, bir deprecation uyarısı; altı dosyada Ruff/Mypy PASS, lead diff --check PASS.
+  Bağımsız GPT review: must-fix yok. Full gate/frontend/gerçek binary smoke çalıştırılmadı.
 - 2026-10-30 macOS Python 3.14.9, d2 worker ve lead: single_conversion/conversion_plan/
   prepared_media/ffmpeg/output_profiles/jobs/child runner/dispatch/library_catalog 9 dosya:
   430 PASS, iki deprecation uyarısı. Lead hedefli Ruff/Mypy (6 dosya) PASS; GPT must-fix yok.

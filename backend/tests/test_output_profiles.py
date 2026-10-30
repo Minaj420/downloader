@@ -1,9 +1,11 @@
 """M6.4b output profile schema/persistence/API and the fail-closed gates.
 
-The public create path and the collection child still reject every non-Original
-choice. The single runner converts known profiles (see test_single_conversion)
-and fails closed only on unknown stored values. Known non-Original rows here are
-written directly (controlled records), never through the public create path.
+The public create path still rejects every non-Original choice. The single
+runner converts known profiles (see test_single_conversion) and the collection
+child converts known profiles that fit its mode (see test_collection_conversion);
+both fail closed on unknown stored values, the child also on a known profile
+outside its mode's set. Known non-Original rows here are written directly
+(controlled records), never through the public create path.
 """
 
 import asyncio
@@ -420,20 +422,29 @@ async def test_single_runner_unknown_value_does_no_io_and_never_completes(
 
 
 async def _seed_collection(h: Harness, profile: str | None, children: list[JobItem],
-                           **values: Any) -> None:
+                           mode: str = "video", **values: Any) -> None:
     async with h.sessions() as session:
         await job_repo.stage_collection_job(session, parent(
-            collection_mode="video", output_profile=profile, **values), children,
+            collection_mode=mode, output_profile=profile, **values), children,
             owner_id="owner")
         await session.commit()
 
 
+def _unrunnable_child_cases() -> list[tuple[str, str]]:
+    # Known profiles outside the mode's output set, plus unknown stored values.
+    mismatched = [("video", p) for p in NON_ORIGINAL if not output_profile_allowed("video", p)]
+    mismatched += [("audio", p) for p in NON_ORIGINAL if not output_profile_allowed("audio", p)]
+    assert ("audio", "mp4") in mismatched and ("video", "mp3") in mismatched
+    return [*mismatched, *[(mode, value) for mode in ("audio", "video")
+                           for value in ("", "bogus", "MP3", "original ")]]
+
+
 @pytest.mark.anyio
-@pytest.mark.parametrize("profile", NON_ORIGINAL)
-async def test_child_fails_closed_before_probe(tmp_path: Path, profile: str) -> None:
+@pytest.mark.parametrize("mode,profile", _unrunnable_child_cases())
+async def test_child_fails_closed_before_probe(tmp_path: Path, mode: str, profile: str) -> None:
     h = Harness(tmp_path)
     try:
-        await _seed_collection(h, profile, [child(2)], status="analyzing")
+        await _seed_collection(h, profile, [child(2)], mode=mode, status="analyzing")
         with pytest.raises(JobError) as caught:
             await run_collection_child(
                 "parent", "owner", "child-2", deps=h.deps, cancel_event=h.adapters.cancel,
@@ -462,7 +473,8 @@ async def test_parent_settles_gated_children_and_keeps_completed_immutable(
         if with_completed:
             children.insert(0, child(1, status="completed", final_path="video/01 - Kept.mp4",
                                      progress_percent=100.0))
-        await _seed_collection(h, "mp4", children)
+        # A known profile outside the video set: every queued child fails closed.
+        await _seed_collection(h, "mp3", children)
         async with h.sessions() as session:
             before = await session.get(JobItem, "child-1")
             kept = None if before is None else (before.status, before.final_path,
@@ -476,7 +488,7 @@ async def test_parent_settles_gated_children_and_keeps_completed_immutable(
             record = await session.get(DownloadJob, "parent")
             assert record is not None
             assert (record.status, record.error_code, record.output_profile) == (
-                "failed", "partial_failure" if with_completed else "all_children_failed", "mp4")
+                "failed", "partial_failure" if with_completed else "all_children_failed", "mp3")
             for child_id in ("child-2", "child-9"):
                 row = await session.get(JobItem, child_id)
                 assert row is not None and (row.status, row.error_code) == (
@@ -489,7 +501,7 @@ async def test_parent_settles_gated_children_and_keeps_completed_immutable(
             assert (await session.scalars(select(LibraryItem))).all() == []
             items = await job_repo.list_job_items(session, "parent", "owner")
         dto = job_to_dto(record, items)
-        assert dto.output_profile == "mp4"
+        assert dto.output_profile == "mp3"
         assert dto.error is not None and dto.error.retryable is False
         assert [event["event"] for event in bus.events][-1] == "job.failed"
     finally:
@@ -519,6 +531,7 @@ async def test_all_completed_parent_keeps_success_precedence(tmp_path: Path) -> 
 
 # Single recovery/retry with the stored profile runs real conversion in the
 # runner: see test_single_conversion (fake binaries, no real media commands).
+# Successful converted collection retry/recovery: see test_collection_conversion.
 
 
 @pytest.mark.parametrize("terminal", ["failed", "cancelled"])
@@ -529,8 +542,9 @@ def test_collection_real_retry_keeps_parent_profile_and_completed_children(
         job = client.post("/api/v1/jobs", json=collection_request(
             analyze(client, analyzer, collection=True), "audio")).json()
     first, second = (item["id"] for item in job["items"])
+    # mp4 is a known profile outside the audio set: the retried child fails closed.
     execute(settings, "UPDATE download_jobs SET status = ?, error_code = ?, "
-            "output_profile = 'flac', completed_items = 1, failed_items = ?",
+            "output_profile = 'mp4', completed_items = 1, failed_items = ?",
             (terminal, "partial_failure" if terminal == "failed" else "cancelled",
              1 if terminal == "failed" else 0))
     execute(settings, "UPDATE job_items SET status = 'completed', progress_percent = 100, "
@@ -542,10 +556,10 @@ def test_collection_real_retry_keeps_parent_profile_and_completed_children(
     with app_client(settings, analyzer, paused=False) as client:
         response = client.post(f"/api/v1/jobs/{job['id']}/retry")
         assert response.status_code == 200
-        assert response.json()["output_profile"] == "flac"
+        assert response.json()["output_profile"] == "mp4"
         final = wait_for_job(client, job["id"], statuses={"completed", "failed", "cancelled"})
         assert (final["status"], final["error"]["code"]) == ("failed", "partial_failure")
-        assert final["output_profile"] == "flac" and final["error"]["retryable"] is False
+        assert final["output_profile"] == "mp4" and final["error"]["retryable"] is False
         statuses = {item["id"]: (item["status"], item["error"] and item["error"]["code"])
                     for item in final["items"]}
         assert statuses == {first: ("completed", None), second: ("failed", "invalid_profile")}
@@ -554,5 +568,5 @@ def test_collection_real_retry_keeps_parent_profile_and_completed_children(
         assert connection.execute(
             "SELECT * FROM job_items WHERE id = ?", (first,)).fetchone() == kept
         assert connection.execute("SELECT output_profile FROM download_jobs").fetchone() == (
-            "flac",)
+            "mp4",)
         assert connection.execute("SELECT COUNT(*) FROM library_items").fetchone() == (0,)

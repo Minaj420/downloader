@@ -10,7 +10,7 @@ import pytest
 from sqlalchemy import select, update
 
 from app.domain.jobs import JobError, JobErrorCode
-from app.integrations.ffmpeg import FFmpegProcessor
+from app.integrations.ffmpeg import ConversionProfile, FFmpegProcessor
 from app.integrations.ytdlp import DownloadProgress, YtDlpAnalyzer, YtDlpDownloader
 from app.models.jobs import DownloadJob, JobItem
 from app.models.library import LibraryItem, MediaFile
@@ -41,6 +41,8 @@ class Adapters(YtDlpAnalyzer, YtDlpDownloader, FFmpegProcessor):
         self.cancel_at = ""
         self.killed = False
         self.after_probe: Any = None
+        self.on_convert: Any = None
+        self.conversions: list[tuple[str, str, str, bool, bool]] = []
 
     async def step(self, name: str) -> None:
         self.calls.append(name)
@@ -86,6 +88,18 @@ class Adapters(YtDlpAnalyzer, YtDlpDownloader, FFmpegProcessor):
         on_process_started(cast(asyncio.subprocess.Process, self))
         await self.step("merge")
         output.write_bytes(video.read_bytes() + audio.read_bytes())
+
+    async def convert(self, input_path: Path, output_path: Path, profile: ConversionProfile, *,
+                      copy_audio: bool = False, copy_video: bool = False,
+                      on_process_started: Any = None) -> None:
+        # Fake converter: never runs FFmpeg; only conversion tests reach it.
+        self.conversions.append((input_path.name, output_path.name, profile,
+                                 copy_audio, copy_video))
+        on_process_started(cast(asyncio.subprocess.Process, self))
+        await self.step("convert")
+        if self.on_convert:
+            await self.on_convert()
+        output_path.write_bytes(b"converted:" + input_path.read_bytes())
 
 
 class Harness:
@@ -144,6 +158,7 @@ async def test_native_completion_catalog_and_counters(
         h.adapters.source = source(video_codec=codec, audio_codec=audio)
         assert await h.run() == ChildResult.COMPLETED
         assert h.adapters.calls == ["probe", *selectors]
+        assert h.adapters.conversions == []  # Original/NULL never converts.
         assert set(h.adapters.urls) == {"https://example.com/2"}
         facts = await h.facts()
         assert facts[:5] == ("completed", "analyzing", 1, 1, 50)
