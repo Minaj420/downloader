@@ -4,6 +4,17 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-30.
 
 ## Şu an
 
+- M6 — Metadata ve Adlandırma → M6.4f-f1 — Gerçek FFmpeg smoke TAMAMLANDI.
+  Önceden alınan Opus görüşüyle yalnız test kapsamında çalışıldı. Opus uygulayıcı
+  çağrısı session limit ile başarısız kaldı (requested Opus / observed claude-opus-5-5);
+  bu çağrı başarılı sayılmadı, tekrar yapılmadı. Kullanıcı OpenAI ile tamamlama istedi:
+  mevcut test çıktısı değiştirilmeden bağımsız GPT reviewer ve checker ile doğrulandı.
+  Must-fix yok; bir bloklamayan encoder skip önkontrolü bulgusu aşağıda.
+  Checker: 19 gerçek smoke ve toplam 76 test PASS/0 skip; lead tekrarında 76 PASS/0 skip,
+  hedefli Ruff/Mypy ve diff --check PASS. Altı hedef codec/container, MP4/M4A faststart,
+  dört packet-preserving copy/remux, encoder hatası ve gerçek tek iptal doğrulandı.
+  Yalnız yeni test + STATE; üretim kodu değişmedi, review düzeltme turu kullanılmadı.
+  F2 ikinci iptalde reap ve f3 codec uyumluluğu açık; M6.4f bütünü kapanmadı.
 - M6 — Metadata ve Adlandırma → M6.4e — Dönüşüm seçimini arayüzde açma TAMAMLANDI.
   Bağımsız GPT review: bulgu/must-fix yok; düzeltme turu kullanılmadı. Opus görüşü alındı;
   uygulayıcı requested Sonnet / observed claude-sonnet-5-5 eşleşti, başarı ve izin reddi yok.
@@ -113,12 +124,15 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-30.
 ## Sıradaki iş
 
 WF-R1 ve dar reviewer smoke takibi tamamlandı; restart/model reload kanıtlanmadı.
-M6.4d-d1–d4 ve M6.4e tamamlandı; sıradaki iş M6.4f gerçek binary smoke.
+M6.4d-d1–d4, M6.4e ve M6.4f-f1 tamamlandı; sıradaki iş f2.
 
-1. M6 — Metadata ve Adlandırma → M6.4f — Gerçek binary/çıktı smoke:
-   encoder var/yok, ffprobe codec/container/faststart, gerçek iptalde artık süreç yok;
-   ffmpeg yoksa skip. Opus görüşüyle bounded kapsamı netleştir; aşağıdaki codec
-   etiketleri ve reap garantisi bulgularını bu kapsamla değerlendir.
+1. M6 — Metadata ve Adlandırma → M6.4f-f2 — İkinci iptalde süreç reap garantisi:
+   mevcut Opus görüşünü kullanarak dar kapsamı netleştir; adapter dönüşünde returncode
+   testi kendi wait çağrısıyla eksik reap durumunu maskelemesin. OpenAI uygulaması
+   mevcut rol kurallarında yetkili değil; kullanıcı isteğiyle yalnız mevcut f1 çıktısı
+   salt-okunur doğrulandı, genel uygulayıcı politikası değiştirilmedi.
+   Ardından f3 kaba codec etiketleri/uyumlu MP4 değerlendirmesi; ürün tercihi gerekirse
+   kullanıcıya sor. F1 bu iki riski kapatmaz, M6.4f açık kalır.
 2. Takip: M6.5 metadata/etiket pipeline bağlantısı →
    M6.6 müzik yolları/katalog → M6.7 kaynak kapak → M6.8 metadata/kapak önizleme-düzenleme →
    M6.9 harici kapak arama (haklar koşullu) → M6.10 kapanış gate. Başlıklar küçük işlere bölünebilir.
@@ -165,6 +179,10 @@ Kaynaklar: PRODUCT_SPEC §13–16, ARCHITECTURE §30–34 ve §59 M6.
 
 ## Açık bulgular
 
+- should-fix (f1 GPT review): test_ffmpeg_real_smoke.py MP4 vaka encoder skip
+  önkontrolü kaynak üretiminde kullanılan ffv1/pcm_s16le encoder'larını içermiyor;
+  kısıtlı build kaynak hazırlığında FAIL verebilir. Mevcut macOS'ta tüm testler PASS.
+  Ayrı mekanik takipte yalnız bu iki bağımlılığı önkontrole ekle.
 - should-fix (d3 GPT review): test_collection_conversion.py caller iptaliyle başarılı
   dönüşün çakışması testinde yayınlama/katalog oluşmadığı doğrulanıyor, ancak sleep(0)
   fake convert başarıyla dönmeden iptale izin verebilir. Deterministik başarılı dönüş
@@ -189,6 +207,12 @@ Kaynaklar: PRODUCT_SPEC §13–16, ARCHITECTURE §30–34 ve §59 M6.
 
 ## Son gate
 
+- 2026-10-30 macOS Python 3.14.9, M6.4f-f1: OpenAI checker gerçek smoke
+  19 PASS/0 skip; adaptör+smoke 76 PASS/0 skip. Lead adaptör+smoke tekrarı
+  76 PASS/0 skip (bir Starlette deprecation uyarısı); yeni test Ruff ve adapter+test
+  Mypy PASS, diff --check PASS. GPT reviewer must-fix yok, bir should-fix.
+  Üretim değişmedi; full gate/frontend çalıştırılmadı. İkinci iptal ve codec etiketi
+  riskleri test edilip kapatılmış sayılmadı.
 - 2026-10-30 macOS, M6.4e worker ve lead: frontend new-download ve
   collection-selection 86 test PASS; typecheck ve lint PASS; lead diff --check PASS.
   Bağımsız GPT review bulgu yok, düzeltme turu yok. Full gate/build/contrast,
