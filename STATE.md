@@ -4,6 +4,16 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-30.
 
 ## Şu an
 
+- Workflow bakımı → WF-R1 — Reviewer komut sözleşmesi TAMAMLANDI. Opus danışmanlığı
+  alındı (requested Opus / observed claude-opus-5-5, başarı ve izin reddi yok);
+  Luna yalnız sabit prose metnini yerleştirdi. Reviewer frontmatter, izinler ve model
+  değişmedi; docs/WORKFLOW.md ve .opencode/agents/reviewer.md güncellendi.
+  Bağımsız GPT review: must-fix yok. Worker Read ve lead diff/`git diff --check` PASS.
+  Opus son review wrapper çağrısı shell reddiyle başlamadı; tekrar/aşma yapılmadı.
+  Kullanıcı 2026-10-30 yalnız bu dar prose işi için ek Opus review olmadan kapanışı
+  açıkça onayladı; genel review kuralı değiştirilmedi, Opus review PASS sayılmadı.
+  OpenCode yeniden başlatılmalı; sonrasında yeni reviewer ile smoke henüz yapılmadı.
+  Talimat değişikliği teknik garanti değil. Kapsam iki dosya + STATE; push yok.
 - M6 — Metadata ve Adlandırma → M6.4d-d3 — Koleksiyon child dönüşüm bağlantısı TAMAMLANDI.
   Opus danışmanlığı alındı; uygulayıcı requested Opus / observed claude-opus-5-5 eşleşti,
   başarı ve izin reddi yok. Bağımsız GPT review tamam: must-fix yok, bir test should-fix.
@@ -77,7 +87,9 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-30.
 
 ## Sıradaki iş
 
-M6.4d-d3 bağımsız review ve lead hedefli doğrulaması tamamlandı; sırada d4 var.
+WF-R1 kullanıcıya özel kapanış onayıyla tamamlandı. OpenCode yeniden başlatıldıktan
+sonra yeni reviewer ile komut sözleşmesini salt-okunur smoke ile doğrula.
+M6.4d-d3 tamamlandı; ürün tarafındaki sonraki iş d4 (bu çağrıda başlanmadı).
 
 1. M6.4d-d4 — API kapısı: runner bağlantıları tamamlandıktan sonra non-Original create
    desteğini aç; d4 henüz başlamadı. Arayüz ayrı M6.4e işi.
@@ -151,6 +163,11 @@ Kaynaklar: PRODUCT_SPEC §13–16, ARCHITECTURE §30–34 ve §59 M6.
 
 ## Son gate
 
+- 2026-10-30 macOS, WF-R1: worker Read kontrolleri ve lead diff incelemesi /
+  `git diff --check` PASS; bağımsız GPT must-fix yok. Opus son review wrapper çağrısı
+  shell reddiyle başlamadı; kullanıcı yalnız bu işe özel ek Opus review olmadan kapanışı
+  onayladı. Lead diff/whitespace kontrolünü kapanışta tekrarladı. Yalnız prose: uygulama testleri ve
+  full gate çalıştırılmadı; restart sonrası yeni reviewer davranışı doğrulanmadı.
 - 2026-10-30 macOS Python 3.14.9, M6.4d-d3 worker ve lead: hedefli 11 test dosyası
   885 PASS, bir deprecation uyarısı; altı dosyada Ruff/Mypy PASS, lead diff --check PASS.
   Bağımsız GPT review: must-fix yok. Full gate/frontend/gerçek binary smoke çalıştırılmadı.

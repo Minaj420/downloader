@@ -144,6 +144,7 @@ doğrulanmış iddia edilmez. Server/tmux/ek altyapı yoktur.
 - consult/review yalnız Read/Grep/Glob kullanır; Bash/Edit/Write kaldırılmıştır.
   Git status/diff snapshot'ını adapter sabit read-only argv ile prompt'a ekler;
   external diff/textconv kapalıdır. Untracked dosyalar diff'te yoktur, Read ile okunur.
+- OpenCode GPT reviewer için komut sözleşmesi `.opencode/agents/reviewer.md` içindedir; Claude consult/review wrapperına uygulanmaz (o rolde Bash yoktur). Lead her GPT reviewer görev promptuna şu kısa sözleşmeyi ekler: “Git yalnız ayrı doğrudan `git status/diff/show/log` çağrılarıyla, çalışma dizini araç `workdir` parametresiyle; global `--no-pager`/`-C`/`-c`, env prefix, `cd`, zincir, pipe, yönlendirme, `cat`/`head`, `difftool`/`--output` yok; okuma Read/Grep/Glob ile. Ret olursa tekrar deneme veya başka yolla aşma; tam komut + dizin + maskeli ham hatayla dur, genel shell izni yok sonucu çıkarma. Eksik review onay değildir; `review eksik` yaz.”
 - Her iki implement modeli aynı normal Edit/Write ve yalnız proje test/lint Bash izinlerini alır:
   backend `.venv/bin/pytest`, `.venv/bin/ruff check`, `.venv/bin/mypy`; frontend
   `npm test`, `npm run lint/typecheck/build/check:contrast`. İlgili backend/frontend
