@@ -196,19 +196,6 @@ def output_profile_allowed(media_kind: str, profile: OutputProfile) -> bool:
     return profile in allowed
 
 
-def require_runnable_output_profile(stored: str | None) -> None:
-    """Temporary fail-closed gate until conversion runtime exists (M6.4b).
-
-    Only NULL (legacy) and ``original`` run; every other stored value, known
-    or not, fails with INVALID_PROFILE before any analysis or media I/O.
-    """
-    if stored is not None and stored != ORIGINAL_OUTPUT_PROFILE:
-        raise JobError(
-            JobErrorCode.INVALID_PROFILE,
-            detail=f"output profile {stored!r} is not runnable yet",
-        )
-
-
 class JobProgress(BaseModel):
     percent: float = 0.0
     downloaded_bytes: int | None = None

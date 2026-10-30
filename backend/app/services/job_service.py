@@ -26,7 +26,6 @@ from app.domain.jobs import (
     OutputProfile,
     job_error_code_retryable,
     output_profile_allowed,
-    require_runnable_output_profile,
 )
 from app.models.analysis import AnalysisSession
 from app.models.jobs import DownloadJob, JobItem
@@ -38,7 +37,9 @@ from app.services.collection_persistence import (
     stage_collection_cancel_settlement,
     stage_collection_retry,
 )
+from app.services.conversion_plan import plan_conversion, resolve_output_profile
 from app.services.event_bus import EventBus
+from app.services.job_runner import resolve_variant
 from app.services.queue_manager import QueueManager
 from app.utils.datetime import utc_isoformat
 
@@ -133,9 +134,13 @@ class JobService:
         )
         if not output_profile_allowed(media_kind or "", output):
             raise JobError(JobErrorCode.INVALID_PROFILE)
-        # Temporary M6.4b gate: conversion runtime is not implemented, so a
-        # non-Original choice is rejected before any row, Activity or notify.
-        require_runnable_output_profile(output)
+        if selected is not None and output != ORIGINAL_OUTPUT_PROFILE:
+            # Same pure plan the runner uses: an incompatible single source
+            # fails before any row, Activity, publish or notify. Collection
+            # children are checked by the runner after their own probe.
+            target = resolve_output_profile(output)
+            if target is not None:
+                plan_conversion(target, *resolve_variant(normalized, selected.variant_id))
 
         now = datetime.now(UTC)
         record = DownloadJob(

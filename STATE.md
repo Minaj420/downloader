@@ -4,6 +4,14 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-30.
 
 ## Şu an
 
+- M6 — Metadata ve Adlandırma → M6.4d-d4 — API dönüşüm kapısı TAMAMLANDI.
+  Opus görüşü alındı; uygulayıcı requested Opus / observed claude-opus-5-5 eşleşti,
+  başarı ve izin reddi yok. Bağımsız GPT review: bulgu/must-fix yok; düzeltme turu kullanılmadı.
+  Uyumlu non-Original single/collection create açık; tekli saf plan doğrulaması
+  kayıt/Activity/publish/notify öncesi, collection kaynak uyumu child probe sonrasında.
+  Original/null/omitted ve kaynak kalite tercihi korunur; API→MP3 fake binary testi var.
+  Worker ve lead: 8 test dosyasında 698 PASS, hedefli 4 dosyada Ruff/Mypy PASS,
+  lead diff --check temiz. Kapsam beş dosya + STATE; UI/gerçek binary smoke yok.
 - WF-R1-smoke TAMAMLANDI: Opus görüşü alındı (requested Opus / observed
   claude-opus-5-5 eşleşti; başarı, izin reddi yok). Yeni GPT reviewer ayrı doğrudan
   `git status --short`, `git diff --check` ve reviewer tanımını Read ile okuma
@@ -90,17 +98,18 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-30.
   eski/null kayıtlar Original, retry seçimi korur. Test kapsamı kullanıcı onayıyla genişletildi.
   Opus ve açık --model opus aynı-rol resume: claude-opus-5-5, başarı ve izin reddi yok;
   bağımsız GPT review must-fix yok, review rework gerekmedi.
-- API non-Original create halen yan etkisiz INVALID_PROFILE; kayıtlı bilinen non-Original
-  tekli işler ve koleksiyon child işleri dönüşebilir. Arayüz aktivasyonu henüz yok.
+- API uyumlu non-Original create d4 ile açık; uyumsuz/bozuk değerler yan etkisiz
+  reddedilir. Tekli ve collection child dönüşebilir; arayüz aktivasyonu henüz yok.
 
 ## Sıradaki iş
 
 WF-R1 ve dar reviewer smoke takibi tamamlandı; restart/model reload kanıtlanmadı.
-M6.4d-d3 tamamlandı; sıradaki iş d4 (bu çağrıda başlanmadı).
+M6.4d-d1–d4 tamamlandı; sıradaki iş M6.4e arayüz.
 
-1. M6.4d-d4 — API kapısı: runner bağlantıları tamamlandıktan sonra non-Original create
-   desteğini aç; d4 henüz başlamadı. Arayüz ayrı M6.4e işi.
-2. Takip: M6.4e arayüz → M6.4f gerçek binary/çıktı smoke (encoder var/yok, ffprobe codec/faststart,
+1. M6 — Metadata ve Adlandırma → M6.4e — Dönüşüm seçimini arayüzde açma:
+   mevcut API üzerinde kaynak kalite tercihi ile çıktı profilini ayrı tut;
+   uygulamadan önce Opus görüşüyle bounded kapsamı netleştir.
+2. Takip: M6.4f gerçek binary/çıktı smoke (encoder var/yok, ffprobe codec/faststart,
    gerçek iptalde artık süreç yok; ffmpeg yoksa skip).
    M6.5 metadata/etiket pipeline bağlantısı →
    M6.6 müzik yolları/katalog → M6.7 kaynak kapak → M6.8 metadata/kapak önizleme-düzenleme →
@@ -122,9 +131,11 @@ Kural: review ve kontroller sonrası görev başına otomatik commit; push yaln�
 - Teknik lead kararı: kaynak variant/kalite tercihi çıktı profilinden ayrı; seçim işte kalıcı,
   retry aynı seçimi kullanır, eski eksik profil Original olur. M6.4b ortak nullable
   download_jobs.output_profile String(16), API/DTO original/mp3/wav/m4a/opus/flac/mp4 seçildi.
-  CollectionProfile native/max_height olarak kalır; ikinci çıktı alanı ve child profili yok.
-   API non-Original create INVALID_PROFILE; tekli ve child runner bilinen uyumlu profilleri
-   dönüştürür. Bozuk profil DTO riski aşağıda; sessiz Original fallback yok.
+   CollectionProfile native/max_height olarak kalır; ikinci çıktı alanı ve child profili yok.
+   API uyumlu non-Original create kabul eder; uyumsuz değer INVALID_PROFILE,
+   tekli eksik companion INVALID_VARIANT ile kayıt öncesinde reddedilir.
+   Tekli ve child runner bilinen uyumlu profilleri dönüştürür; bozuk profil DTO riski
+   aşağıda, sessiz Original fallback yok.
   Ayrı converter/runner yok; mevcut FFmpeg/prepared_media/staging/storage sınırları korunacak.
   Açık dönüşüm hatası ile opsiyonel etiket/kapak fallback'i ayrı sözleşmeler olarak netleştirilecek.
   Fake argv testine ek gerçek codec/container doğrulaması planlandı; encoder/build garantisi yok.
@@ -170,6 +181,12 @@ Kaynaklar: PRODUCT_SPEC §13–16, ARCHITECTURE §30–34 ve §59 M6.
 
 ## Son gate
 
+- 2026-10-30 macOS Python 3.14.9, M6.4d-d4 worker ve lead:
+  output_profiles/single_conversion/collection_conversion/conversion_plan/jobs/
+  collection_retry/collection_child_runner/collection_parent_runner: 698 PASS,
+  iki deprecation uyarısı. job_service/domain jobs/iki değişen testte Ruff/Mypy PASS;
+  lead diff --check PASS, kaldırılan helper referansı yok. GPT review bulgu yok.
+  Full gate/frontend/gerçek binary smoke çalıştırılmadı; M6 kapanışı değil.
 - 2026-10-30 macOS, WF-R1-smoke: yeni GPT reviewer status/diff --check/Read
   başarılı raporladı, must-fix yok; lead status/diff --check tekrarı temiz.
   Exit kodları child araç yanıtında sunulmadı; ham child trace bağımsız incelenemedi.

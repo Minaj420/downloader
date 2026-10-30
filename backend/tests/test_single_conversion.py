@@ -1,8 +1,8 @@
 """M6.4d-d2: single runner conversion wiring.
 
 The runner is driven directly with stub adapters (no real yt-dlp/ffmpeg); the
-retry/recovery tests go through the app with fake binaries. Known non-Original
-rows are written directly: the public create path still rejects them.
+API create and retry/recovery tests go through the app with fake binaries.
+Runner-level rows are written directly as controlled records.
 """
 
 import asyncio
@@ -452,6 +452,31 @@ def library_row(settings: Settings) -> tuple[Any, ...]:
     with sqlite3.connect(settings.state_dir / "downloader.db") as connection:
         return connection.execute(
             "SELECT media_type, format, codec, bitrate FROM library_items").fetchone()
+
+
+def test_api_created_mp3_job_completes_converted(
+    settings: Settings, analyzer: FakeAnalyzer, tmp_path: Path,
+) -> None:
+    binaries = tmp_path / "bin"
+    binaries.mkdir()
+    argv_log = tmp_path / "ffmpeg-argv.log"
+    with running_client(
+        settings, analyzer, ytdlp=fake_ytdlp_ok(binaries),
+        ffmpeg=fake_ffmpeg_record(binaries, argv_log),
+    ) as client:
+        response = client.post("/api/v1/jobs", json=single_request(
+            analyze(client, analyzer, collection=False), AUDIO_VARIANT, output_profile="mp3"))
+        assert response.status_code == 200
+        job = response.json()
+        assert job["output_profile"] == "mp3"
+        final = wait_for_job(client, job["id"], statuses={"completed", "failed", "cancelled"})
+        assert (final["status"], final["error"]) == ("completed", None)
+        assert final["output_profile"] == "mp3"
+        assert final["final_path"] == "audio/Test Video.mp3"
+    assert (settings.library_dir / "audio" / "Test Video.mp3").read_text() == "converted-media"
+    assert "libmp3lame" in argv_log.read_text()
+    assert library_row(settings) == ("audio", "mp3", "mp3", None)
+    assert scalar(settings, "SELECT output_profile FROM download_jobs") == "mp3"
 
 
 def test_failed_conversion_retry_completes_with_same_profile(

@@ -1,11 +1,13 @@
 """M6.4b output profile schema/persistence/API and the fail-closed gates.
 
-The public create path still rejects every non-Original choice. The single
+The public create path accepts a known non-Original profile in the request's
+audio/video set; a single job also validates the runner's pure conversion plan
+first, so an incompatible choice is rejected without side effects. The single
 runner converts known profiles (see test_single_conversion) and the collection
 child converts known profiles that fit its mode (see test_collection_conversion);
 both fail closed on unknown stored values, the child also on a known profile
-outside its mode's set. Known non-Original rows here are written directly
-(controlled records), never through the public create path.
+outside its mode's set. Such out-of-set or corrupt rows here are written
+directly (controlled records), never through the public create path.
 """
 
 import asyncio
@@ -32,7 +34,6 @@ from app.domain.jobs import (
     JobErrorCode,
     OutputProfile,
     output_profile_allowed,
-    require_runnable_output_profile,
 )
 from app.models.jobs import ActivityEvent, DownloadJob, JobItem
 from app.models.library import LibraryItem, MediaFile
@@ -157,20 +158,6 @@ def test_request_rejects_unknown_or_mistyped_profile(value: Any) -> None:
             {"analysis_id": "a", "variant_id": "v", "output_profile": value})
 
 
-@pytest.mark.parametrize("stored", [None, "original"])
-def test_runtime_gate_passes_only_original(stored: str | None) -> None:
-    require_runnable_output_profile(stored)
-
-
-@pytest.mark.parametrize("stored", [*NON_ORIGINAL, "", "bogus"])
-def test_runtime_gate_rejects_everything_else_non_retryable(stored: str) -> None:
-    with pytest.raises(JobError) as caught:
-        require_runnable_output_profile(stored)
-    assert caught.value.code == JobErrorCode.INVALID_PROFILE
-    assert caught.value.retryable is False
-    assert caught.value.message == "This output preference is not supported."
-
-
 def _record(**values: Any) -> DownloadJob:
     now = datetime.now(UTC)
     fields: dict[str, Any] = dict(
@@ -219,46 +206,92 @@ def test_original_create_get_list_reports_original_and_stores_null(
         assert scalar(settings, "SELECT output_profile FROM download_jobs") is None
 
 
+@pytest.mark.parametrize("sent,stored", [("original", None), ("mp4", "mp4")])
 def test_collection_profile_max_height_is_independent_of_output_profile(
-    settings: Settings, analyzer: FakeAnalyzer,
+    settings: Settings, analyzer: FakeAnalyzer, sent: str, stored: str | None,
 ) -> None:
     with app_client(settings, analyzer, paused=True) as client:
         analysis = analyze(client, analyzer, collection=True)
         job = client.post("/api/v1/jobs", json=collection_request(
             analysis, "video", collection_profile={"max_height": 1080},
-            output_profile="original")).json()
+            output_profile=sent)).json()
         assert job["collection_profile"] == {"kind": "original_best_available",
                                              "max_height": 1080}
-        assert job["output_profile"] == "original"
+        assert job["output_profile"] == sent
         with db(settings) as connection:
             assert connection.execute(
                 "SELECT collection_profile_json, output_profile FROM download_jobs"
-            ).fetchone() == ('{"kind":"original_best_available","max_height":1080}', None)
+            ).fetchone() == ('{"kind":"original_best_available","max_height":1080}', stored)
 
 
-def _rejection_cases() -> list[tuple[bool, str, str]]:
+def _compatible_cases() -> list[tuple[bool, str, str]]:
+    audio = sorted(AUDIO_OUTPUT_PROFILES - {"original"})
+    assert len(audio) == 5
+    return [*[(False, AUDIO_VARIANT, profile) for profile in audio],
+            (False, VIDEO_VARIANT, "mp4"),
+            *[(True, "audio", profile) for profile in audio],
+            (True, "video", "mp4")]
+
+
+def _incompatible_cases() -> list[tuple[bool, str, str]]:
     cases = []
     for profile in NON_ORIGINAL:
-        cases.append((False, AUDIO_VARIANT, profile))
-        cases.append((False, VIDEO_VARIANT, profile))
-        cases.append((True, "audio", profile))
-        cases.append((True, "video", profile))
+        if not output_profile_allowed("audio", profile):
+            cases += [(False, AUDIO_VARIANT, profile), (True, "audio", profile)]
+        if not output_profile_allowed("video", profile):
+            cases += [(False, VIDEO_VARIANT, profile), (True, "video", profile)]
     return cases
 
 
-@pytest.mark.parametrize("collection,choice,profile", _rejection_cases())
-def test_known_non_original_create_rejected_without_side_effects(
+def _record_side_effects(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> tuple[list[Any], list[bool]]:
+    application = cast(FastAPI, client.app)
+    published: list[Any] = []
+    notified: list[bool] = []
+    monkeypatch.setattr(application.state.event_bus, "publish", published.append)
+    monkeypatch.setattr(application.state.queue_manager, "notify",
+                        lambda: notified.append(True))
+    return published, notified
+
+
+@pytest.mark.parametrize("collection,choice,profile", _compatible_cases())
+def test_compatible_non_original_create_is_stored_and_read_back(
     settings: Settings, analyzer: FakeAnalyzer, monkeypatch: pytest.MonkeyPatch,
     collection: bool, choice: str, profile: str,
 ) -> None:
     with app_client(settings, analyzer, paused=True) as client:
-        application = cast(FastAPI, client.app)
         analysis = analyze(client, analyzer, collection=collection)
-        published: list[Any] = []
-        notified: list[bool] = []
-        monkeypatch.setattr(application.state.event_bus, "publish", published.append)
-        monkeypatch.setattr(application.state.queue_manager, "notify",
-                            lambda: notified.append(True))
+        published, notified = _record_side_effects(client, monkeypatch)
+        request = (collection_request(analysis, choice, output_profile=profile) if collection
+                   else single_request(analysis, choice, output_profile=profile))
+        response = client.post("/api/v1/jobs", json=request)
+        assert response.status_code == 200
+        job = response.json()
+        assert job["output_profile"] == profile
+        assert job["job_type"] == ("collection" if collection else "single")
+        assert client.get(f"/api/v1/jobs/{job['id']}").json() == job
+        assert client.get("/api/v1/jobs").json()["jobs"] == [job]
+        assert scalar(settings, "SELECT output_profile FROM download_jobs") == profile
+        assert row_counts(settings) == ((1, 2, 1) if collection else (1, 0, 1))
+        assert [(event["event"], event["data"]["job_id"]) for event in published] == [
+            ("activity.created", job["id"])]
+        assert notified == [True]
+        # The queued job's published lifecycle snapshot carries the same profile.
+        assert client.post(f"/api/v1/jobs/{job['id']}/cancel").status_code == 200
+        snapshots = [event["data"] for event in published if event["event"].startswith("job.")]
+        assert snapshots and all(
+            (data["id"], data["output_profile"]) == (job["id"], profile) for data in snapshots)
+
+
+@pytest.mark.parametrize("collection,choice,profile", _incompatible_cases())
+def test_incompatible_non_original_create_rejected_without_side_effects(
+    settings: Settings, analyzer: FakeAnalyzer, monkeypatch: pytest.MonkeyPatch,
+    collection: bool, choice: str, profile: str,
+) -> None:
+    with app_client(settings, analyzer, paused=True) as client:
+        analysis = analyze(client, analyzer, collection=collection)
+        published, notified = _record_side_effects(client, monkeypatch)
         request = (collection_request(analysis, choice, output_profile=profile) if collection
                    else single_request(analysis, choice, output_profile=profile))
         response = client.post("/api/v1/jobs", json=request)
@@ -267,6 +300,28 @@ def test_known_non_original_create_rejected_without_side_effects(
             "code": "invalid_profile", "message": "This output preference is not supported.",
             "retryable": False, "job_id": None,
         }
+        assert row_counts(settings) == (0, 0, 0)
+        assert published == [] and notified == []
+        assert client.get("/api/v1/jobs").json() == {"jobs": []}
+
+
+def test_video_only_mp4_without_audio_companion_is_invalid_variant_without_side_effects(
+    settings: Settings, analyzer: FakeAnalyzer, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    analyzer.result = {"id": "silent", "_type": "video", "title": "Silent",
+                       "webpage_url": YOUTUBE_URL, "formats": [
+                           {"format_id": "137", "ext": "mp4", "vcodec": "avc1.640028",
+                            "acodec": "none", "width": 1920, "height": 1080}]}
+    with app_client(settings, analyzer, paused=True) as client:
+        analysis = analyze(client, analyzer, collection=False)
+        kinds = {fmt["variant_id"]: fmt["kind"] for fmt in analysis["formats"]}
+        assert set(kinds.values()) == {"video_only"}
+        published, notified = _record_side_effects(client, monkeypatch)
+        for variant in kinds:
+            response = client.post("/api/v1/jobs", json=single_request(
+                analysis, variant, output_profile="mp4"))
+            assert response.status_code == 422
+            assert response.json()["error"]["code"] == "invalid_variant"
         assert row_counts(settings) == (0, 0, 0)
         assert published == [] and notified == []
         assert client.get("/api/v1/jobs").json() == {"jobs": []}
