@@ -20,6 +20,7 @@ import os
 import shutil
 import struct
 import subprocess
+import sys
 import threading
 import time
 import wave
@@ -307,9 +308,26 @@ _PROFILE_CASES = [
     _ProfileCase("opus", ("libopus",), (), "ogg", [("audio", "opus")]),
     _ProfileCase("flac", ("flac",), (), "flac", [("audio", "flac")]),
     _ProfileCase(
-        "mp4", ("libx264", "aac"), ("scale",), "mp4", [("video", "h264"), ("audio", "aac")]
+        "mp4", ("libx264", "aac", "ffv1", "pcm_s16le"), ("scale",), "mp4",
+        [("video", "h264"), ("audio", "aac")],
     ),
 ]
+
+
+@pytest.mark.parametrize("missing", ["ffv1", "pcm_s16le"])
+def test_mp4_case_preflight_skips_when_source_encoder_missing(
+    monkeypatch: pytest.MonkeyPatch, missing: str
+) -> None:
+    [case] = [c for c in _PROFILE_CASES if c.profile == "mp4"]
+    module = sys.modules[__name__]
+    available = frozenset({"libx264", "aac", "ffv1", "pcm_s16le"} - {missing})
+    monkeypatch.setattr(module, "_encoders", lambda: available)
+    monkeypatch.setattr(module, "_filters", lambda: frozenset(case.filters))
+
+    with pytest.raises(pytest.skip.Exception) as exc_info:
+        _require(case.encoders, case.filters)
+
+    assert str(exc_info.value) == f"ffmpeg build lacks encoder(s): {missing}"
 
 
 @requires_ffmpeg

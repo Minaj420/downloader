@@ -4,6 +4,14 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-30.
 
 ## Şu an
 
+- M6 — Metadata ve Adlandırma → M6.4f-f4 — Smoke encoder önkontrolü TAMAMLANDI.
+  Opus görüşü alındı; requested Sonnet / observed claude-sonnet-5-5 eşleşti,
+  başarı ve izin reddi yok. MP4 kaynak ffv1/pcm_s16le önkontrolüne eklendi;
+  iki binarysiz regresyon testi eksiklikte doğru skip mesajını doğrular.
+  GPT review bulgu yok, düzeltme turu yok. Worker iki istenen spec okumasını
+  atladı; reviewer bu belgeleri okuyup üretim davranışının değişmediğini doğruladı.
+  Worker/lead: 23 test PASS/0 skip, ayrıca iki preflight PASS, hedefli Ruff/Mypy
+  PASS. Yalnız test + STATE; full gate yok, M6.4f kapanış değerlendirmesi sırada.
 - M6 — Metadata ve Adlandırma → M6.4f-f3b — H.264 profil uyumluluğu TAMAMLANDI.
   Kullanıcının 1. seçenek onayı ve Opus teknik görüşüyle uygulandı. Uygulayıcı
   requested Opus / observed claude-opus-5-5 eşleşti; başarı, izin reddi yok.
@@ -155,10 +163,9 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-30.
 WF-R1 ve dar reviewer smoke takibi tamamlandı; restart/model reload kanıtlanmadı.
 M6.4d-d1–d4, M6.4e ve M6.4f-f1/f2/f3a/f3b tamamlandı.
 
-1. M6 — Metadata ve Adlandırma → M6.4f-f4 — Smoke encoder önkontrolü takibi:
-   f1 GPT should-fix: MP4 kaynak üretimindeki ffv1/pcm_s16le bağımlılıklarını
-   önkontrole ekleyen ayrı mekanik iş. Ardından M6.4f kapanış değerlendirmesi;
-   milestone full gate checker ile, eski full gate güncel sayılmaz.
+1. M6 — Metadata ve Adlandırma → M6.4f-f5 — Dönüşüm doğrulaması kapanış değerlendirmesi:
+   F1/f2/f3a/f3b/f4 tamamlandı. Milestone full gate checker ile;
+   eski full gate güncel sayılmaz. Açık bulgu/riskleri mevcut kapsamla değerlendir.
    F3c runtime ffprobe/interlaced doğrulaması kullanıcı 1. seçenek kapsamı dışında;
    ek altyapı ekleme. Eksik/yanlış profil, interlaced ve eski snapshot riski kabul.
 2. Takip: M6.5 metadata/etiket pipeline bağlantısı →
@@ -212,10 +219,6 @@ Kaynaklar: PRODUCT_SPEC §13–16, ARCHITECTURE §30–34 ve §59 M6.
 
 ## Açık bulgular
 
-- should-fix (f1 GPT review): test_ffmpeg_real_smoke.py MP4 vaka encoder skip
-  önkontrolü kaynak üretiminde kullanılan ffv1/pcm_s16le encoder'larını içermiyor;
-  kısıtlı build kaynak hazırlığında FAIL verebilir. Mevcut macOS'ta tüm testler PASS.
-  Ayrı mekanik takipte yalnız bu iki bağımlılığı önkontrole ekle.
 - should-fix (d3 GPT review): test_collection_conversion.py caller iptaliyle başarılı
   dönüşün çakışması testinde yayınlama/katalog oluşmadığı doğrulanıyor, ancak sleep(0)
   fake convert başarıyla dönmeden iptale izin verebilir. Deterministik başarılı dönüş
@@ -237,6 +240,9 @@ Kaynaklar: PRODUCT_SPEC §13–16, ARCHITECTURE §30–34 ve §59 M6.
 
 ## Son gate
 
+- 2026-10-30 macOS Python 3.14.9, M6.4f-f4 worker ve lead: smoke dosyası 23
+  PASS/0 skip, preflight alt kümesi 2 PASS; hedefli Ruff/Mypy PASS. GPT review
+  bulgu yok. Bir Starlette deprecation uyarısı. Full gate/frontend yok.
 - 2026-10-30 macOS Python 3.14.9, M6.4f-f3b worker ve lead: normalizer/plan/
   collection resolver/single conversion/collection conversion/prepared media/
   output profiles/jobs/gerçek smoke dokuz dosyada 753 PASS/0 skip, iki deprecation
