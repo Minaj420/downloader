@@ -7,16 +7,14 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-30.
 - Mod: Normal; lead OpenCode. Kullanıcı Claude tarafında `/normal-mod` uyguladı;
   `.claude/settings.json` normal mod kaynağıyla eşleşiyor (2026-10-30 doğrulandı).
   Önceki Claude-only dönemindeki commit'ler: `f926a63`
-  (yalnız mod altyapısı), M6.4c (`dc0142b`), M6.4d-d1 (`9ee4c3f`). GPT review bekliyor: M6.4c FFmpeg
-  adaptörü ve M6.4d-d1 dönüşüm çekirdeği (ikisini de Opus yazdı; GPT yok). Bu modda `/code-review high`
-  ile bağımsız review yapıldı, tek düzeltme turu uygulandı (aşağıda); GPT'nin ikinci bakışı yine beklenir.
-  GPT review bekleme kaydı inceleme tamamlanana kadar korunur.
-- Duraklatma noktası (2026-10-30): d1 ve review düzeltmesi commit'li (`83fbcd3`).
-  Kullanıcı GPT review'u yarına (2026-10-31) erteledi; bu oturum yalnız durum kaydı güncellemesidir,
-  review veya uygulama başlatılmaz. Sonraki geliştirme öncesi lead önce GPT review'u bekleyen
-  M6.4c ve d1'i (`dc0142b`..`83fbcd3`) inceletir, sonra d2'ye geçer.
-  Güncelleme öncesi git durumu: çalışma ağacı temiz, `main` kayıtlı `origin/main`'in 24 commit önünde;
-  uzak durum fetch ile yenilenmedi, push yapılmadı.
+  (yalnız mod altyapısı), M6.4c (`dc0142b`), M6.4d-d1 (`9ee4c3f`). M6.4c FFmpeg
+  adaptörü ve M6.4d-d1 dönüşüm çekirdeğinin bağımsız GPT review'u 2026-10-30 tamamlandı:
+  must-fix yok; ikinci iptal sonrası kill/wait yaşam döngüsü should-fix olarak aşağıda.
+  Claude-only dönemindeki tek düzeltme turu (`83fbcd3`) incelemeye dahil; tur sıfırlanmadı.
+- Bu çağrı yalnız bekleyen GPT incelemesini kapattı; production/test/config değişmedi.
+  Kullanıcı diğer bilgisayardaki çalışmaları push edip burada pull yaptı;
+  inceleme başlangıcında `main` kayıtlı `origin/main` ile eşit, tracked ağaç temizdi.
+  Dört eski `.opencode/archive/_*` untracked dosya korundu; bu çağrıda push yok.
 - M6.4c/d1 review düzeltme turu (kullanıcı onaylı, aynı Opus session): mp4 transcode tek sayılı boyut için
   `-vf scale=trunc(iw/2)*2:trunc(ih/2)*2` (copy_video'da yok); `-id3v2_version`/`-rf64` container grubunda
   (copy_audio'da da kalır); convert argv'sine `-nostats` (merge değişmedi); convert'te 0 bayt/eksik çıktı
@@ -58,8 +56,7 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-30.
 
 ## Sıradaki iş
 
-Ön koşul: 2026-10-31 veya kullanıcının sonraki talebiyle bekleyen M6.4c/d1 GPT review'u;
-inceleme tamamlanmadan aşağıdaki uygulama işine geçilmez.
+M6.4c/d1 bağımsız GPT incelemesi tamamlandı; sonraki `/continue` tekli runner işini ele alır.
 
 1. M6.4d-d2 (Sonnet): tekli runner. `require_runnable_output_profile` yerine fail-closed çözümleyici
    (bilinmeyen/türle uyumsuz profil medya I/O öncesi INVALID_PROFILE), `prepare_media(output=...)` bağlantısı,
@@ -113,6 +110,9 @@ Kaynaklar: PRODUCT_SPEC §13–16, ARCHITECTURE §30–34 ve §59 M6.
 
 ## Açık bulgular
 
+- should-fix (M6.4c/d1 GPT review): FFmpeg `_terminate` ikinci iptalde kill gönderiyor ancak
+  process.wait tamamlanmadan dönüyor; kalıcı çalışan süreç kanıtı yok, adaptör dönüşünde reap
+  garantisi eksik. Ayrı scoped takipte iptale dayanıklı wait ve adaptör dönüşünde returncode testi.
 - should-fix: boş kuyrukta container SIGTERM sonrası 10 sn içinde kapanmadı; Podman SIGKILL kullandı.
 - should-fix: Fedora Python 3.14'te mevcut 3 backend test hatası (aşağıda).
 - should-fix: test_jobs.py iptal testi DOWNLOADING görünür görünmez staging.exists varsayıyor;
@@ -128,16 +128,20 @@ Kaynaklar: PRODUCT_SPEC §13–16, ARCHITECTURE §30–34 ve §59 M6.
 
 ## Son gate
 
+- 2026-10-30 macOS Python 3.14.9, M6.4c/d1 bağımsız GPT review: must-fix yok, bir should-fix.
+  Lead hedefli ffmpeg/conversion_plan/prepared_media/child runner/dispatch/jobs/output_profiles:
+  376 PASS, iki deprecation uyarısı; hedefli Ruff ve Mypy (9 dosya) PASS.
+  Kaynak değişmedi; full gate/frontend ve gerçek binary smoke çalıştırılmadı.
 - 2026-10-30 Fedora Python 3.14.8, M6.4c/d1 review düzeltmesi, lead: ffmpeg/prepared_media/conversion_plan/
   child runner/dispatch/jobs/output_profiles 7 test dosyası 376 PASS (worker); lead tekrarında 375 PASS +
   1 bilinen yarış (`test_cancel_running_job_terminates_and_cleans_staging`; düzeltme öncesi HEAD'de de 6
   denemede 2 düştü, düzeltmeyle 0/6; aşağıdaki mevcut should-fix). Hedefli ruff/mypy (4 dosya) ve diff --check PASS.
 - 2026-10-30 Fedora Python 3.14.8, M6.4d-d1 worker ve lead: conversion_plan/prepared_media/ffmpeg adaptörü/
   child runner/dispatch/jobs/output_profiles 7 test dosyası 371 PASS; hedefli ruff, mypy (7 dosya) ve
-  diff --check PASS. Review yok (Opus yazdı); GPT review bekliyor. Full gate/frontend çalıştırılmadı.
+  diff --check PASS. O tarihte GPT review bekliyordu; güncel inceleme yukarıda. Full gate/frontend çalıştırılmadı.
 - 2026-10-30 Fedora Python 3.14.8, M6.4c worker ve lead: ffmpeg/prepared_media/collection runner+dispatch
   4 test dosyası 136 PASS (52 adaptör testi); hedefli ruff, mypy ve diff --check PASS. Opus review
-  yok (Opus yazdı); GPT review bekliyor. Full gate/frontend çalıştırılmadı. Sonraki gate'ler bayat kabul edilir.
+  yok (Opus yazdı); o tarihte GPT review bekliyordu, güncel inceleme yukarıda. Full gate/frontend çalıştırılmadı.
 - 2026-10-30 Fedora Python 3.14.8, M6.4b worker ve lead: hedefli 12 test dosyası 847 PASS
   (100 yeni profil testi dahil; migration/API/runner/retry/recovery/katalog). Hedefli ruff 18 dosya,
   mypy 17 dosya ve diff --check PASS. GPT review must-fix yok. Full gate/frontend çalıştırılmadı.
