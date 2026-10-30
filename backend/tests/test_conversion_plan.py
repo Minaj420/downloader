@@ -5,6 +5,7 @@ import pytest
 from app.domain.analysis import MediaFormatKind, NormalizedFormat
 from app.domain.jobs import JobError, JobErrorCode
 from app.integrations.ffmpeg import ConversionProfile
+from app.services.analysis_normalizer import normalize_source_formats
 from app.services.conversion_plan import (
     ConversionPlan,
     plan_conversion,
@@ -137,6 +138,39 @@ def test_resolve_output_profile_unknown_fails_closed(stored: str) -> None:
         resolve_output_profile(stored)
     assert caught.value.code == JobErrorCode.INVALID_PROFILE
     assert caught.value.retryable is False
+
+
+_MP3_SUBTYPES = ["mp4a.69", "mp4a.6b", "mp4a.40.34", " MP4A.69 "]
+_AMBIGUOUS_MP4A = ["mp4a", "mp4a.40.99", "mp4a.6a", "mp4a.zz"]
+
+
+def source_stream(format_id: str, vcodec: str, acodec: str) -> NormalizedFormat:
+    [parsed] = normalize_source_formats([
+        {"format_id": format_id, "ext": "mp4", "height": 360, "vcodec": vcodec, "acodec": acodec},
+    ])
+    return parsed
+
+
+@pytest.mark.parametrize("raw_codec, copy_mp4, copy_m4a, copy_mp3", [
+    *[(raw, False, False, True) for raw in _MP3_SUBTYPES],
+    *[(raw, False, False, False) for raw in _AMBIGUOUS_MP4A],
+    ("mp4a.40.2", True, True, False),
+])
+def test_normalized_mp4a_subtypes_drive_copy_decisions(
+    raw_codec: str, copy_mp4: bool, copy_m4a: bool, copy_mp3: bool,
+) -> None:
+    muxed_source = source_stream("m", "avc1.64001f", raw_codec)
+    audio_source = source_stream("a", "none", raw_codec)
+    video_only_source = source_stream("v", "avc1.64001f", "none")
+
+    assert plan_conversion("mp4", muxed_source, None).copy_audio is copy_mp4
+    assert plan_conversion("mp4", muxed_source, None).copy_video is True
+    companion_plan = plan_conversion("mp4", video_only_source, audio_source)
+    assert companion_plan.copy_audio is copy_mp4 and companion_plan.copy_video is True
+    assert plan_conversion("m4a", audio_source, None).copy_audio is copy_m4a
+    assert plan_conversion("mp3", audio_source, None).copy_audio is copy_mp3
+    for profile in ("opus", "wav", "flac"):
+        assert plan_conversion(profile, audio_source, None).copy_audio is False
 
 
 @pytest.mark.parametrize("profile", ["original", "mkv"])

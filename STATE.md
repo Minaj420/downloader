@@ -4,6 +4,16 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-30.
 
 ## Şu an
 
+- M6 — Metadata ve Adlandırma → M6.4f-f3a — MP4A alt türlerini ayırma TAMAMLANDI.
+  Opus görüşü sonrası f3 ses/video olarak ayrıldı; bu iş yalnız ses etiketleme.
+  Uygulayıcı requested Sonnet / observed claude-sonnet-5-5 eşleşti, başarı/izin reddi yok.
+  Bilinen AAC/MP3 alt türleri ayrılır; belirsiz mp4a transcode edilir. MP3 kaynak
+  MP4/M4A için transcode, MP3 hedefte copy; Original merge MP3 sesle MKV seçer.
+  Gerçek smoke H264/MP3 → H264/AAC ve aynı video paketlerini doğrular.
+  Bağımsız GPT review bulgu yok, düzeltme turu kullanılmadı. Worker bazı zorunlu
+  belge okumalarını atladı; reviewer spec/workflow okuyarak uyumu doğruladı.
+  Worker ve lead 474 test PASS/0 skip; lead son ağaçta hedefli Ruff/Mypy ve
+  diff --check PASS. Beş dosya + STATE; f3b/c ürün kararları bekliyor, M6.4f açık.
 - M6 — Metadata ve Adlandırma → M6.4f-f2 — İkinci iptalde süreç reap TAMAMLANDI.
   Opus görüşü alındı; uygulayıcı requested Opus / observed claude-opus-5-5 eşleşti,
   başarı ve izin reddi yok. Kill sonrası ek iptale dayanıklı, 5 sn reap + en fazla
@@ -133,11 +143,15 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-30.
 ## Sıradaki iş
 
 WF-R1 ve dar reviewer smoke takibi tamamlandı; restart/model reload kanıtlanmadı.
-M6.4d-d1–d4, M6.4e ve M6.4f-f1/f2 tamamlandı; sıradaki iş f3.
+M6.4d-d1–d4, M6.4e ve M6.4f-f1/f2/f3a tamamlandı; sıradaki iş f3b kararı.
 
-1. M6 — Metadata ve Adlandırma → M6.4f-f3 — Kaba codec etiketleri/uyumlu MP4:
-   Opus görüşüyle dar teknik kapsamı netleştir; ürün tercihi gerekirse kullanıcıya sor.
-   F1/f2 codec uyumluluğu riskini kapatmaz, M6.4f açık kalır.
+1. M6 — Metadata ve Adlandırma → M6.4f-f3b — H.264 profil uyumluluğu:
+   Opus görüşü alındı; uygulama öncesi kullanıcı kararı şart. Öneri: bilinen
+   High10/4:2:2/4:4:4 profilleri transcode, olağan 8-bit 4:2:0 profilleri copy;
+   profil bilgisi yoksa copy mi transcode mu ayrıca sor. Alternatif mevcut H264 copy.
+   Ardından f3c: interlaced/yanlış kaynak etiketlerini staged ffprobe ile doğrulama
+   isteniyor mu ve probe hatasında fail mi transcode mu? Kullanıcıya sor, runtime
+   probe/süreç sahipliği ayrı scoped işler. F3a video uyumluluk riskini kapatmaz.
 2. Takip: M6.5 metadata/etiket pipeline bağlantısı →
    M6.6 müzik yolları/katalog → M6.7 kaynak kapak → M6.8 metadata/kapak önizleme-düzenleme →
    M6.9 harici kapak arama (haklar koşullu) → M6.10 kapanış gate. Başlıklar küçük işlere bölünebilir.
@@ -209,6 +223,10 @@ Kaynaklar: PRODUCT_SPEC §13–16, ARCHITECTURE §30–34 ve §59 M6.
 
 ## Son gate
 
+- 2026-10-30 macOS Python 3.14.9, M6.4f-f3a: worker ve lead yedi dosyada
+  474 pytest PASS/0 skip (20 gerçek smoke dahil, bir Starlette deprecation uyarısı).
+  Lead son ağaçta değişen beş dosyada Ruff/Mypy ve diff --check PASS; worker Ruff
+  import düzeltmesi sonrası PASS. GPT review bulgu yok. Full gate/frontend yok.
 - 2026-10-30 macOS Python 3.14.9, M6.4f-f2 worker ve lead: adaptör + gerçek smoke
   78 PASS/0 skip (bir Starlette deprecation uyarısı); iki değişen dosyada Ruff/Mypy
   PASS, lead diff --check PASS. Bağımsız GPT review must-fix yok. Full gate ve
@@ -281,10 +299,13 @@ Kaynaklar: PRODUCT_SPEC §13–16, ARCHITECTURE §30–34 ve §59 M6.
 - Container root; yt-dlp sabit/görünür değil; hedef filesystem hard link desteği istiyor.
 - M6.2 containment yalnız planlama anında; nested yazma etkinleştirilmeden önce writer tarafında
   güvenli kök/parent doğrulaması zorunlu. Root içi symlink mevcut gibi kabul; TOCTOU koruması değil.
-- Accepted (M6.4c/d1, M6.4f'te ffprobe veya ham codec dizesiyle ele alınacak): normalizer `mp4a.*`→aac ve
-  `avc1/avc3.*`→h264 etiketleri kaba; `mp4a.69` (MP3) AAC sayılıp copy edilebilir (muxer hatası), H.264 High 10/
-  4:4:4/interlaced copy edilip oynatıcıda açılmayan "uyumlu MP4" üretebilir. Ayrıca conversion timeout
-  süreden bağımsız sabit 3600 sn ve alt sınır doğrulaması yok (düşük etki).
+- Accepted (M6.4f-f3a): yeni analizlerde genel mp4a→aac hatası düzeldi; eski kayıtlı
+  snapshot aac etiketleri yeniden yazılmadı, yanlış copy seçimi riski devam eder.
+  MPEG audio 69/6b (ve 40.34) layer bilgisini kesinleştirmez; nadir MP3 dışı layer
+  mp3 sayılabilir. Staged runtime probe bu işte eklenmedi.
+- Accepted (M6.4c/d1, f3b/c kararını bekliyor): avc1/avc3→h264 etiketi kaba;
+  High10/4:4:4/interlaced copy edilip oynatıcıda açılmayan "uyumlu MP4" üretebilir.
+  Ayrıca conversion timeout sabit 3600 sn ve alt sınır doğrulaması yok (düşük etki).
 - Accepted (M6.4b tasarım): elle bozulmuş bilinmeyen output profili DTO/list/SSE doğrulamasını
   ve ilk snapshot nedeniyle normal failed sonlandırmayı bozabilir; Original'a sessiz düşüş yok.
 - Accepted: Delete File stat/unlink mikro-penceresi; bazı terminal parent error.retryable alanları;

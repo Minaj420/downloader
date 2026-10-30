@@ -11,11 +11,34 @@ from app.services.analysis_normalizer import (
     build_normalized_analysis,
     normalize_collection,
     normalize_formats,
+    normalize_source_formats,
     normalize_source_metadata,
 )
 from tests.yt_dlp_samples import playlist_payload, single_video_payload
 
 _VARIANT_ID_MAX_LENGTH = 128  # API/DB limit for variant ids
+
+
+@pytest.mark.parametrize("raw_codec, label", [
+    *[(f"mp4a.{detail}", "aac") for detail in
+      ("40.1", "40.2", "40.4", "40.5", "40.29", "66", "67", "68")],
+    *[(f"mp4a.{detail}", "mp3") for detail in ("40.34", "69", "6b")],
+    ("mp4a", "mp4a"), ("mp4a.", "mp4a"), ("mp4a.40", "mp4a"), ("mp4a.40.99", "mp4a"),
+    ("mp4a.6a", "mp4a"), ("mp4a.zz", "mp4a"), ("mp4a.40.2.1", "mp4a"),
+    ("MP4A.40.2", "aac"), ("  Mp4a.40.5  ", "aac"), ("MP4A.6B", "mp3"),
+    (" mp4a.69\t", "mp3"), (" MP4A ", "mp4a"), ("MP4A.40.99", "mp4a"),
+    ("mp3", "mp3"), ("opus", "opus"), ("vorbis", "vorbis"), ("ac-3", "ac3"),
+    ("flac", "flac"), ("unknowncodec.1", "unknowncodec"),
+])
+@pytest.mark.parametrize("path", ["formats", "source_formats"])
+def test_audio_codec_labels_split_mp4a_subtypes(path: str, raw_codec: str, label: str) -> None:
+    raw = [
+        {"format_id": "a", "ext": "m4a", "vcodec": "none", "acodec": raw_codec, "abr": 128},
+        {"format_id": "m", "ext": "mp4", "height": 360, "vcodec": "avc1", "acodec": raw_codec},
+    ]
+    parsed = normalize_formats(raw) if path == "formats" else normalize_source_formats(raw)
+    codecs = {f.format_id: f.audio_codec for f in parsed}
+    assert codecs == {"a": label, "m": label}
 
 
 def test_collection_identity_uses_snapshot_and_uncompacted_source_order() -> None:

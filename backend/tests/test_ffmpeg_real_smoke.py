@@ -37,6 +37,7 @@ from app.integrations.ffmpeg import (
     FFmpegFailureKind,
     FFmpegProcessor,
 )
+from app.services.analysis_normalizer import normalize_source_formats
 from app.services.conversion_plan import plan_conversion
 
 _FFMPEG = shutil.which("ffmpeg")
@@ -418,6 +419,50 @@ def test_planned_stream_copy_preserves_packets(tmp_path: Path, case: _CopyCase) 
         assert info["format"]["tags"]["major_brand"].strip() == "M4A"
     if case.profile in ("m4a", "mp4"):
         _assert_faststart(output)
+    assert _file_digest(source) == before
+
+
+# --- normalized mp4a.69 (MP3 in MP4) to MP4 ---------------------------------
+
+
+def _streams_of(info: dict[str, Any], codec_type: str) -> list[dict[str, Any]]:
+    return [s for s in info["streams"] if s["codec_type"] == codec_type]
+
+
+@requires_ffmpeg
+def test_normalized_mp3_in_mp4a_source_is_transcoded_to_aac(tmp_path: Path) -> None:
+    _require(("libx264", "libmp3lame", "aac"))
+    frames = _write_raw_frames(tmp_path / "frames_even.rgb", _EVEN_SIZE)
+    tone = _write_tone_wav(tmp_path / "mp3_tone.wav")
+    source = _encode(
+        [*_raw_video_input(frames, _EVEN_SIZE), "-i", str(tone),
+         "-map", "0:v:0", "-map", "1:a:0",
+         "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+         "-c:a", "libmp3lame", "-b:a", "128k", "-shortest", "-f", "mp4"],
+        tmp_path / "source_h264_mp3.mp4",
+    )
+    assert _stream_types(_probe(source)) == [("video", "h264"), ("audio", "mp3")]
+
+    [selected] = normalize_source_formats([
+        {"format_id": "m", "ext": "mp4", "height": _EVEN_SIZE[1],
+         "vcodec": "avc1.640028", "acodec": "mp4a.69"},
+    ])
+    assert (selected.video_codec, selected.audio_codec) == ("h264", "mp3")
+    plan = plan_conversion("mp4", selected, None)
+    assert (plan.copy_video, plan.copy_audio) == (True, False)
+    before = _file_digest(source)
+    output = tmp_path / "out.mp4"
+
+    asyncio.run(_processor().convert(
+        source, output, "mp4", copy_audio=plan.copy_audio, copy_video=plan.copy_video,
+    ))
+
+    info = _probe(output)
+    assert _stream_types(info) == [("video", "h264"), ("audio", "aac")]
+    assert "mp4" in _format_names(info)
+    assert len(_streams_of(info, "audio")) == 1
+    assert _packet_hash(output, "0:v:0") == _packet_hash(source, "0:v:0")
+    _assert_faststart(output)
     assert _file_digest(source) == before
 
 

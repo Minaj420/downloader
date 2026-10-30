@@ -77,7 +77,6 @@ _SOURCE_DATE = re.compile(r"[0-9]{8}")
 _CODEC_LABELS = {
     "avc1": "h264",
     "avc3": "h264",
-    "mp4a": "aac",
     "vp09": "vp9",
     "vp9": "vp9",
     "vp8": "vp8",
@@ -92,6 +91,25 @@ _CODEC_LABELS = {
     "ac-3": "ac3",
     "ec-3": "eac3",
     "dtsc": "dts",
+}
+
+# ``mp4a`` alone does not identify AAC: the RFC 6381 object type indicator
+# also covers MPEG-1/2 audio (MP3). Only known details get a concrete label;
+# anything else stays ``mp4a`` so the planner treats it as an unknown codec
+# and transcodes. MPEG audio ``69``/``6b`` do not tell the layer apart, which
+# is an accepted rare risk (a non-MP3 layer would be labelled mp3).
+_MP4A_DETAIL_LABELS = {
+    "40.1": "aac",
+    "40.2": "aac",
+    "40.4": "aac",
+    "40.5": "aac",
+    "40.29": "aac",
+    "66": "aac",
+    "67": "aac",
+    "68": "aac",
+    "40.34": "mp3",
+    "69": "mp3",
+    "6b": "mp3",
 }
 
 
@@ -128,7 +146,11 @@ def _optional_str(value: object) -> str | None:
 def _codec_label(value: str | None) -> str | None:
     if value is None:
         return None
-    base = value.split(".")[0].strip().lower()
+    codec = value.strip().lower()
+    base, _, detail = codec.partition(".")
+    base = base.strip()
+    if base == "mp4a":
+        return _MP4A_DETAIL_LABELS.get(detail, "mp4a")
     return _CODEC_LABELS.get(base, base)
 
 

@@ -14,9 +14,10 @@ from app.integrations.ffmpeg import (
 )
 from app.integrations.ytdlp import DownloadProgress, YtDlpDownloader, YtDlpError, YtDlpFailureKind
 from app.main import create_app
+from app.services.analysis_normalizer import normalize_source_formats
 from app.services.collection_profile_resolver import NativeChildPlan, resolve_native_child
 from app.services.job_runner import _JobExecution
-from app.services.prepared_media import prepare_media
+from app.services.prepared_media import merge_container, prepare_media
 from app.services.storage_service import StorageService
 from tests.fake_binaries import fake_ffmpeg_record
 
@@ -128,6 +129,19 @@ def anyio_backend() -> str:
 @pytest.fixture
 def pipeline(tmp_path: Path) -> Pipeline:
     return Pipeline(StorageService(tmp_path / "staging", tmp_path / "library"))
+
+
+@pytest.mark.parametrize("raw_audio, container", [
+    ("mp4a.40.2", "mp4"), ("mp4a.69", "mkv"), ("mp4a.6b", "mkv"),
+    ("mp4a.40.34", "mkv"), ("mp4a", "mkv"),
+])
+def test_merge_container_uses_normalized_audio_subtype(raw_audio: str, container: str) -> None:
+    video, audio = normalize_source_formats([
+        {"format_id": "v", "ext": "mp4", "height": 720, "vcodec": "avc1.64001f", "acodec": "none"},
+        {"format_id": "a", "ext": "m4a", "vcodec": "none", "acodec": raw_audio},
+    ])
+    assert video.video_codec == "h264"
+    assert merge_container(video, audio) == container
 
 
 @pytest.mark.anyio
