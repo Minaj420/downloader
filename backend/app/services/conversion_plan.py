@@ -5,10 +5,10 @@ codec always transcodes. WAV and FLAC are always encoded with their fixed
 profile. Incompatible source/profile combinations fail before any media I/O.
 """
 
-from typing import NamedTuple
+from typing import NamedTuple, cast, get_args
 
 from app.domain.analysis import MediaFormatKind, NormalizedFormat
-from app.domain.jobs import JobError, JobErrorCode
+from app.domain.jobs import ORIGINAL_OUTPUT_PROFILE, JobError, JobErrorCode
 from app.integrations.ffmpeg import ConversionProfile
 
 # Codec a profile's output carries; also the source codec that allows copy.
@@ -29,6 +29,21 @@ class ConversionPlan(NamedTuple):
     copy_video: bool
     output_codec: str
     keep_source_bitrate: bool
+
+
+def resolve_output_profile(stored: str | None) -> ConversionProfile | None:
+    """Stored job profile to a conversion target; ``None`` means Original.
+
+    NULL (legacy) and ``original`` keep the source file; a known conversion
+    profile is returned as is; anything else fails closed before media I/O.
+    """
+    if stored is None or stored == ORIGINAL_OUTPUT_PROFILE:
+        return None
+    if stored in get_args(ConversionProfile):
+        return cast(ConversionProfile, stored)
+    raise JobError(
+        JobErrorCode.INVALID_PROFILE, detail=f"unknown output profile {stored!r}"
+    )
 
 
 def plan_conversion(

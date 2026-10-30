@@ -1,8 +1,9 @@
-"""M6.4b output profile schema/persistence/API and the temporary fail-closed gate.
+"""M6.4b output profile schema/persistence/API and the fail-closed gates.
 
-Conversion runtime does not exist yet: every non-Original choice is rejected at
-create and fails closed at run time. Known non-Original rows here are written
-directly (controlled records), never through the public create path.
+The public create path and the collection child still reject every non-Original
+choice. The single runner converts known profiles (see test_single_conversion)
+and fails closed only on unknown stored values. Known non-Original rows here are
+written directly (controlled records), never through the public create path.
 """
 
 import asyncio
@@ -378,43 +379,18 @@ class _SingleRun:
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("profile", NON_ORIGINAL)
-async def test_single_runner_fails_closed_before_analysis_storage_or_catalog(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, profile: str,
-) -> None:
-    run = _SingleRun(tmp_path, monkeypatch)
-    try:
-        await run.seed(profile)
-        before = run.tree()
-        await run.run()
-        record, messages, library, files = await run.facts()
-        assert run.io == []
-        assert (record.status, record.error_code, record.output_profile) == (
-            "failed", "invalid_profile", profile)
-        assert record.staging_path is None and record.final_path is None
-        assert messages == ["Download started", "Failed: This output preference is not supported."]
-        assert (library, files) == (0, 0)
-        assert run.tree() == before
-        dto = job_to_dto(record)
-        assert dto.output_profile == profile
-        assert dto.error is not None and dto.error.retryable is False
-        assert [event["event"] for event in run.bus.events][-1] == "job.failed"
-    finally:
-        await run.engine.dispose()
-
-
-@pytest.mark.anyio
 async def test_single_runner_cancel_precedence_is_unchanged(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     run = _SingleRun(tmp_path, monkeypatch)
     try:
-        await run.seed("mp3")
-        await run.run(cancel=True)
+        await run.seed("bogus")
+        # Accepted risk: the corrupt value is not mappable to a DTO snapshot.
+        await asyncio.gather(run.run(cancel=True), return_exceptions=True)
         record, messages, library, _ = await run.facts()
         assert run.io == []
         assert (record.status, record.error_code, record.output_profile) == (
-            "cancelled", "cancelled", "mp3")
+            "cancelled", "cancelled", "bogus")
         assert messages[-1] == "Cancelled" and library == 0
     finally:
         await run.engine.dispose()
@@ -541,28 +517,8 @@ async def test_all_completed_parent_keeps_success_precedence(tmp_path: Path) -> 
 # --- retry / recovery keep the stored choice ---------------------------------------
 
 
-def test_single_recovery_and_real_retry_keep_stored_profile_then_gate_fails(
-    settings: Settings, analyzer: FakeAnalyzer,
-) -> None:
-    with app_client(settings, analyzer, paused=True) as client:
-        job = client.post("/api/v1/jobs", json=single_request(
-            analyze(client, analyzer, collection=False), AUDIO_VARIANT)).json()
-    execute(settings, "UPDATE download_jobs SET status = 'downloading', output_profile = 'mp3'")
-    with app_client(settings, analyzer, paused=False) as client:
-        recovered = client.get(f"/api/v1/jobs/{job['id']}").json()
-        assert recovered["error"]["code"] == "interrupted_by_restart"
-        assert recovered["error"]["retryable"] is True
-        assert recovered["output_profile"] == "mp3"
-        response = client.post(f"/api/v1/jobs/{job['id']}/retry")
-        assert response.status_code == 200
-        assert response.json()["output_profile"] == "mp3"
-        final = wait_for_job(client, job["id"], statuses={"completed", "failed", "cancelled"})
-        assert (final["status"], final["error"]["code"]) == ("failed", "invalid_profile")
-        assert final["error"]["retryable"] is False and final["output_profile"] == "mp3"
-        assert final["final_path"] is None
-        assert client.post(f"/api/v1/jobs/{job['id']}/retry").status_code == 409
-    assert scalar(settings, "SELECT output_profile FROM download_jobs") == "mp3"
-    assert scalar(settings, "SELECT COUNT(*) FROM library_items") == 0
+# Single recovery/retry with the stored profile runs real conversion in the
+# runner: see test_single_conversion (fake binaries, no real media commands).
 
 
 @pytest.mark.parametrize("terminal", ["failed", "cancelled"])

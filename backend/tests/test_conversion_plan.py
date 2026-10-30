@@ -5,7 +5,11 @@ import pytest
 from app.domain.analysis import MediaFormatKind, NormalizedFormat
 from app.domain.jobs import JobError, JobErrorCode
 from app.integrations.ffmpeg import ConversionProfile
-from app.services.conversion_plan import ConversionPlan, plan_conversion
+from app.services.conversion_plan import (
+    ConversionPlan,
+    plan_conversion,
+    resolve_output_profile,
+)
 
 
 def fmt(
@@ -115,6 +119,24 @@ def test_mp4_video_only_without_companion_is_invalid_variant() -> None:
     with pytest.raises(JobError) as caught:
         plan_conversion("mp4", video_only("h264"), None)
     assert caught.value.code == JobErrorCode.INVALID_VARIANT
+
+
+@pytest.mark.parametrize("stored", [None, "original"])
+def test_resolve_output_profile_original_is_no_conversion(stored: str | None) -> None:
+    assert resolve_output_profile(stored) is None
+
+
+@pytest.mark.parametrize("stored", ["mp3", "wav", "m4a", "opus", "flac", "mp4"])
+def test_resolve_output_profile_known_returns_itself(stored: str) -> None:
+    assert resolve_output_profile(stored) == stored
+
+
+@pytest.mark.parametrize("stored", ["", "bogus", "MP3", "Original", "mkv", " mp3"])
+def test_resolve_output_profile_unknown_fails_closed(stored: str) -> None:
+    with pytest.raises(JobError) as caught:
+        resolve_output_profile(stored)
+    assert caught.value.code == JobErrorCode.INVALID_PROFILE
+    assert caught.value.retryable is False
 
 
 @pytest.mark.parametrize("profile", ["original", "mkv"])

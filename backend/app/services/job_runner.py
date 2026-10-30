@@ -30,10 +30,14 @@ from app.domain.jobs import (
     JobError,
     JobErrorCode,
     JobStatus,
-    require_runnable_output_profile,
 )
 from app.domain.library import MediaStorageType
-from app.integrations.ffmpeg import FFmpegError, FFmpegFailureKind, FFmpegProcessor
+from app.integrations.ffmpeg import (
+    ConversionProfile,
+    FFmpegError,
+    FFmpegFailureKind,
+    FFmpegProcessor,
+)
 from app.integrations.ytdlp import (
     DownloadProgress,
     YtDlpDownloader,
@@ -45,6 +49,11 @@ from app.models.jobs import DownloadJob
 from app.models.library import LibraryItem, MediaFile
 from app.repositories import activity
 from app.repositories import jobs as job_repo
+from app.services.conversion_plan import (
+    ConversionPlan,
+    plan_conversion,
+    resolve_output_profile,
+)
 from app.services.event_bus import EventBus
 from app.services.job_mapping import job_to_dto
 from app.services.library_service import stage_media_catalog_reference
@@ -131,6 +140,7 @@ def build_app_library_catalog(
     normalized: NormalizedAnalysis,
     selected: NormalizedFormat,
     placement: PlacementResult,
+    plan: ConversionPlan | None = None,
 ) -> tuple[LibraryItem, MediaFile]:
     """Derive the Library catalog rows for a finalized App Library download.
 
@@ -141,9 +151,21 @@ def build_app_library_catalog(
     (artist/album/…) have no source until Milestone 6 and stay null; the
     physical row always carries the storage-controlled path and the real
     file size read inside the storage boundary.
+
+    For a converted download the codec comes from the plan and the bitrate
+    only survives a pure stream copy; when an existing file was kept
+    (Skip Existing) its content is unknown, so both stay null.
     """
     now = datetime.now(UTC)
     audio = selected.kind == "audio_only"
+    if plan is None:
+        codec = selected.audio_codec if audio else selected.video_codec
+        bitrate = selected.bitrate_kbps
+    elif placement.skipped_existing:
+        codec = bitrate = None
+    else:
+        codec = plan.output_codec
+        bitrate = selected.bitrate_kbps if plan.keep_source_bitrate else None
     item = LibraryItem(
         id=uuid4().hex,
         owner_id=job.owner_id,
@@ -154,8 +176,8 @@ def build_app_library_catalog(
         media_type="audio" if audio else "video",
         title=job.title,
         format=placement.final_path.suffix.lstrip(".") or None,
-        codec=selected.audio_codec if audio else selected.video_codec,
-        bitrate=selected.bitrate_kbps,
+        codec=codec,
+        bitrate=bitrate,
         resolution=selected.resolution_label,
         duration=normalized.duration_seconds,
         created_at=now,
@@ -168,6 +190,15 @@ def build_app_library_catalog(
         created_at=now,
     )
     return item, media_file
+
+
+def _post_processing_message(merging: bool, output: ConversionProfile | None) -> str:
+    if output is None:
+        return "Post-processing (merging video and audio)"
+    target = output.upper()
+    if merging:
+        return f"Post-processing (merging video and audio, converting to {target})"
+    return f"Converting to {target}"
 
 
 def _truncate_detail(detail: str | None) -> str | None:
@@ -273,8 +304,8 @@ class _JobExecution:
             await self._fail(JobError(JobErrorCode.INTERNAL_ERROR, detail=repr(exc)))
 
     async def _execute(self, record: DownloadJob) -> None:
-        # Fail closed before analysis/download/storage until conversion exists.
-        require_runnable_output_profile(record.output_profile)
+        # Fail closed on an unknown stored profile before analysis/download/storage.
+        output = resolve_output_profile(record.output_profile)
         analysis = await _get_analysis(
             self._deps.session_factory, record.analysis_id, record.owner_id
         )
@@ -287,12 +318,19 @@ class _JobExecution:
             analysis.normalized_result_json
         )
         selected, companion = resolve_variant(normalized, record.variant_id)
+        # Pure check: incompatible source/profile or missing companion fails
+        # before the staging update and any media I/O.
+        plan = (
+            plan_conversion(output, selected, companion) if output is not None else None
+        )
 
         await self._update(staging_path=self._job_id)
 
+        merging = selected.kind == "video_only" and companion is not None
+
         async def before_merge() -> None:
             await self._set_status(
-                JobStatus.POST_PROCESSING, "Post-processing (merging video and audio)"
+                JobStatus.POST_PROCESSING, _post_processing_message(merging, output)
             )
 
         media_file = await prepare_media(
@@ -307,6 +345,7 @@ class _JobExecution:
             on_process_started=self._register_process,
             progress_forwarder=self._progress_forwarder,
             before_merge=before_merge,
+            output=output,
         )
 
         await self._check_cancelled()
@@ -327,7 +366,7 @@ class _JobExecution:
         else:
             await self._activity("Saved to App Library")
 
-        await self._complete(record, normalized, selected, placement)
+        await self._complete(record, normalized, selected, placement, plan)
         self._deps.storage.remove_staging(self._job_id)
 
     def _progress_forwarder(
@@ -403,6 +442,7 @@ class _JobExecution:
         normalized: NormalizedAnalysis,
         selected: NormalizedFormat,
         placement: PlacementResult,
+        plan: ConversionPlan | None = None,
     ) -> None:
         """Complete the job and write its Library catalog rows atomically.
 
@@ -419,7 +459,7 @@ class _JobExecution:
         with a dangling reference to a deleted file.
         """
         item, media_file = build_app_library_catalog(
-            record, normalized, selected, placement
+            record, normalized, selected, placement, plan
         )
         async with self._deps.session_factory() as session:
             won = await job_repo.stage_job_update_if_status(

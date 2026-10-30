@@ -4,6 +4,16 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-30.
 
 ## Şu an
 
+- M6.4d-d2 TAMAMLANDI: Opus görüşü sonrası Sonnet tekli runner dönüşümünü bağladı;
+  requested Sonnet / observed claude-sonnet-5-5 eşleşti. Bağımsız GPT review tamam, must-fix yok.
+  Lead macOS doğrulaması: 430 test, hedefli Ruff/Mypy PASS. Review düzeltme turu gerekmedi.
+  Bilinen profillerde plan staging/medya I/O öncesi doğrulanır; katalog codec/bitrate çıktı planından,
+  dönüşümlü Skip Existing'de ikisi None; iptal/hata/retry/recovery yolları testli.
+  API non-Original create ve collection child kapıları kapalı; arayüz aktivasyonu yok.
+  test_jobs.py staging beklemesi kullanıcı onayıyla kapsama alındı; test yarışı çözüldü.
+  Reviewer izin engeli teşhis edildi: git --no-pager ve zincirli cat izin kalıbı dışında.
+  Kullanıcının devam onayıyla ayrı git diff/status ve Read kullanıldı; izin/config değişmedi.
+  Kapanış kapsamı altı uygulama/test dosyası ve STATE; dört eski untracked arşiv korunur, push yok.
 - Mod: Normal; lead OpenCode. Kullanıcı Claude tarafında `/normal-mod` uyguladı;
   `.claude/settings.json` normal mod kaynağıyla eşleşiyor (2026-10-30 doğrulandı).
   Önceki Claude-only dönemindeki commit'ler: `f926a63`
@@ -11,10 +21,6 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-30.
   adaptörü ve M6.4d-d1 dönüşüm çekirdeğinin bağımsız GPT review'u 2026-10-30 tamamlandı:
   must-fix yok; ikinci iptal sonrası kill/wait yaşam döngüsü should-fix olarak aşağıda.
   Claude-only dönemindeki tek düzeltme turu (`83fbcd3`) incelemeye dahil; tur sıfırlanmadı.
-- Bu çağrı yalnız bekleyen GPT incelemesini kapattı; production/test/config değişmedi.
-  Kullanıcı diğer bilgisayardaki çalışmaları push edip burada pull yaptı;
-  inceleme başlangıcında `main` kayıtlı `origin/main` ile eşit, tracked ağaç temizdi.
-  Dört eski `.opencode/archive/_*` untracked dosya korundu; bu çağrıda push yok.
 - M6.4c/d1 review düzeltme turu (kullanıcı onaylı, aynı Opus session): mp4 transcode tek sayılı boyut için
   `-vf scale=trunc(iw/2)*2:trunc(ih/2)*2` (copy_video'da yok); `-id3v2_version`/`-rf64` container grubunda
   (copy_audio'da da kalır); convert argv'sine `-nostats` (merge değişmedi); convert'te 0 bayt/eksik çıktı
@@ -27,10 +33,10 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-30.
   h264, ses aac; wav/flac asla copy; bilinmeyen codec transcode; uyumsuz kaynak indirme öncesi INVALID_PROFILE/
   INVALID_VARIANT), `prepare_media(output=...)` (plan indirmeden önce, `converted.<uzantı>`, `before_merge`
   hook'u en fazla bir kez), `ffmpeg_conversion_timeout_seconds=3600` config/main bağlı. `output=None` yolu
-  değişmedi. Runner/API kapıları aynen duruyor: dönüşüm henüz canlı işte çalışmıyor.
+  değişmedi. Sonraki d2 tekli runner bağlantısı tamam; API/child kapıları halen kapalı.
 - M6.4c tamamlandı: `FFmpegProcessor.convert` tek profil tablosuyla mp3/wav/m4a/opus/flac/mp4; ortak `_run`,
   başarısızlık/timeout/iptalde yalnız kendi çıktısını silme, `input==output` ve uzantı `ValueError`,
-  ayrı conversion timeout (3600 sn). Aktivasyon yok; runner/config bağlanmadı, M6.4b kapısı duruyor.
+  ayrı conversion timeout (3600 sn). Config ve tekli runner sonradan bağlandı; API/child kapıları duruyor.
   Onaylı değerler: MP3 V0, M4A AAC 256k, Opus 160k, WAV/FLAC 16-bit, MP4 x264 CRF 20 medium + AAC 192k.
 - M0–M5 kabul edildi (M5: playlist/album, `d37b78f`); child dosya izni artık `0644`.
 - Kullanıcı dağıtım hedefini netleştirdi: uygulama açık kaynak dağıtılacak; bu, otomatik olarak
@@ -51,19 +57,16 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-30.
   eski/null kayıtlar Original, retry seçimi korur. Test kapsamı kullanıcı onayıyla genişletildi.
   Opus ve açık --model opus aynı-rol resume: claude-opus-5-5, başarı ve izin reddi yok;
   bağımsız GPT review must-fix yok, review rework gerekmedi.
-- Dönüşüm motoru henüz yok: API non-Original create yan etkisiz INVALID_PROFILE;
-  kayıtlı non-Original runner'da medya I/O öncesi reddedilir. Arayüz/preset/FFmpeg aktivasyonu yok.
+- API non-Original create halen yan etkisiz INVALID_PROFILE; kayıtlı bilinen non-Original
+  tekli işler artık dönüşebilir. Collection child dönüşümü ve arayüz aktivasyonu henüz yok.
 
 ## Sıradaki iş
 
-M6.4c/d1 bağımsız GPT incelemesi tamamlandı; sonraki `/continue` tekli runner işini ele alır.
+M6.4c/d1 ve d2 bağımsız incelemeleri tamamlandı; sonraki çağrı yeni bounded d3 işidir.
 
-1. M6.4d-d2 (Sonnet): tekli runner. `require_runnable_output_profile` yerine fail-closed çözümleyici
-   (bilinmeyen/türle uyumsuz profil medya I/O öncesi INVALID_PROFILE), `prepare_media(output=...)` bağlantısı,
-   katalog codec/bitrate çıktıdan (`ConversionPlan.output_codec/keep_source_bitrate`; Skip Existing'de None),
-   FFmpegError eşleme (BINARY_MISSING→FFMPEG_MISSING retry yok; FAILED/TIMEOUT→POST_PROCESSING_FAILED),
-   Activity "Converting to ..." mesajı, iptal ve retry testleri. Sonra d3 child (tek POST_PROCESSING geçişi:
-   child CAS aynı durumu tekrar kabul etmiyor; stage_child_completion katalog override), en son d4 API kapısı.
+1. M6.4d-d3 collection child (Opus): tek POST_PROCESSING geçişi (child CAS aynı durumu tekrar
+   kabul etmiyor), stage_child_completion katalog override, çıktı planı/iptal/retry bağlantısı.
+   En son d4 API kapısı; bu çağrıda d3/d4 başlamadı.
 2. Takip: M6.4e arayüz → M6.4f gerçek binary/çıktı smoke (encoder var/yok, ffprobe codec/faststart,
    gerçek iptalde artık süreç yok; ffmpeg yoksa skip).
    M6.5 metadata/etiket pipeline bağlantısı →
@@ -87,8 +90,8 @@ Kural: review ve kontroller sonrası görev başına otomatik commit; push yaln�
   retry aynı seçimi kullanır, eski eksik profil Original olur. M6.4b ortak nullable
   download_jobs.output_profile String(16), API/DTO original/mp3/wav/m4a/opus/flac/mp4 seçildi.
   CollectionProfile native/max_height olarak kalır; ikinci çıktı alanı ve child profili yok.
-  Dönüşüm aktivasyonu M6.4c/d öncesi kapalı; API non-Original create INVALID_PROFILE, runner
-  kayıtlı non-Original/bozuk profili probe/download öncesi reddeder; sözleşme review'dan geçti.
+  API non-Original create INVALID_PROFILE ve child kapısı kapalı; tekli runner bilinen
+  uyumlu profilleri dönüştürür. Bozuk profil DTO riski aşağıda; sessiz Original fallback yok.
   Ayrı converter/runner yok; mevcut FFmpeg/prepared_media/staging/storage sınırları korunacak.
   Açık dönüşüm hatası ile opsiyonel etiket/kapak fallback'i ayrı sözleşmeler olarak netleştirilecek.
   Fake argv testine ek gerçek codec/container doğrulaması planlandı; encoder/build garantisi yok.
@@ -115,8 +118,8 @@ Kaynaklar: PRODUCT_SPEC §13–16, ARCHITECTURE §30–34 ve §59 M6.
   garantisi eksik. Ayrı scoped takipte iptale dayanıklı wait ve adaptör dönüşünde returncode testi.
 - should-fix: boş kuyrukta container SIGTERM sonrası 10 sn içinde kapanmadı; Podman SIGKILL kullandı.
 - should-fix: Fedora Python 3.14'te mevcut 3 backend test hatası (aşağıda).
-- should-fix: test_jobs.py iptal testi DOWNLOADING görünür görünmez staging.exists varsayıyor;
-  claim commit'i mkdir'den önce olduğundan yarış var. M6.1 bu sırayı değiştirmedi; kapsam dışı.
+- should-fix (d2 GPT review): dönüşüm başarıyla dönerken iptal gelmesi senaryosu için ek test;
+  mevcut test yalnız FFmpegError yolunu kapsıyor. Kodda dönüşüm sonrası iptal kontrolü mevcut.
 - should-fix: collection child Skip Existing sonucunu Activity uyarısıyla göstermiyor; M6.3 mevcut
   skip/identity davranışını korudu. Activity/SSE/transaction sahipliği ayrı scoped iş gerektirir.
 - Sonnet/Opus uygulama/test ve açık aynı-model resume görüldü; farklı-rol resume izolasyonu
@@ -128,6 +131,10 @@ Kaynaklar: PRODUCT_SPEC §13–16, ARCHITECTURE §30–34 ve §59 M6.
 
 ## Son gate
 
+- 2026-10-30 macOS Python 3.14.9, d2 worker ve lead: single_conversion/conversion_plan/
+  prepared_media/ffmpeg/output_profiles/jobs/child runner/dispatch/library_catalog 9 dosya:
+  430 PASS, iki deprecation uyarısı. Lead hedefli Ruff/Mypy (6 dosya) PASS; GPT must-fix yok.
+  Full gate/frontend/gerçek binary smoke çalıştırılmadı; eski full gate güncel değil.
 - 2026-10-30 macOS Python 3.14.9, M6.4c/d1 bağımsız GPT review: must-fix yok, bir should-fix.
   Lead hedefli ffmpeg/conversion_plan/prepared_media/child runner/dispatch/jobs/output_profiles:
   376 PASS, iki deprecation uyarısı; hedefli Ruff ve Mypy (9 dosya) PASS.

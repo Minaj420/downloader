@@ -1109,6 +1109,11 @@ class TestCancellation:
 
             wait_for_job(client, job["id"], statuses={"downloading"})
             staging_dir = settings.staging_dir / job["id"]
+            # The downloading claim commits before the runner creates the
+            # staging directory; wait for it instead of assuming it exists.
+            deadline = time.monotonic() + 3.0
+            while not staging_dir.exists() and time.monotonic() < deadline:
+                time.sleep(0.05)
             assert staging_dir.exists()
 
             response = client.post(f"/api/v1/jobs/{job['id']}/cancel")
