@@ -4,6 +4,9 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-30.
 
 ## Şu an
 
+- Kalıcı kullanıcı iletişim tercihi: ilerleme ve sıradaki iş özetlerinde her zaman
+  milestone numarası/adı, alt iş kodu ve kısa açıklamayı belirt. Örnek:
+  M6 — Metadata ve Adlandırma → M6.4d-d3 — Koleksiyon indirmelerine dönüşüm bağlantısı.
 - M6.4d-d2 TAMAMLANDI: Opus görüşü sonrası Sonnet tekli runner dönüşümünü bağladı;
   requested Sonnet / observed claude-sonnet-5-5 eşleşti. Bağımsız GPT review tamam, must-fix yok.
   Lead macOS doğrulaması: 430 test, hedefli Ruff/Mypy PASS. Review düzeltme turu gerekmedi.
