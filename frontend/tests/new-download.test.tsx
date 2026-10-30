@@ -971,6 +971,7 @@ describe("NewDownloadPage", () => {
     expect(JSON.parse(String(jobCall?.[1]?.body))).toEqual({
       analysis_id: singleResult.analysis_id,
       variant_id: "video-720",
+      output_profile: "original",
       destination: "app_library",
     });
   });
@@ -980,7 +981,9 @@ describe("NewDownloadPage", () => {
     const { user } = await renderNewDownload();
 
     await analyzeSingleResult(user);
-    const audioVariant = screen.getByRole("radio", { name: /opus/i });
+    const audioVariant = within(
+      screen.getByRole("group", { name: "Audio formats" }),
+    ).getByRole("radio", { name: /opus/i });
     await user.click(audioVariant);
     expect(audioVariant).toBeChecked();
     await user.click(screen.getByRole("button", { name: "Download" }));
@@ -993,7 +996,217 @@ describe("NewDownloadPage", () => {
     expect(JSON.parse(String(jobCall?.[1]?.body))).toEqual({
       analysis_id: singleResult.analysis_id,
       variant_id: "audio-opus-160",
+      output_profile: "original",
       destination: "app_library",
+    });
+  });
+
+  describe("output format", () => {
+    const outputGroup = () => screen.getByRole("group", { name: "Output format" });
+    const outputLabels = () =>
+      within(outputGroup())
+        .getAllByRole("radio")
+        .map((radio) => radio.closest("label")?.textContent);
+    const sourceRadio = (group: string, name: RegExp) =>
+      within(screen.getByRole("group", { name: group })).getByRole("radio", { name });
+    const outputRadio = (name: string) =>
+      within(outputGroup()).getByRole("radio", { name });
+    const createBodies = (fetchMock: ReturnType<typeof stubFetch>) =>
+      fetchMock.mock.calls
+        .filter(([url, init]) => url === "/api/v1/jobs" && init?.method === "POST")
+        .map(([, init]) => JSON.parse(String(init?.body)) as Record<string, unknown>);
+
+    it("offers the video set by default and the audio set for an audio variant, defaulting to Original", async () => {
+      jobFlowHandler();
+      const { user } = await renderNewDownload();
+      await analyzeSingleResult(user);
+
+      expect(outputLabels()).toEqual(["Original", "MP4 (compatible)"]);
+      expect(outputRadio("Original")).toBeChecked();
+      // Output sits under the variant lists, before the destination.
+      expect(
+        outputGroup().compareDocumentPosition(screen.getByRole("group", { name: "Save to" })) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+
+      await user.click(sourceRadio("Audio formats", /opus/i));
+      expect(outputLabels()).toEqual([
+        "Original / Best Available",
+        "MP3",
+        "WAV",
+        "M4A",
+        "Opus",
+        "FLAC",
+      ]);
+      expect(outputRadio("Original / Best Available")).toBeChecked();
+
+      // Conversion is framed as compatibility, never as a quality upgrade.
+      expect(within(outputGroup()).getByText(/not a quality upgrade/)).toBeInTheDocument();
+      expect(within(outputGroup()).getByText(/WAV and FLAC do not restore detail/)).toBeInTheDocument();
+      expect(outputGroup().textContent).not.toMatch(/improve|better quality|higher quality|enhance/i);
+      expect(screen.queryByText(/come directly from the analyzed source/)).not.toBeInTheDocument();
+    });
+
+    it("posts MP3 for an audio variant", async () => {
+      const fetchMock = jobFlowHandler();
+      const { user } = await renderNewDownload();
+      await analyzeSingleResult(user);
+
+      await user.click(sourceRadio("Audio formats", /opus/i));
+      await user.click(outputRadio("MP3"));
+      await user.click(screen.getByRole("button", { name: "Download" }));
+      await screen.findByText("Queued");
+
+      expect(createBodies(fetchMock)).toEqual([
+        {
+          analysis_id: singleResult.analysis_id,
+          variant_id: "audio-opus-160",
+          output_profile: "mp3",
+          destination: "app_library",
+        },
+      ]);
+    });
+
+    it("posts MP4 for a video variant", async () => {
+      const fetchMock = jobFlowHandler();
+      const { user } = await renderNewDownload();
+      await analyzeSingleResult(user);
+
+      await user.click(outputRadio("MP4 (compatible)"));
+      await user.click(screen.getByRole("button", { name: "Download" }));
+      await screen.findByText("Queued");
+
+      expect(createBodies(fetchMock)).toEqual([
+        {
+          analysis_id: singleResult.analysis_id,
+          variant_id: "video-best",
+          output_profile: "mp4",
+          destination: "app_library",
+        },
+      ]);
+    });
+
+    it("keeps the output choice when only the source quality changes within the same kind", async () => {
+      const fetchMock = jobFlowHandler();
+      const { user } = await renderNewDownload();
+      await analyzeSingleResult(user);
+
+      await user.click(outputRadio("MP4 (compatible)"));
+      // 720p is a muxed variant: still video, so the choice survives.
+      await user.click(sourceRadio("Video formats", /^720p/));
+      expect(outputRadio("MP4 (compatible)")).toBeChecked();
+      await user.click(screen.getByRole("button", { name: "Download" }));
+      await screen.findByText("Queued");
+
+      expect(createBodies(fetchMock)[0]).toMatchObject({
+        variant_id: "video-720",
+        output_profile: "mp4",
+      });
+    });
+
+    it("clears an audio MP3 choice for good across audio -> video -> audio", async () => {
+      const fetchMock = jobFlowHandler();
+      const { user } = await renderNewDownload();
+      await analyzeSingleResult(user);
+
+      await user.click(sourceRadio("Audio formats", /opus/i));
+      await user.click(outputRadio("MP3"));
+      await user.click(sourceRadio("Video formats", /^720p/));
+      expect(outputRadio("Original")).toBeChecked();
+      await user.click(sourceRadio("Audio formats", /opus/i));
+      expect(outputRadio("Original / Best Available")).toBeChecked();
+      expect(outputRadio("MP3")).not.toBeChecked();
+
+      await user.click(screen.getByRole("button", { name: "Download" }));
+      await screen.findByText("Queued");
+      expect(createBodies(fetchMock)[0]).toMatchObject({
+        variant_id: "audio-opus-160",
+        output_profile: "original",
+      });
+    });
+
+    it("resets to Original on every new analysis, including a repeated analysis id", async () => {
+      const fetchMock = jobFlowHandler();
+      const { user } = await renderNewDownload();
+      await analyzeSingleResult(user);
+
+      await user.click(outputRadio("MP4 (compatible)"));
+      await user.click(screen.getByRole("button", { name: "Analyze" }));
+      // The stale MP4 choice is still checked until the new analysis lands.
+      await waitFor(() => expect(outputRadio("MP4 (compatible)")).not.toBeChecked());
+      expect(fetchMock.mock.calls.filter(([url]) => url === "/api/v1/analysis")).toHaveLength(2);
+      expect(outputRadio("Original")).toBeChecked();
+      expect(outputRadio("MP4 (compatible)")).not.toBeChecked();
+
+      await user.click(screen.getByRole("button", { name: "Download" }));
+      await screen.findByText("Queued");
+      expect(createBodies(fetchMock)[0]?.output_profile).toBe("original");
+    });
+
+    it("disables source and output radios while the create is pending", async () => {
+      const pending = deferred<Response>();
+      stubEventSource();
+      const fetchMock = stubFetch((url, init) => {
+        if (url === "/api/v1/health") return Promise.resolve(jsonResponse({ status: "ok", database: "ok" }));
+        if (url === "/api/v1/analysis") return Promise.resolve(jsonResponse(singleResult));
+        if (url === "/api/v1/jobs" && init?.method === "POST") return pending.promise;
+        return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+      });
+      const { user } = await renderNewDownload();
+      await analyzeSingleResult(user);
+
+      await user.click(outputRadio("MP4 (compatible)"));
+      await user.click(screen.getByRole("button", { name: "Download" }));
+      expect(screen.getByRole("button", { name: "Starting…" })).toBeDisabled();
+      for (const radio of [
+        ...within(outputGroup()).getAllByRole("radio"),
+        ...within(screen.getByRole("group", { name: "Video formats" })).getAllByRole("radio"),
+        ...within(screen.getByRole("group", { name: "Audio formats" })).getAllByRole("radio"),
+      ]) {
+        expect(radio).toBeDisabled();
+      }
+      expect(createBodies(fetchMock)).toHaveLength(1);
+
+      await act(async () => pending.resolve(jsonResponse(queuedJob)));
+      await screen.findByText("Queued");
+      expect(createBodies(fetchMock)).toHaveLength(1);
+    });
+
+    it("hides the stale result and its output choice while a re-analysis is pending", async () => {
+      const pending = deferred<Response>();
+      let calls = 0;
+      okHealthHandler(() => (++calls === 1 ? Promise.resolve(jsonResponse(singleResult)) : pending.promise));
+      const { user } = await renderNewDownload();
+      await analyzeSingleResult(user);
+
+      await user.click(screen.getByRole("button", { name: "Analyze" }));
+      expect(screen.getByRole("button", { name: "Analyzing…" })).toBeDisabled();
+      expect(screen.queryByRole("group", { name: "Output format" })).not.toBeInTheDocument();
+      await act(async () => pending.resolve(jsonResponse(singleResult)));
+      await screen.findByRole("group", { name: "Output format" });
+    });
+
+    it("keeps the choice visible after a failed create and shows the backend error", async () => {
+      stubEventSource();
+      const fetchMock = stubFetch((url, init) => {
+        if (url === "/api/v1/health") return Promise.resolve(jsonResponse({ status: "ok", database: "ok" }));
+        if (url === "/api/v1/analysis") return Promise.resolve(jsonResponse(singleResult));
+        if (url === "/api/v1/jobs" && init?.method === "POST") {
+          return Promise.resolve(jsonResponse({
+            error: { code: "invalid_profile", message: "This output is not available for that source.", retryable: false },
+          }, 422));
+        }
+        return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+      });
+      const { user } = await renderNewDownload();
+      await analyzeSingleResult(user);
+
+      await user.click(outputRadio("MP4 (compatible)"));
+      await user.click(screen.getByRole("button", { name: "Download" }));
+      expect(await screen.findByText("This output is not available for that source.")).toBeInTheDocument();
+      expect(outputRadio("MP4 (compatible)")).toBeChecked();
+      expect(screen.getByRole("button", { name: "Download" })).toBeEnabled();
+      expect(createBodies(fetchMock)).toHaveLength(1);
     });
   });
 

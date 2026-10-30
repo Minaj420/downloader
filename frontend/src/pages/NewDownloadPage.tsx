@@ -9,8 +9,11 @@ import {
   isActiveJob,
   retryJob,
   useCreateJob,
+  outputProfilesFor,
   type CollectionMode,
   type Job,
+  type OutputMediaKind,
+  type OutputProfile,
 } from "../api/jobs";
 import { subscribeToJobUpdates } from "../api/events";
 import { AnalysisResult } from "../features/new-download/AnalysisResult";
@@ -73,6 +76,13 @@ export function NewDownloadPage() {
   } | null>(null);
   const [collectionSelection, setCollectionSelection] =
     useState<CollectionSelectionState | null>(null);
+  // Explicit non-default output choice for one analysis snapshot. It is
+  // cleared (not just ignored) whenever the media kind changes or a new
+  // analysis succeeds, so an old choice can never come back.
+  const [outputSelection, setOutputSelection] = useState<{
+    analysisId: string;
+    profile: OutputProfile;
+  } | null>(null);
   const [job, setJob] = useState<Job | null>(null);
   const [itemsLoadStatus, setItemsLoadStatus] = useState<ItemsLoadStatus>("loading");
   const detailRequest = useRef<{ generation: number; key: string } | null>(null);
@@ -182,6 +192,44 @@ export function NewDownloadPage() {
       : null;
   const collectionSnapshotMatches = activeCollectionSelection != null;
 
+  // Output kind follows the backend rule: audio_only -> audio, video_only /
+  // muxed -> video; collections follow the explicit mode. Legacy previews,
+  // an unchosen mode or a missing single variant offer no output choice.
+  const singleVariantKind = (variantId: string | null): OutputMediaKind | null => {
+    const format = analyze.data?.formats.find((entry) => entry.variant_id === variantId);
+    return format == null ? null : format.kind === "audio_only" ? "audio" : "video";
+  };
+  const outputKind: OutputMediaKind | null =
+    analyze.data == null
+      ? null
+      : analyze.data.content_type === "collection"
+        ? analyze.data.collection?.selection_scope === "analysis_window"
+          ? (activeCollectionSelection?.mode ?? null)
+          : null
+        : singleVariantKind(selectedVariantId);
+  const outputProfile: OutputProfile =
+    outputKind != null &&
+    outputSelection?.analysisId === analyze.data?.analysis_id &&
+    outputSelection != null &&
+    outputProfilesFor(outputKind).includes(outputSelection.profile)
+      ? outputSelection.profile
+      : "original";
+
+  const handleSelectVariant = (variantId: string) => {
+    const result = analyze.data;
+    if (result == null || analyze.isPending || createJob.isPending || createPending.current) return;
+    // A kind change (audio <-> video) drops the old output choice for good.
+    if (singleVariantKind(variantId) !== outputKind) setOutputSelection(null);
+    setVariantSelection({ analysisId: result.analysis_id, variantId });
+  };
+
+  const handleSelectOutputProfile = (profile: OutputProfile) => {
+    const result = analyze.data;
+    if (result == null || outputKind == null || analyze.isPending || createJob.isPending ||
+      createPending.current || !outputProfilesFor(outputKind).includes(profile)) return;
+    setOutputSelection({ analysisId: result.analysis_id, profile });
+  };
+
   const handleToggleCollectionItem = (itemId: string) => {
     if (!collectionSnapshotMatches || analyze.data?.collection == null) return;
     const collection = analyze.data.collection;
@@ -231,6 +279,8 @@ export function NewDownloadPage() {
 
   const handleSelectCollectionMode = (mode: CollectionMode) => {
     if (!collectionSnapshotMatches) return;
+    // The mode decides the audio/video output set: a change clears the choice.
+    if (mode !== activeCollectionSelection?.mode) setOutputSelection(null);
     setCollectionSelection((current) =>
       current == null ? current : { ...current, mode },
     );
@@ -243,6 +293,9 @@ export function NewDownloadPage() {
       onSuccess: (result) => {
         if (!mounted.current) return;
         setCollectionSelection(defaultCollectionSelection(result));
+        // Every successful analysis restarts at Original, even for a repeated
+        // analysis id.
+        setOutputSelection(null);
       },
     });
   };
@@ -328,6 +381,7 @@ export function NewDownloadPage() {
           item_ids: itemIds,
           collection_mode: selection.mode,
           collection_profile: { kind: "original_best_available" },
+          output_profile: outputProfile,
           destination: "app_library",
         },
         { onSuccess: handleCreated, onSettled: releaseCreate },
@@ -340,6 +394,7 @@ export function NewDownloadPage() {
         {
           analysis_id: result.analysis_id,
           variant_id: selectedVariantId,
+          output_profile: outputProfile,
           destination: "app_library",
         },
         { onSuccess: handleCreated, onSettled: releaseCreate },
@@ -563,11 +618,12 @@ export function NewDownloadPage() {
           selectedVariantId={selectedVariantId}
           selectedCollectionItemIds={activeCollectionSelection?.selectedItemIds ?? []}
           collectionMode={activeCollectionSelection?.mode ?? null}
+          outputKind={outputKind}
+          outputProfile={outputProfile}
           isCreatingJob={createJob.isPending}
           isAnalyzing={analyze.isPending}
-          onSelectVariant={(variantId) =>
-            setVariantSelection({ analysisId: analyze.data.analysis_id, variantId })
-          }
+          onSelectVariant={handleSelectVariant}
+          onSelectOutputProfile={handleSelectOutputProfile}
           onToggleCollectionItem={handleToggleCollectionItem}
           onSelectAllCollectionItems={handleSelectAllCollectionItems}
           onDeselectAllCollectionItems={handleDeselectAllCollectionItems}

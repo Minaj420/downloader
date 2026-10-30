@@ -72,6 +72,8 @@ export interface Job {
   job_type?: "single" | "collection";
   collection_mode?: CollectionMode | null;
   collection_profile?: CollectionProfile | null;
+  // Absent on responses/fixtures that predate M6.4b; reads as Original.
+  output_profile?: OutputProfile;
   total_items?: number | null;
   completed_items?: number | null;
   failed_items?: number | null;
@@ -91,10 +93,42 @@ export interface CollectionProfile {
   max_height?: number | null;
 }
 
+/**
+ * Explicit conversion target of a new job, separate from the source variant
+ * and from `CollectionProfile`. The backend accepts the audio set for audio
+ * sources/modes and the video set for video sources/modes.
+ */
+export type OutputProfile =
+  | "original"
+  | "mp3"
+  | "wav"
+  | "m4a"
+  | "opus"
+  | "flac"
+  | "mp4";
+
+export type OutputMediaKind = "audio" | "video";
+
+export const AUDIO_OUTPUT_PROFILES: readonly OutputProfile[] = [
+  "original",
+  "mp3",
+  "wav",
+  "m4a",
+  "opus",
+  "flac",
+];
+
+export const VIDEO_OUTPUT_PROFILES: readonly OutputProfile[] = ["original", "mp4"];
+
+export function outputProfilesFor(kind: OutputMediaKind): readonly OutputProfile[] {
+  return kind === "audio" ? AUDIO_OUTPUT_PROFILES : VIDEO_OUTPUT_PROFILES;
+}
+
 /** Existing single-format request: analysis plus one variant id. */
 export interface CreateSingleJobRequest {
   analysis_id: string;
   variant_id: string;
+  output_profile?: OutputProfile;
   destination: "app_library";
 }
 
@@ -108,6 +142,7 @@ export interface CreateCollectionJobRequest {
   item_ids: string[];
   collection_mode: CollectionMode;
   collection_profile?: CollectionProfile | null;
+  output_profile?: OutputProfile;
   destination: "app_library";
 }
 

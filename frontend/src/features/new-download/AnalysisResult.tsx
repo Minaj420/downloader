@@ -1,8 +1,9 @@
 import type { NormalizedAnalysis, NormalizedFormat } from "../../api/analysis";
-import type { CollectionMode } from "../../api/jobs";
+import type { CollectionMode, OutputMediaKind, OutputProfile } from "../../api/jobs";
 import { formatFileSize, formatDuration } from "./format";
 import { platformLabel } from "./platforms";
 import { CollectionSelection } from "./CollectionSelection";
+import { OutputProfileSelect } from "./OutputProfileSelect";
 
 interface AnalysisResultProps {
   result: NormalizedAnalysis;
@@ -11,6 +12,9 @@ interface AnalysisResultProps {
   selectedCollectionItemIds: readonly string[];
   /** Explicit collection-level mode; null until the user chooses one. */
   collectionMode: CollectionMode | null;
+  /** Media kind the output choice applies to; null hides the output group. */
+  outputKind: OutputMediaKind | null;
+  outputProfile: OutputProfile;
   isCreatingJob: boolean;
   /** A pending re-analysis must not post the stale snapshot. */
   isAnalyzing: boolean;
@@ -19,6 +23,7 @@ interface AnalysisResultProps {
   onSelectAllCollectionItems: () => void;
   onDeselectAllCollectionItems: () => void;
   onSelectCollectionMode: (mode: CollectionMode) => void;
+  onSelectOutputProfile: (profile: OutputProfile) => void;
   onDownload: () => void;
   onUseDetectedPlatform: (platform: string) => void;
 }
@@ -55,6 +60,8 @@ export function AnalysisResult({
   selectedVariantId,
   selectedCollectionItemIds,
   collectionMode,
+  outputKind,
+  outputProfile,
   isCreatingJob,
   isAnalyzing,
   onSelectVariant,
@@ -62,6 +69,7 @@ export function AnalysisResult({
   onSelectAllCollectionItems,
   onDeselectAllCollectionItems,
   onSelectCollectionMode,
+  onSelectOutputProfile,
   onDownload,
   onUseDetectedPlatform,
 }: AnalysisResultProps) {
@@ -182,7 +190,8 @@ export function AnalysisResult({
               Format &amp; Destination
             </h2>
             <p className="result-panel-subtitle">
-              Format options and sizes come directly from the analyzed source.
+              Source formats and sizes come from the analysis; the output
+              format is chosen separately.
             </p>
           </div>
         </header>
@@ -215,11 +224,19 @@ export function AnalysisResult({
                   Video
                 </label>
               </fieldset>
+              {outputKind != null && (
+                <OutputProfileSelect
+                  kind={outputKind}
+                  value={outputProfile}
+                  disabled={selectionPending}
+                  onChange={onSelectOutputProfile}
+                />
+              )}
               <p className="muted-note">
-                One profile applies to the whole collection: Original / Best
-                Available. Each item keeps the best native result its own
-                source offers, so containers and codecs may differ between
-                items. Video quality is never upgraded or upscaled.
+                One output format applies to the whole collection. Original
+                keeps the best native result each item's own source offers, so
+                containers and codecs may differ between items. Source video
+                quality is never upgraded or upscaled.
               </p>
             </section>
           ) : isCollection ? (
@@ -233,8 +250,12 @@ export function AnalysisResult({
           ) : (
             <>
               {videoFormats.length > 0 && (
-                <section className="format-group">
-                  <h3>Video formats</h3>
+                <section
+                  className="format-group"
+                  role="group"
+                  aria-labelledby="video-formats-heading"
+                >
+                  <h3 id="video-formats-heading">Video formats</h3>
                   <ul>
                     {videoFormats.map((format) => (
                       <li key={format.variant_id} className="format-item">
@@ -244,6 +265,7 @@ export function AnalysisResult({
                             name="variant"
                             value={format.variant_id}
                             checked={selectedVariantId === format.variant_id}
+                            disabled={selectionPending}
                             onChange={() => onSelectVariant(format.variant_id)}
                           />
                           <span className="format-label">{videoLabel(format)}</span>
@@ -255,8 +277,12 @@ export function AnalysisResult({
               )}
 
               {audioFormats.length > 0 && (
-                <section className="format-group">
-                  <h3>Audio formats</h3>
+                <section
+                  className="format-group"
+                  role="group"
+                  aria-labelledby="audio-formats-heading"
+                >
+                  <h3 id="audio-formats-heading">Audio formats</h3>
                   <ul>
                     {audioFormats.map((format) => (
                       <li key={format.variant_id} className="format-item">
@@ -266,6 +292,7 @@ export function AnalysisResult({
                             name="variant"
                             value={format.variant_id}
                             checked={selectedVariantId === format.variant_id}
+                            disabled={selectionPending}
                             onChange={() => onSelectVariant(format.variant_id)}
                           />
                           <span className="format-label">{audioLabel(format)}</span>
@@ -274,6 +301,15 @@ export function AnalysisResult({
                     ))}
                   </ul>
                 </section>
+              )}
+
+              {outputKind != null && (
+                <OutputProfileSelect
+                  kind={outputKind}
+                  value={outputProfile}
+                  disabled={selectionPending}
+                  onChange={onSelectOutputProfile}
+                />
               )}
             </>
           )}

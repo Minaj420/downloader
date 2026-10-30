@@ -1,4 +1,4 @@
-import { act, render, screen, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "../src/app/App";
 import type {
@@ -500,6 +500,7 @@ describe("CollectionSelection", () => {
       item_ids: ["item-c"],
       collection_mode: "audio",
       collection_profile: { kind: "original_best_available" },
+      output_profile: "original",
       destination: "app_library",
     });
   });
@@ -624,9 +625,12 @@ describe("CollectionSelection", () => {
       download.click();
     });
     expect(createRequests(fetchMock)).toHaveLength(0);
+    // The legacy preview is read-only: no mode and no output choice.
+    expect(screen.queryByRole("group", { name: "Audio / Video" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Output format" })).not.toBeInTheDocument();
   });
 
-  it("requires an explicit collection mode and offers no conversions", async () => {
+  it("requires an explicit collection mode and shows no output choice until one is chosen", async () => {
     const fetchMock = collectionFlowHandler();
     const { user } = await renderNewDownload();
     await analyzeCollection(user);
@@ -638,8 +642,9 @@ describe("CollectionSelection", () => {
     expect(video).not.toBeChecked();
     expect(screen.getByRole("button", { name: "Download" })).toBeDisabled();
 
-    expect(screen.getByText(/Original \/ Best Available/)).toBeInTheDocument();
+    expect(screen.getByText(/One output format applies to the whole collection/)).toBeInTheDocument();
     expect(screen.getByText(/never upgraded or upscaled/)).toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Output format" })).not.toBeInTheDocument();
     expect(screen.queryByText(/mp3/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/wav/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/flac/i)).not.toBeInTheDocument();
@@ -806,6 +811,7 @@ describe("CollectionSelection", () => {
     expect(createBody(createRequests(fetchMock)[0])).toEqual({
       analysis_id: singleAnalysis.analysis_id,
       variant_id: "video-best",
+      output_profile: "original",
       destination: "app_library",
     });
 
@@ -854,5 +860,133 @@ describe("CollectionSelection", () => {
     expect(creates).toBe(2);
     const bodies = createRequests(fetchMock).map((request) => createBody(request));
     expect(bodies[1]).toEqual(bodies[0]);
+  });
+
+  describe("output format", () => {
+    const outputGroup = () => screen.getByRole("group", { name: "Output format" });
+    const outputRadio = (name: string) =>
+      within(outputGroup()).getByRole("radio", { name });
+    const outputLabels = () =>
+      within(outputGroup())
+        .getAllByRole("radio")
+        .map((radio) => radio.closest("label")?.textContent);
+
+    it("offers the audio or video set per mode, defaulting to Original, with a compatibility-only note", async () => {
+      collectionFlowHandler();
+      const { user } = await renderNewDownload();
+      await analyzeCollection(user);
+
+      await user.click(screen.getByRole("radio", { name: "Audio" }));
+      expect(outputLabels()).toEqual([
+        "Original / Best Available",
+        "MP3",
+        "WAV",
+        "M4A",
+        "Opus",
+        "FLAC",
+      ]);
+      expect(outputRadio("Original / Best Available")).toBeChecked();
+      expect(within(outputGroup()).getByText(/not a quality upgrade/)).toBeInTheDocument();
+      expect(within(outputGroup()).getByText(/WAV and FLAC do not restore detail/)).toBeInTheDocument();
+      // Only one parent-level group; children have no output control.
+      expect(screen.getAllByRole("group", { name: "Output format" })).toHaveLength(1);
+
+      await user.click(screen.getByRole("radio", { name: "Video" }));
+      expect(outputLabels()).toEqual(["Original", "MP4 (compatible)"]);
+      expect(outputRadio("Original")).toBeChecked();
+      // Source quality / no-upscale information stays alongside the choice.
+      expect(screen.getByText(/never upgraded or upscaled/)).toBeInTheDocument();
+    });
+
+    it.each([
+      ["audio", "Audio", "FLAC", "flac"],
+      ["video", "Video", "MP4 (compatible)", "mp4"],
+    ])("posts %s %s output with the unchanged ids, mode and collection profile", async (mode, modeLabel, label, profile) => {
+      const fetchMock = collectionFlowHandler();
+      const { user } = await renderNewDownload();
+      await analyzeCollection(user);
+
+      await user.click(screen.getByRole("checkbox", { name: /Track One/ }));
+      await user.click(screen.getByRole("radio", { name: modeLabel }));
+      await user.click(outputRadio(label));
+      await user.click(screen.getByRole("button", { name: "Download" }));
+      await screen.findByText("Queued");
+
+      expect(createRequests(fetchMock)).toHaveLength(1);
+      expect(createBody(createRequests(fetchMock)[0])).toEqual({
+        analysis_id: analysis.analysis_id,
+        item_ids: ["item-c"],
+        collection_mode: mode,
+        collection_profile: { kind: "original_best_available" },
+        output_profile: profile,
+        destination: "app_library",
+      });
+    });
+
+    it("clears audio FLAC for good across audio -> video -> audio", async () => {
+      const fetchMock = collectionFlowHandler();
+      const { user } = await renderNewDownload();
+      await analyzeCollection(user);
+
+      await user.click(screen.getByRole("radio", { name: "Audio" }));
+      await user.click(outputRadio("FLAC"));
+      await user.click(screen.getByRole("radio", { name: "Video" }));
+      expect(outputRadio("Original")).toBeChecked();
+      await user.click(screen.getByRole("radio", { name: "Audio" }));
+      expect(outputRadio("Original / Best Available")).toBeChecked();
+      expect(outputRadio("FLAC")).not.toBeChecked();
+
+      await user.click(screen.getByRole("button", { name: "Download" }));
+      await screen.findByText("Queued");
+      expect(createBody(createRequests(fetchMock)[0])).toMatchObject({
+        collection_mode: "audio",
+        output_profile: "original",
+      });
+    });
+
+    it.each([
+      ["a different", secondAnalysis],
+      ["the same", analysis],
+    ])("resets mode and output on a new analysis with %s analysis id", async (_label, next) => {
+      let calls = 0;
+      collectionFlowHandler({
+        analysis: () =>
+          Promise.resolve(jsonResponse(++calls === 1 ? analysis : next)),
+      });
+      const { user } = await renderNewDownload();
+      await analyzeCollection(user);
+
+      await user.click(screen.getByRole("radio", { name: "Audio" }));
+      await user.click(outputRadio("FLAC"));
+      await user.click(screen.getByRole("button", { name: "Analyze" }));
+      // The stale Audio mode is still checked until the new analysis lands.
+      await waitFor(() => expect(screen.getByRole("radio", { name: "Audio" })).not.toBeChecked());
+      expect(screen.queryByRole("group", { name: "Output format" })).not.toBeInTheDocument();
+      await user.click(screen.getByRole("radio", { name: "Audio" }));
+      expect(outputRadio("Original / Best Available")).toBeChecked();
+      expect(outputRadio("FLAC")).not.toBeChecked();
+    });
+
+    it("disables the output radios while create is pending", async () => {
+      const pending = deferred<Response>();
+      const fetchMock = collectionFlowHandler({ create: () => pending.promise });
+      const { user } = await renderNewDownload();
+      await analyzeCollection(user);
+      await user.click(screen.getByRole("radio", { name: "Audio" }));
+      await user.click(outputRadio("FLAC"));
+      await user.click(screen.getByRole("button", { name: "Download" }));
+
+      expect(screen.getByRole("button", { name: "Starting…" })).toBeDisabled();
+      for (const radio of within(outputGroup()).getAllByRole("radio")) {
+        expect(radio).toBeDisabled();
+      }
+      expect(createRequests(fetchMock)).toHaveLength(1);
+
+      await act(async () => {
+        pending.resolve(jsonResponse(collectionJob));
+      });
+      await screen.findByText("Queued");
+      expect(createRequests(fetchMock)).toHaveLength(1);
+    });
   });
 });

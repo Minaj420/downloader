@@ -4,6 +4,15 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-30.
 
 ## Şu an
 
+- M6 — Metadata ve Adlandırma → M6.4e — Dönüşüm seçimini arayüzde açma TAMAMLANDI.
+  Bağımsız GPT review: bulgu/must-fix yok; düzeltme turu kullanılmadı. Opus görüşü alındı;
+  uygulayıcı requested Sonnet / observed claude-sonnet-5-5 eşleşti, başarı ve izin reddi yok.
+  Kaynak seçiminden ayrı ses/video çıktı grubu; Original varsayılan, koleksiyonda
+  tek parent profili. Yeni analiz/tür değişimi sıfırlar; aynı tür kalite değişimi korur.
+  Worker ve lead: iki dosyada 86 test, typecheck/lint PASS; lead diff --check temiz.
+  Backend/config/CSS/lifecycle değişmedi. Gerçek binary smoke ve full gate yok.
+  Worker test dışı `wc` denedi: izin reddi değil (CLI accept), yanlış dizin nedeniyle
+  dosya bulunamadı; tekrar yok, dosya değişmedi. Prose komut sınırı teknik enforcement değil.
 - M6 — Metadata ve Adlandırma → M6.4d-d4 — API dönüşüm kapısı TAMAMLANDI.
   Opus görüşü alındı; uygulayıcı requested Opus / observed claude-opus-5-5 eşleşti,
   başarı ve izin reddi yok. Bağımsız GPT review: bulgu/must-fix yok; düzeltme turu kullanılmadı.
@@ -99,19 +108,18 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-30.
   Opus ve açık --model opus aynı-rol resume: claude-opus-5-5, başarı ve izin reddi yok;
   bağımsız GPT review must-fix yok, review rework gerekmedi.
 - API uyumlu non-Original create d4 ile açık; uyumsuz/bozuk değerler yan etkisiz
-  reddedilir. Tekli ve collection child dönüşebilir; arayüz aktivasyonu henüz yok.
+  reddedilir. Tekli ve collection child dönüşebilir; M6.4e ile arayüz de açık.
 
 ## Sıradaki iş
 
 WF-R1 ve dar reviewer smoke takibi tamamlandı; restart/model reload kanıtlanmadı.
-M6.4d-d1–d4 tamamlandı; sıradaki iş M6.4e arayüz.
+M6.4d-d1–d4 ve M6.4e tamamlandı; sıradaki iş M6.4f gerçek binary smoke.
 
-1. M6 — Metadata ve Adlandırma → M6.4e — Dönüşüm seçimini arayüzde açma:
-   mevcut API üzerinde kaynak kalite tercihi ile çıktı profilini ayrı tut;
-   uygulamadan önce Opus görüşüyle bounded kapsamı netleştir.
-2. Takip: M6.4f gerçek binary/çıktı smoke (encoder var/yok, ffprobe codec/faststart,
-   gerçek iptalde artık süreç yok; ffmpeg yoksa skip).
-   M6.5 metadata/etiket pipeline bağlantısı →
+1. M6 — Metadata ve Adlandırma → M6.4f — Gerçek binary/çıktı smoke:
+   encoder var/yok, ffprobe codec/container/faststart, gerçek iptalde artık süreç yok;
+   ffmpeg yoksa skip. Opus görüşüyle bounded kapsamı netleştir; aşağıdaki codec
+   etiketleri ve reap garantisi bulgularını bu kapsamla değerlendir.
+2. Takip: M6.5 metadata/etiket pipeline bağlantısı →
    M6.6 müzik yolları/katalog → M6.7 kaynak kapak → M6.8 metadata/kapak önizleme-düzenleme →
    M6.9 harici kapak arama (haklar koşullu) → M6.10 kapanış gate. Başlıklar küçük işlere bölünebilir.
 3. Lead: mevcut staging/yayınlama sınırlarını koru; kaynak alanlarını tahmin etmeden taşı.
@@ -181,6 +189,10 @@ Kaynaklar: PRODUCT_SPEC §13–16, ARCHITECTURE §30–34 ve §59 M6.
 
 ## Son gate
 
+- 2026-10-30 macOS, M6.4e worker ve lead: frontend new-download ve
+  collection-selection 86 test PASS; typecheck ve lint PASS; lead diff --check PASS.
+  Bağımsız GPT review bulgu yok, düzeltme turu yok. Full gate/build/contrast,
+  backend testleri ve gerçek binary smoke çalıştırılmadı; M6 kapanışı değil.
 - 2026-10-30 macOS Python 3.14.9, M6.4d-d4 worker ve lead:
   output_profiles/single_conversion/collection_conversion/conversion_plan/jobs/
   collection_retry/collection_child_runner/collection_parent_runner: 698 PASS,
