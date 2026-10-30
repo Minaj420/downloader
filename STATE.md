@@ -4,6 +4,14 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-30.
 
 ## Şu an
 
+- WF-R1-smoke TAMAMLANDI: Opus görüşü alındı (requested Opus / observed
+  claude-opus-5-5 eşleşti; başarı, izin reddi yok). Yeni GPT reviewer ayrı doğrudan
+  `git status --short`, `git diff --check` ve reviewer tanımını Read ile okuma
+  adımlarını başarılı raporladı; must-fix yok. Lead status/diff --check tekrarında
+  yalnız bilinen dört untracked arşiv ve temiz diff gördü. Reviewer araç argümanları
+  child raporundan görüldü; bağımsız ham child tool trace/exit kodu sunulmadı.
+  Dar davranış smoke'u tamam; restart, runtime talimat yüklenmesi/model reload,
+  ret yolu ve genel izolasyon kanıtlanmadı. Ürün/config değişmedi; yalnız STATE.
 - Workflow bakımı → WF-R1 — Reviewer komut sözleşmesi TAMAMLANDI. Opus danışmanlığı
   alındı (requested Opus / observed claude-opus-5-5, başarı ve izin reddi yok);
   Luna yalnız sabit prose metnini yerleştirdi. Reviewer frontmatter, izinler ve model
@@ -12,7 +20,7 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-30.
   Opus son review wrapper çağrısı shell reddiyle başlamadı; tekrar/aşma yapılmadı.
   Kullanıcı 2026-10-30 yalnız bu dar prose işi için ek Opus review olmadan kapanışı
   açıkça onayladı; genel review kuralı değiştirilmedi, Opus review PASS sayılmadı.
-  OpenCode yeniden başlatılmalı; sonrasında yeni reviewer ile smoke henüz yapılmadı.
+  O kapanışta restart sonrası smoke bekliyordu; dar takip smoke'u yukarıda tamamlandı.
   Talimat değişikliği teknik garanti değil. Kapsam iki dosya + STATE; push yok.
 - M6 — Metadata ve Adlandırma → M6.4d-d3 — Koleksiyon child dönüşüm bağlantısı TAMAMLANDI.
   Opus danışmanlığı alındı; uygulayıcı requested Opus / observed claude-opus-5-5 eşleşti,
@@ -87,9 +95,8 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-30.
 
 ## Sıradaki iş
 
-WF-R1 kullanıcıya özel kapanış onayıyla tamamlandı. OpenCode yeniden başlatıldıktan
-sonra yeni reviewer ile komut sözleşmesini salt-okunur smoke ile doğrula.
-M6.4d-d3 tamamlandı; ürün tarafındaki sonraki iş d4 (bu çağrıda başlanmadı).
+WF-R1 ve dar reviewer smoke takibi tamamlandı; restart/model reload kanıtlanmadı.
+M6.4d-d3 tamamlandı; sıradaki iş d4 (bu çağrıda başlanmadı).
 
 1. M6.4d-d4 — API kapısı: runner bağlantıları tamamlandıktan sonra non-Original create
    desteğini aç; d4 henüz başlamadı. Arayüz ayrı M6.4e işi.
@@ -163,6 +170,10 @@ Kaynaklar: PRODUCT_SPEC §13–16, ARCHITECTURE §30–34 ve §59 M6.
 
 ## Son gate
 
+- 2026-10-30 macOS, WF-R1-smoke: yeni GPT reviewer status/diff --check/Read
+  başarılı raporladı, must-fix yok; lead status/diff --check tekrarı temiz.
+  Exit kodları child araç yanıtında sunulmadı; ham child trace bağımsız incelenemedi.
+  Yalnız doğrulama/STATE işi; uygulama testleri ve full gate çalıştırılmadı.
 - 2026-10-30 macOS, WF-R1: worker Read kontrolleri ve lead diff incelemesi /
   `git diff --check` PASS; bağımsız GPT must-fix yok. Opus son review wrapper çağrısı
   shell reddiyle başlamadı; kullanıcı yalnız bu işe özel ek Opus review olmadan kapanışı
