@@ -143,15 +143,16 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-30.
 ## Sıradaki iş
 
 WF-R1 ve dar reviewer smoke takibi tamamlandı; restart/model reload kanıtlanmadı.
-M6.4d-d1–d4, M6.4e ve M6.4f-f1/f2/f3a tamamlandı; sıradaki iş f3b kararı.
+M6.4d-d1–d4, M6.4e ve M6.4f-f1/f2/f3a tamamlandı; sıradaki iş onaylanan f3b uygulaması.
 
 1. M6 — Metadata ve Adlandırma → M6.4f-f3b — H.264 profil uyumluluğu:
-   Opus görüşü alındı; uygulama öncesi kullanıcı kararı şart. Öneri: bilinen
+   Opus görüşü alındı; kullanıcı 1. seçeneği onayladı (2026-10-30): bilinen
    High10/4:2:2/4:4:4 profilleri transcode, olağan 8-bit 4:2:0 profilleri copy;
-   profil bilgisi yoksa copy mi transcode mu ayrıca sor. Alternatif mevcut H264 copy.
-   Ardından f3c: interlaced/yanlış kaynak etiketlerini staged ffprobe ile doğrulama
-   isteniyor mu ve probe hatasında fail mi transcode mu? Kullanıcıya sor, runtime
-   probe/süreç sahipliği ayrı scoped işler. F3a video uyumluluk riskini kapatmaz.
+   profil bilgisi olmayan H.264 kaynaklar copy. Original değişmez. Bu yalnız karar
+   kaydıdır, f3b uygulanmadı. Opsiyonel profil alanı/geriye uyum tasarımını Opus ile
+   netleştirip scoped Opus uygulaması ve bağımsız GPT review ile ilerle.
+   F3c runtime ffprobe/interlaced doğrulaması bu onaya dahil değil; ek altyapı ekleme.
+   Her cihazda uyumluluk garantisi yok; f3a video uyumluluk riskini kapatmaz.
 2. Takip: M6.5 metadata/etiket pipeline bağlantısı →
    M6.6 müzik yolları/katalog → M6.7 kaynak kapak → M6.8 metadata/kapak önizleme-düzenleme →
    M6.9 harici kapak arama (haklar koşullu) → M6.10 kapanış gate. Başlıklar küçük işlere bölünebilir.
@@ -162,6 +163,11 @@ Kural: review ve kontroller sonrası görev başına otomatik commit; push yaln�
 
 ## Açık kararlar
 
+- ONAYLI (2026-10-30, M6.4f-f3b, kullanıcı 1. seçenek): MP4 hedefinde bilinen
+  uyumsuz H.264 profilleri yaygın desteklenen H.264'e dönüştür; yaygın profilleri
+  ve profil bilgisi olmayan H.264 kaynakları yeniden kodlamadan koru. Ses AAC ise
+  copy, değilse AAC transcode mevcut kuralı sürer. Original değişmez. Bilgisi eksik
+  veya interlaced kaynaklarda oynatıcı uyumsuzluğu riski kabul; runtime probe yok.
 - İndirme sırasında seçilen desteklenen çıktı gerektiğinde dönüştürülür; ayrı converter,
   dosya yükleme, mevcut Library dönüşümü ve koleksiyonda parça başına profil kapsam dışı.
 - ONAYLI ilk ses seti: Original, MP3, WAV, M4A, Opus, FLAC; her biçimde sabit kalite profili,
