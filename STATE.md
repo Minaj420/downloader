@@ -4,6 +4,15 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-10-30.
 
 ## Şu an
 
+- M6 — Metadata ve Adlandırma → M6.4f-f5-doc — Belge tutarlılığı TAMAMLANDI.
+  F5 Opus görüşü ve kullanıcının dar belge onayıyla ARCHITECTURE §14/§59 güncellendi.
+  Uygulayıcı requested Sonnet / observed claude-sonnet-5-5 eşleşti; başarı, izin reddi yok.
+  Dönüşüm ve gerçek adapter/planner smoke implemented; Original Opus remux,
+  etiket/kapak planned, M6.4f/M6.4 full gate bekliyor, M6/M6.5+ açık.
+  GPT review kaynaklarla uyumu doğruladı, must-fix yok; düzeltme turu kullanılmadı.
+  Worker okumaları eksik yaptı; reviewer STATE/spec/kod/test bağlamını okuyarak inceledi.
+  Worker Grep, lead diff/Grep ve diff --check ile doğruladı. Prose-only;
+  uygulama testleri/full gate çalıştırılmadı. Kapsam ARCHITECTURE + STATE.
 - M6 — Metadata ve Adlandırma → M6.4f-f4 — Smoke encoder önkontrolü TAMAMLANDI.
   Opus görüşü alındı; requested Sonnet / observed claude-sonnet-5-5 eşleşti,
   başarı ve izin reddi yok. MP4 kaynak ffv1/pcm_s16le önkontrolüne eklendi;
@@ -164,8 +173,10 @@ WF-R1 ve dar reviewer smoke takibi tamamlandı; restart/model reload kanıtlanma
 M6.4d-d1–d4, M6.4e ve M6.4f-f1/f2/f3a/f3b tamamlandı.
 
 1. M6 — Metadata ve Adlandırma → M6.4f-f5 — Dönüşüm doğrulaması kapanış değerlendirmesi:
-   F1/f2/f3a/f3b/f4 tamamlandı. Milestone full gate checker ile;
-   eski full gate güncel sayılmaz. Açık bulgu/riskleri mevcut kapsamla değerlendir.
+   F1/f2/f3a/f3b/f4 ve f5-doc tamamlandı; belge must-fix çözüldü.
+   Full gate checker ile kapanışa dön; gerçek smoke 0 skip olmalı.
+   Eski full gate güncel sayılmaz. Sonuca göre M6.4f/M6.4 dönüşüm kapsamını kapat,
+   M6 tamamlandı sayma; STATE journal ayrıntılarını aktif karar/riskleri koruyarak özetle.
    F3c runtime ffprobe/interlaced doğrulaması kullanıcı 1. seçenek kapsamı dışında;
    ek altyapı ekleme. Eksik/yanlış profil, interlaced ve eski snapshot riski kabul.
 2. Takip: M6.5 metadata/etiket pipeline bağlantısı →
@@ -240,6 +251,8 @@ Kaynaklar: PRODUCT_SPEC §13–16, ARCHITECTURE §30–34 ve §59 M6.
 
 ## Son gate
 
+- 2026-10-30 macOS, M6.4f-f5-doc: yalnız prose. Worker Grep; bağımsız GPT review
+  must-fix yok; lead diff/Grep ve diff --check PASS. Full gate/uygulama testi yok.
 - 2026-10-30 macOS Python 3.14.9, M6.4f-f4 worker ve lead: smoke dosyası 23
   PASS/0 skip, preflight alt kümesi 2 PASS; hedefli Ruff/Mypy PASS. GPT review
   bulgu yok. Bir Starlette deprecation uyarısı. Full gate/frontend yok.
