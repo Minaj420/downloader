@@ -1,4 +1,5 @@
 import asyncio
+import re
 from pathlib import Path
 from typing import Any, cast
 
@@ -121,6 +122,11 @@ class Pipeline(YtDlpDownloader, FFmpegProcessor):
         )
 
 
+def assert_fresh(path: Path, stem: str, extension: str) -> None:
+    """Per-call target: ``<stem>-<16 lowercase hex>.<extension>``."""
+    assert re.fullmatch(rf"{stem}-[0-9a-f]{{16}}\.{re.escape(extension)}", path.name), path
+
+
 @pytest.fixture
 def anyio_backend() -> str:
     return "asyncio"
@@ -189,9 +195,10 @@ async def test_native_heterogeneous_plans_and_ceiling_use_actual_selectors(
         "mux", "audio", "low", "audio", "status", "merge",
         "high", "audio", "status", "merge",
     ]
-    assert [path.name for path in results] == [
-        "media.mp4", "media.mp4", "merged.mp4", "merged.mkv",
-    ]
+    assert [path.name for path in results[:2]] == ["media.mp4", "media.mp4"]
+    assert_fresh(results[2], "merged", "mp4")
+    assert_fresh(results[3], "merged", "mkv")
+    assert [path for name, _, path in pipeline.calls if name == "merge"] == results[2:]
     assert len({path.parent for path in results}) == 4
     assert pipeline.progress == [(0, 1, 3), (0, 1, 3), (0, 2, 3), (1, 2, 3),
                                  (0, 2, 3), (1, 2, 3)]
@@ -325,7 +332,8 @@ async def test_without_output_never_converts_and_merge_argv_is_unchanged(
     merged = await pipeline.run(resolve_native_child(source(), mode="video"), ffmpeg=processor)
     media = await pipeline.run(resolve_native_child(source(), mode="audio"), "b" * 32)
     staging = merged.parent
-    assert merged == staging / "merged.mp4" and media.name == "media.mp4"
+    assert staging.name == "a" * 32 and media.name == "media.mp4"
+    assert_fresh(merged, "merged", "mp4")
     assert recorded(log) == [[
         "-y", "-i", str(staging / "video.mp4"), "-i", str(staging / "audio.mp4"),
         "-c", "copy", str(merged),
@@ -349,7 +357,8 @@ async def test_audio_profile_downloads_then_converts_once(
         resolve_native_child(source(), mode="audio"), output=profile, ffmpeg=processor,
     )
     staging = result.parent
-    assert result == staging / f"converted.{profile}"
+    assert staging.name == "a" * 32
+    assert_fresh(result, "converted", profile)
     assert result.read_text() == "converted-media"
     assert [call[0] for call in pipeline.calls] == ["audio", "status"]
     assert recorded(log) == [[
@@ -361,19 +370,72 @@ async def test_audio_profile_downloads_then_converts_once(
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("codecs, merged_name, copy", [
-    ({}, "merged.mp4", True),
-    ({"video_codec": "vp9", "audio_codec": "opus"}, "merged.mkv", False),
+@pytest.mark.parametrize("mode, profile, merged_ext", [
+    ("audio", "mp3", None),
+    ("video", "mp4", "mp4"),
+])
+async def test_real_adapter_keeps_earlier_outputs_and_targets_fresh_names(
+    pipeline: Pipeline, tmp_path: Path, mode: str, profile: ConversionProfile,
+    merged_ext: str | None,
+) -> None:
+    log = tmp_path / "argv.log"
+    processor = FFmpegProcessor(binary=fake_ffmpeg_record(tmp_path, log))
+    staging = pipeline.storage.job_staging_dir("a" * 32)
+    names = [f"converted.{profile}", f"converted-{'0' * 16}.{profile}"]
+    if merged_ext is not None:
+        names += [f"merged.{merged_ext}", f"merged-{'f' * 16}.{merged_ext}"]
+    leftovers = {staging / name: f"earlier:{name}" for name in names}
+    for path, content in leftovers.items():
+        path.write_text(content)
+
+    plan = resolve_native_child(source(), mode=mode)
+    first = await pipeline.run(plan, output=profile, ffmpeg=processor)
+    second = await pipeline.run(plan, output=profile, ffmpeg=processor)
+
+    # Leftovers from an earlier attempt are neither reused nor removed.
+    assert {path: path.read_text() for path in leftovers} == leftovers
+    calls = recorded(log)
+    merges = [call for call in calls if call[0] == "-y"]
+    converts = [call for call in calls if call[0] == "-hide_banner"]
+    assert len(calls) == len(merges) + len(converts)
+    assert [Path(call[-1]) for call in converts] == [first, second]
+    assert first != second
+    for result in (first, second):
+        assert result.parent == staging
+        assert result not in leftovers
+        assert_fresh(result, "converted", profile)
+        assert result.read_text() == "converted-media"
+    inputs = [Path(call[call.index("-i") + 1]) for call in converts]
+    if merged_ext is None:
+        assert not merges
+        assert inputs == [staging / "media.mp4"] * 2
+    else:
+        merged = [Path(call[-1]) for call in merges]
+        # Each conversion reads the merge output produced in the same call.
+        assert inputs == merged and merged[0] != merged[1]
+        for path in merged:
+            assert path.parent == staging and path not in leftovers
+            assert_fresh(path, "merged", merged_ext)
+            assert path.read_text() == "converted-media"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("codecs, merged_ext, copy", [
+    ({}, "mp4", True),
+    ({"video_codec": "vp9", "audio_codec": "opus"}, "mkv", False),
 ])
 async def test_merge_and_convert_call_hook_exactly_once(
-    pipeline: Pipeline, codecs: dict[str, str], merged_name: str, copy: bool,
+    pipeline: Pipeline, codecs: dict[str, str], merged_ext: str, copy: bool,
 ) -> None:
     result = await pipeline.run(resolve_native_child(source(**codecs), mode="video"), output="mp4")
     assert [call[0] for call in pipeline.calls] == ["high", "audio", "status", "merge", "convert"]
     assert pipeline.calls[-1] == ("convert", "mp4", result)
-    assert result.name == "converted.mp4"
+    assert_fresh(result, "converted", "mp4")
+    merged = pipeline.calls[-2][2]
+    assert merged.parent == result.parent
+    assert_fresh(merged, "merged", merged_ext)
     # Even an mp4 merge is remuxed (copy+copy) so faststart is applied.
-    assert pipeline.conversions == [(result.parent / merged_name, copy, copy)]
+    assert pipeline.conversions == [(merged, copy, copy)]
 
 
 @pytest.mark.anyio

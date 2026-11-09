@@ -6,6 +6,7 @@ single POST_PROCESSING transition. No real FFmpeg/yt-dlp process is started.
 
 import asyncio
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -82,6 +83,11 @@ def published(h: Harness) -> list[Path]:
     return sorted(p for p in h.storage.library_root.rglob("*") if p.is_file())
 
 
+def is_fresh(name: str, stem: str, extension: str) -> bool:
+    """Per-call staging target: ``<stem>-<16 lowercase hex>.<extension>``."""
+    return re.fullmatch(rf"{stem}-[0-9a-f]{{16}}\.{re.escape(extension)}", name) is not None
+
+
 PIPELINE = [JobStatus.ANALYZING, JobStatus.DOWNLOADING, JobStatus.POST_PROCESSING,
             JobStatus.FINALIZING]
 
@@ -111,8 +117,10 @@ async def test_audio_conversion_fixed_profiles(
         h.adapters.on_convert = observe
         assert await h.run() == ChildResult.COMPLETED
         assert h.adapters.calls == ["probe", "audio", "convert"]
-        assert h.adapters.conversions == [("media.mp4", f"converted.{output}", output,
-                                           copy, False)]
+        [(input_name, output_name, *rest)] = h.adapters.conversions
+        assert input_name == "media.mp4"
+        assert is_fresh(output_name, "converted", output), output_name
+        assert rest == [output, copy, False]
         assert transitions == PIPELINE and during == ["post_processing"]
         item, copies = await catalog(h)
         assert item is not None and [c.path for c in copies] == [f"audio/Track.{output}"]
@@ -129,15 +137,14 @@ async def test_audio_conversion_fixed_profiles(
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("height,video,audio,calls,merged,copy", [
-    (360, "avc1", "mp4a.40.2", ["probe", "mux", "convert"], "media.mp4", True),
-    (360, "vp9", "opus", ["probe", "mux", "convert"], "media.mp4", False),
-    (None, "avc1", "mp4a.40.2", ["probe", "high", "audio", "merge", "convert"],
-     "merged.mp4", True),
-    (None, "vp9", "opus", ["probe", "high", "audio", "merge", "convert"], "merged.mkv", False),
+    (360, "avc1", "mp4a.40.2", ["probe", "mux", "convert"], None, True),
+    (360, "vp9", "opus", ["probe", "mux", "convert"], None, False),
+    (None, "avc1", "mp4a.40.2", ["probe", "high", "audio", "merge", "convert"], "mp4", True),
+    (None, "vp9", "opus", ["probe", "high", "audio", "merge", "convert"], "mkv", False),
 ])
 async def test_video_mp4_merges_then_converts_and_keeps_numbered_name(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, height: int | None, video: str,
-    audio: str, calls: list[str], merged: str, copy: bool,
+    audio: str, calls: list[str], merged: str | None, copy: bool,
 ) -> None:
     h = Harness(tmp_path)
     try:
@@ -153,7 +160,14 @@ async def test_video_mp4_merges_then_converts_and_keeps_numbered_name(
         h.adapters.on_convert = observe
         assert await h.run() == ChildResult.COMPLETED
         assert h.adapters.calls == calls
-        assert h.adapters.conversions == [(merged, "converted.mp4", "mp4", copy, copy)]
+        [(input_name, output_name, *rest)] = h.adapters.conversions
+        if merged is None:
+            assert input_name == "media.mp4"
+        else:
+            # Content below (video+audio bytes) proves this is the merge output.
+            assert is_fresh(input_name, "merged", merged), input_name
+        assert is_fresh(output_name, "converted", "mp4"), output_name
+        assert rest == ["mp4", copy, copy]
         # One POST_PROCESSING transition covers merge and conversion.
         assert transitions == PIPELINE and during == ["post_processing"]
         item, copies = await catalog(h)

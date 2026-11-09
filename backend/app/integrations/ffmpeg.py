@@ -189,6 +189,24 @@ class FFmpegProcessor:
         timeout_seconds: float,
         require_output: bool = False,
     ) -> None:
+        # Never let FFmpeg (argv carries ``-y``) or the failure cleanup below
+        # touch an entry that already exists at the target: regular file,
+        # symlink (dangling or not), directory or anything else. Only a
+        # missing target proceeds; an unverifiable one fails closed. This is a
+        # precheck for a private single-writer staging dir, not a race guard.
+        try:
+            output_path.lstat()
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            raise FFmpegError(
+                FFmpegFailureKind.FAILED, detail=f"ffmpeg output could not be checked: {exc}"
+            ) from exc
+        else:
+            raise FFmpegError(
+                FFmpegFailureKind.FAILED, detail=f"ffmpeg output already exists: {output_path}"
+            )
+
         try:
             process = await asyncio.create_subprocess_exec(
                 *command,

@@ -6,6 +6,7 @@ Runner-level rows are written directly as controlled records.
 """
 
 import asyncio
+import re
 import sqlite3
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
@@ -68,6 +69,7 @@ class StubMedia:
     def __init__(self) -> None:
         self.calls: list[str] = []
         self.conversions: list[tuple[str, str, bool, bool]] = []
+        self.merges: list[str] = []
         self.convert_error: FFmpegError | None = None
         self.in_convert: Callable[[], None] | None = None
 
@@ -82,6 +84,7 @@ class StubMedia:
         on_process_started: Any = None,
     ) -> None:
         self.calls.append("merge")
+        self.merges.append(output_path.name)
         output_path.write_bytes(b"merged")
 
     async def convert(
@@ -95,6 +98,20 @@ class StubMedia:
             self.in_convert()
         if self.convert_error is not None:
             raise self.convert_error
+
+
+def is_fresh(name: str, stem: str, extension: str) -> bool:
+    """Per-call staging target: ``<stem>-<16 lowercase hex>.<extension>``."""
+    return re.fullmatch(rf"{stem}-[0-9a-f]{{16}}\.{re.escape(extension)}", name) is not None
+
+
+def assert_converted(
+    media: StubMedia, source: str, profile: str, copy_audio: bool, copy_video: bool,
+) -> None:
+    [(input_name, output_name, *flags)] = media.conversions
+    assert input_name == source
+    assert is_fresh(output_name, "converted", profile), output_name
+    assert flags == [copy_audio, copy_video]
 
 
 class Facts:
@@ -214,7 +231,7 @@ async def test_audio_conversion_copy_or_transcode_publishes_converted_file(
     assert record.staging_path == "job"
     assert (run.library / f"audio/{TITLE}.{profile}").read_bytes() == b"converted"
     assert run.media.calls == ["download:raw-a", f"convert:{profile}"]
-    assert run.media.conversions == [("media.mp4", f"converted.{profile}", copy, False)]
+    assert_converted(run.media, "media.mp4", profile, copy, False)
     assert facts.messages == [
         "Download started", f"Converting to {profile.upper()}", "Finalizing",
         "Saved to App Library",
@@ -245,7 +262,7 @@ async def test_mp4_muxed_conversion_publishes_video_with_plan_catalog(
     assert (record.status, record.final_path) == ("completed", f"video/{TITLE}.mp4")
     assert (run.library / "video" / f"{TITLE}.mp4").read_bytes() == b"converted"
     assert run.media.calls == ["download:raw-m", "convert:mp4"]
-    assert run.media.conversions == [("media.mp4", "converted.mp4", copy_audio, copy_video)]
+    assert_converted(run.media, "media.mp4", "mp4", copy_audio, copy_video)
     assert facts.messages == [
         "Download started", "Converting to MP4", "Finalizing", "Saved to App Library"]
     [item] = facts.items
@@ -254,12 +271,12 @@ async def test_mp4_muxed_conversion_publishes_video_with_plan_catalog(
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("companion_codec, merged, copy_audio, bitrate", [
-    ("opus", "merged.mkv", False, None),
-    ("aac", "merged.mp4", True, 4000.0),
+@pytest.mark.parametrize("companion_codec, merged_ext, copy_audio, bitrate", [
+    ("opus", "mkv", False, None),
+    ("aac", "mp4", True, 4000.0),
 ])
 async def test_mp4_video_only_merge_then_convert_with_single_post_processing_step(
-    tmp_path: Path, companion_codec: str, merged: str, copy_audio: bool,
+    tmp_path: Path, companion_codec: str, merged_ext: str, copy_audio: bool,
     bitrate: float | None,
 ) -> None:
     formats = [
@@ -270,7 +287,10 @@ async def test_mp4_video_only_merge_then_convert_with_single_post_processing_ste
     assert (facts.record.status, facts.record.final_path) == (
         "completed", f"video/{TITLE}.mp4")
     assert run.media.calls == ["download:raw-v", "download:raw-a", "merge", "convert:mp4"]
-    assert run.media.conversions == [(merged, "converted.mp4", copy_audio, True)]
+    [merged] = run.media.merges
+    assert is_fresh(merged, "merged", merged_ext), merged
+    # The conversion reads exactly the file the merge produced.
+    assert_converted(run.media, merged, "mp4", copy_audio, True)
     assert facts.messages == [
         "Download started",
         "Post-processing (merging video and audio, converting to MP4)",
@@ -296,7 +316,7 @@ async def test_mp4_stored_h264_profile_drives_video_copy_and_catalog(
     )
     assert (facts.record.status, facts.record.final_path) == ("completed", f"video/{TITLE}.mp4")
     assert run.media.calls == ["download:raw-m", "convert:mp4"]
-    assert run.media.conversions == [("media.mp4", "converted.mp4", True, copy_video)]
+    assert_converted(run.media, "media.mp4", "mp4", True, copy_video)
     [item] = facts.items
     assert (item.media_type, item.format, item.codec, item.bitrate) == (
         "video", "mp4", "h264", bitrate)
