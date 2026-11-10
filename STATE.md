@@ -4,6 +4,11 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-11-10.
 
 ## Şu an
 
+- WF — Oturum başlangıcı: `/oturumabasla` salt-okunur Git/devam noktası raporu eklendi;
+  yeni oturum/makine/dal sonrası taze fetch kanıtı olmadan iş seçilmez. `/continue` ve
+  doğrudan iş talepleri de aynı WORKFLOW kapısına bağlı; izinler genişletilmedi, fetch kullanıcıda.
+  Mekanik worker, bağımsız GPT review ve salt-okunur Opus review tamam; tek düzeltme turunda
+  tazelik sıfırlaması/upstream STATE ayrımı netleşti. OpenCode restart ve canlı komut denemesi bekliyor.
 - M6 — Dönüşüm uzlaştırması: `origin/main` 84014a1 ilerlemiş sürümü esas alındı;
   yerelde tekrarlanan 5 commit `backup/local-conversion-c0263f2` dalında korunuyor.
   Çalışma dalı `reconcile/conversion`; eski `main` hâlâ ayrışmış durumda, toplu merge/rebase/reset yok.
@@ -32,6 +37,8 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-11-10.
 
 ## Sıradaki iş
 
+- OpenCode'u yeniden başlat; yeni oturumda fetch kanıtı vermeden `/oturumabasla` ve `/continue`
+  kapısının durduğunu, kullanıcı fetch çıktısından sonra dal/fark raporunu canlı doğrula.
 - Önce uzlaştırma dalını kullanıcıyla ana akışa alma/push kararı; eski ayrışmış `main` üzerinden
   geliştirmeye dönme. Yedek dal korunmalı, force push veya geçmiş değişikliği yapılmamalı.
 - M6 — Metadata ve Adlandırma → M6.5 — Metadata/etiket pipeline bağlantısı:
@@ -75,9 +82,14 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-11-10.
 - should-fix: modelsiz implement resume CLI hatasını workflow'da açıklama ve izleyici
   partial-line testi deterministikliği ayrı takip. WF-R1 dar reviewer smoke tamam;
   restart/model reload ve farklı-rol resume izolasyonu kanıtlanmadı.
+- should-fix: Claude-only `/devam-claude` skill'inde STATE mod işaretinden önce yeni başlangıç
+  kapısına açık yönlendirme ayrı kapsam; bu işte skill/izin dosyaları değiştirilmedi.
 
 ## Son gate
 
+- 2026-11-10 Fedora, WF başlangıç komutu: worker/lead diff --check PASS; command frontmatter
+  mevcut biçimle statik doğrulandı. GPT ve Opus son review must-fix yok; gerçek slash yükleme/
+  davranış testi restart sonrası bekliyor. Uygulama kodu değişmedi, backend/frontend gate çalıştırılmadı.
 - 2026-11-10 Fedora Python 3.14.10, uzlaştırma: worker ve lead ffmpeg_adapter/prepared_media/
   single_conversion/collection_conversion/collection_child_runner/ffmpeg_real_smoke 237 PASS +
   4 SKIP (libx264 encoder yok); jobs/collection_retry 378 PASS. Değişen 6 Python dosyasında

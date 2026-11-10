@@ -6,6 +6,8 @@ model: openai/gpt-6.1-sol
 
 Türkçe cevap ver.
 
+Önce `docs/WORKFLOW.md` "Oturum başlangıcı ve git tazeliği" kontrolünü uygula. Bu oturumda geçerli fetch kanıtı ve dal kontrolü yoksa iş seçme, gerekli çıktıyı iste ve dur. Farklar için WORKFLOW’daki açık kullanıcı kabulü ve kendi commit’leri sürekliliği uygulanır; bu istisnalar fetch başarısızlığını aşmaz. `/oturumabasla` komutunun atlanması kontrolü atlatmaz.
+
 `STATE.md` ve `docs/WORKFLOW.md`'yi oku ve döngüyü uygula. Argüman bir sayıysa
 en fazla o kadar iş yap (üst sınır 5); boşsa tek iş. Ek talimat varsa kapsamı
 ona göre daralt:
