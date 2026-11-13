@@ -2,9 +2,9 @@ import asyncio
 import contextlib
 import os
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Coroutine
 from pathlib import Path
-from typing import get_args
+from typing import Any, get_args
 
 import pytest
 
@@ -921,3 +921,150 @@ def test_reap_wait_is_bounded_and_waiter_is_drained(
 
     assert not output.exists()
     assert source.read_text() == "source-media"
+
+
+# Existing output targets: the adapter refuses them before any spawn/callback.
+
+MARKER_SCRIPT = """#!/bin/sh
+touch {marker}
+out=""
+for a in "$@"; do out="$a"; done
+printf 'clobbered' > "$out"
+"""
+
+EXISTING_KINDS = ["regular", "symlink", "dangling", "directory"]
+
+Call = Callable[[Path], Coroutine[Any, Any, None]]
+
+
+def _plant_existing(kind: str, output: Path, tmp_path: Path) -> Callable[[], None]:
+    """Create ``kind`` at ``output``; return a check that it is fully intact."""
+    target = tmp_path / "link-target.bin"
+    if kind == "regular":
+        output.write_text("existing")
+
+        def check() -> None:
+            assert not output.is_symlink() and output.read_text() == "existing"
+    elif kind == "symlink":
+        target.write_text("target")
+        output.symlink_to(target)
+
+        def check() -> None:
+            assert output.is_symlink() and os.readlink(output) == str(target)
+            assert target.read_text() == "target"
+    elif kind == "dangling":
+        output.symlink_to(target)
+
+        def check() -> None:
+            assert output.is_symlink() and os.readlink(output) == str(target)
+            assert not os.path.lexists(target)
+    else:
+        output.mkdir()
+        (output / "keep.txt").write_text("kept")
+
+        def check() -> None:
+            assert output.is_dir() and not output.is_symlink()
+            assert [p.name for p in output.iterdir()] == ["keep.txt"]
+            assert (output / "keep.txt").read_text() == "kept"
+    return check
+
+
+def _guarded_call(
+    tmp_path: Path, operation: str, seen: list[asyncio.subprocess.Process]
+) -> tuple[Path, Call, Callable[[], None]]:
+    """Marker fake binary plus intact inputs; returns (output, call, inputs_intact)."""
+    marker = tmp_path / "spawned"
+    binary = _write_script(tmp_path, "ffmpeg", MARKER_SCRIPT.format(marker=marker))
+    processor = FFmpegProcessor(binary=binary, timeout_seconds=10)
+    video, audio, merged = _merge_inputs(tmp_path)
+    source, converted = _convert_paths(tmp_path, "mp3")
+
+    async def call(output: Path) -> None:
+        if operation == "merge":
+            await processor.merge_streams(video, audio, output, on_process_started=seen.append)
+        else:
+            await processor.convert(source, output, "mp3", on_process_started=seen.append)
+
+    def inputs_intact() -> None:
+        assert not marker.exists()
+        assert not seen
+        assert video.read_text() == "v" and audio.read_text() == "a"
+        assert source.read_text() == "source-media"
+
+    return (merged if operation == "merge" else converted), call, inputs_intact
+
+
+@pytest.mark.parametrize("operation", ["merge", "convert"])
+@pytest.mark.parametrize("kind", EXISTING_KINDS)
+def test_existing_output_is_refused_before_spawn(
+    tmp_path: Path, operation: str, kind: str
+) -> None:
+    seen: list[asyncio.subprocess.Process] = []
+    output, call, inputs_intact = _guarded_call(tmp_path, operation, seen)
+    intact = _plant_existing(kind, output, tmp_path)
+
+    with pytest.raises(FFmpegError) as exc_info:
+        asyncio.run(call(output))
+
+    assert exc_info.value.kind is FFmpegFailureKind.FAILED
+    assert "already exists" in (exc_info.value.detail or "")
+    intact()
+    inputs_intact()
+
+
+@pytest.mark.parametrize("operation", ["merge", "convert"])
+def test_unverifiable_output_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    seen: list[asyncio.subprocess.Process] = []
+    output, call, inputs_intact = _guarded_call(tmp_path, operation, seen)
+    output.write_text("existing")
+    original_lstat = Path.lstat
+
+    def denied_lstat(self: Path) -> os.stat_result:
+        if self == output:
+            raise PermissionError("denied")
+        return original_lstat(self)
+
+    monkeypatch.setattr(Path, "lstat", denied_lstat)
+
+    with pytest.raises(FFmpegError) as exc_info:
+        asyncio.run(call(output))
+
+    assert exc_info.value.kind is FFmpegFailureKind.FAILED
+    assert "could not be checked" in (exc_info.value.detail or "")
+    monkeypatch.undo()
+    assert output.read_text() == "existing"
+    inputs_intact()
+
+
+@pytest.mark.parametrize("case", ["suffix", "same_as_input", "copy_video"])
+def test_convert_value_errors_keep_priority_over_existing_output(
+    tmp_path: Path, case: str
+) -> None:
+    marker = tmp_path / "spawned"
+    binary = _write_script(tmp_path, "ffmpeg", MARKER_SCRIPT.format(marker=marker))
+    processor = FFmpegProcessor(binary=binary)
+    source = tmp_path / "track.mp3"
+    source.write_text("source-media")
+    if case == "suffix":
+        output = tmp_path / "out.m4a"
+        output.write_text("existing")
+    elif case == "same_as_input":
+        output = tmp_path / "alias.mp3"
+        output.symlink_to(source)
+    else:
+        output = tmp_path / "out.mp3"
+        output.write_text("existing")
+
+    with pytest.raises(ValueError):
+        asyncio.run(
+            processor.convert(source, output, "mp3", copy_video=case == "copy_video")
+        )
+
+    assert not marker.exists()
+    assert source.read_text() == "source-media"
+    if case == "same_as_input":
+        assert output.is_symlink() and os.readlink(output) == str(source)
+    else:
+        assert output.read_text() == "existing"

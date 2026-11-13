@@ -22,9 +22,89 @@ Eski GPT `implementer` devre dışıdır. Anthropic API provider kurulmaz.
 Config değişiklikleri için OpenCode yeniden başlatılır; mevcut reviewer runtime
 modeli reload olmadan değişmiş sayılmaz.
 
+## Oturum başlangıcı ve git tazeliği
+
+Amaç: başka makinede yapılmış işi eski STATE üzerinden tekrarlamamak. Yeni oturum,
+makine/worktree/dal değişimi, açıklanamayan HEAD değişikliği, başka yerde push/pull
+haberi veya konuşma özetlemesi sonrası kanıt belirsizliği başlangıç kontrolü gerektirir.
+`/oturumabasla` yalnız kontrol ve rapordur; `/continue` ve doğrudan geliştirme talepleri
+kontrol bu oturumda yapılmadıysa önce aynı kapıdan geçer. Slash komutunu unutmak bypass değildir.
+Bu tetikleyicilerde önceki fetch kanıtı ve dal/HEAD kabulü geçersizleşir; yeni kontrol için son tetikleyiciden sonra, doğru repo ve `origin` remote'u için alınmış başarılı bir fetch kanıtı gerekir (lead'in tek fetch çağrısı veya kullanıcının isteğe bağlı paylaştığı başarılı çıktı). Yalnız aynı oturum/worktree/dalda lead’in kendi commit’leri bu sıfırlamanın istisnasıdır.
+
+Önce `git status --short --branch` ve `git log --oneline -n 1` ile dal/HEAD ve dirty durumu
+kontrol et. Açıklanmayan değişiklik, detached HEAD veya beklenmedik dalda dur; otomatik
+stash/temizleme/dal değiştirme yapma. STATE bu aşamada yalnız bağlamdır, iş listesi değildir.
+
+Uzak tazelik, son tazelik sıfırlama tetikleyicisinden sonra, doğru repo/`origin` remote'u için
+başarılı bir fetch kanıtıyla gösterilir. Eski `origin/main`, temiz çalışma ağacı, STATE veya başka
+makinedeki kontrol bu kanıt değildir.
+
+Fetch yetkisi yalnız OpenCode `lead`'indedir ve dardır: yalnız tam `git fetch --verbose origin`
+(tercih edilen) ve izinli eşdeğeri `git fetch origin`. Lead repo kökünü araç `workdir`
+parametresiyle verir ve komutu ayrı, doğrudan tek çağrı olarak çalıştırır; aynı kontrolde iki
+biçim peş peşe denenmez. Wildcard fetch, `--all`, `--prune`, refspec, başka remote, global git
+flag'leri (`-C`/`-c`/`--no-pager`), env prefix, `cd`, zincir, pipe ve yönlendirme yoktur.
+Worker fetch yapmaz ve devralmaz. Claude-only modunda lead fetch denemez; kullanıcı çıktısı
+yalnız isteğe bağlı kanıttır.
+
+Başarı: exit 0 ve çıktıda `fatal`/`error`/`rejected` yok. Boş stdout başarısızlık değildir
+(güncelleme yoksa `git fetch` sessiz olabilir). Başarılı fetch sonrası aynı kontrolde
+`git status --short --branch` ayrı doğrudan çağrıyla alınır.
+
+Kullanıcı isteğe bağlı olarak kendi terminalinde repo kökünde şu çıktıyı ayrı mesajda
+paylaşabilir; bu otomatik zorunlu fallback değildir ve başarısız lead çağrısından sonra
+otomatik istenmez:
+
+```text
+git fetch --verbose origin
+git status --short --branch
+```
+
+Kullanıcı çıktısı kullanılırsa son tetikleyiciden sonra alınmış, doğru repo/`origin` için başarılı
+olmalı ve paylaşılan status dal/upstream/ileri-geri bilgisi lead’in aynı komut çıktısıyla
+eşleşmelidir; uyuşmazlıkta yanlış repo/clone veya araya giren değişiklik olasılığıyla dur.
+Bu eşleşme tek başına fetch kanıtı değildir. Lead'in kendi workdir çağrısı kanıtında kullanıcı
+çıktısı şartı yoktur.
+
+İzin/kimlik/ağ/kota/timeout, sıfır olmayan çıkış veya etkileşimli istem olursa "güncellik
+doğrulanmadı" de, "hazırız" deme, iş seçme ve dur. Aynı veya diğer izinli biçimle tekrar,
+fallback, worker devri ve izin aşma yok. Kullanıcı sorunu çözdüğünü bildirirse ayrı sonraki
+çağrıda tek yeni deneme yapılabilir. Fetch yalnız remote-tracking ref'leri günceller; çalışma
+ağacını veya yerel dalı merge etmez. Tek kontrollü başlangıç fetch'i dışında arka plan/sürekli
+otomatik fetch yoktur; pull/merge/rebase/reset/stash/dal değiştirme/push otomatik yapılmaz.
+
+Fetch sonrası izinli ayrı doğrudan git çağrılarıyla karşılaştır:
+- `git status --porcelain=v2 --branch`: dal, upstream ve ileri/geri bilgisi.
+- Upstream varsa `git log --oneline "@{u}..HEAD"` ve `git log --oneline "HEAD..@{u}"`.
+- Entegrasyon dalı bu repoda `origin/main`: `git log --oneline origin/main..HEAD` ve
+  `git log --oneline HEAD..origin/main`. Feature upstream'i entegrasyon dalı sanma.
+
+Dirty, detached, upstream yok/gone, eksik entegrasyon ref'i veya karşılaştırma hatası
+hazır sayılmaz; somut nedeni ve gereken kullanıcı kararını bildir. Upstream'e göre behind
+veya diverged ise iş başka yerde ilerlemiştir: commit farklarını ve gerekirse
+`git show "@{u}:STATE.md"` ile güncel devam noktasını incele, yerel eski işi başlatma.
+Entegrasyon dalındaki ilerleme için ayrıca `git show origin/main:STATE.md` kullan; iki devam noktasını karıştırma.
+Upstream'e göre ahead ise pushlanmamış işi açıkla ve varsayılan dur. Feature dalının
+`origin/main` üzerinde yalnız ahead olması tek başına hata değildir; izinli dal/kapsamı
+belirt. Entegrasyon dalına göre behind/diverged ise uzlaştırma kararı olmadan başlama.
+
+Kullanıcı raporlanan belirli dal/HEAD ve farkı açıkça kabul ederse o kapsamda çalışılabilir;
+fetch başarısızlığını veya izin reddini bu kabul ile başarılı sayma. Lead’in kendi commit’leri dışındaki dal/worktree/HEAD değişiminde kabul geçersizleşir. Aynı oturum, aynı worktree/dalda kontrol sonrası yalnız
+lead'in kendi commit'leri eklendiyse bu doğal ahead durumu yeni fetch gerektirmez.
+Doğrulanan başlangıç HEAD’ini yalnız konuşmada tut; iş başında status ve `git log --oneline <kontrol-HEAD>..HEAD` aralığının yalnız lead’in raporladığı commit’leri içerdiğini doğrula. Aralık/başlangıç HEAD’i açıklanamıyor veya bilinmiyorsa yeni tazelik kontrolüyle dur.
+Kalıcı tazelik işareti, kilit/session deposu veya STATE'e tazelik sertifikası yazma.
+
+İş seçimi ancak kontrol sonrası doğru dalın güncel STATE/WORKFLOW/AGENTS içeriğinden
+yapılır. Rapor dal/HEAD, uzak karşılaştırma, milestone/alt iş ve sıradaki adımı içerir.
+"Oturum doğrulandı" yalnız Git/devam noktası doğrulamasıdır; güncel test/gate, runtime,
+Claude giriş/kota veya her makinedeki bağımlılıkların hazır olduğu iddiası değildir.
+Yeni komut ve yeni lead izinleri ancak OpenCode yeniden başlatılınca yüklenir; mevcut oturum
+reload olmuş sayılmaz ve bu uygulamada runtime fetch denenmemiştir.
+
 ## Döngü
 
-1. STATE ve `git status` oku; açıklanmayan değişiklikte dur, başkasının işine dokunma.
+1. Önce "Oturum başlangıcı ve git tazeliği" kontrolü; geçmezse iş seçmeden dur. STATE ve
+   `git status` oku; açıklanmayan değişiklikte dur, başkasının işine dokunma.
 2. **Her milestone öncesi Opus görüşü zorunlu.** Alınamazsa açık kullanıcı onayı
    olmadan uygulama yok. Önemli mimari kararlar önce Opus'a, ürün tercihleri
    kullanıcıya gider. Lead burada **Opus önerisi / gerekçe / alternatif-risk +
@@ -71,7 +151,30 @@ scripts/claude-review.sh 'Çalışma ağacındaki altyapı değişikliklerini in
 bash scripts/claude-agent.sh implement 'Amaç... İzinli dosyalar... Hedefli kontroller...'
 bash scripts/claude-agent.sh implement 'Uzman iş: amaç... İzinli dosyalar... Hedefli kontroller...' --model opus
 bash scripts/claude-agent.sh implement 'Tek review düzeltme turu: ...' --resume <claude-session-id> --model sonnet
+bash scripts/claude-agent.sh implement 'Komut bakımı: continue.md/oturumabasla.md gövdesi...' --maintain-commands --log
 ```
+
+`--maintain-commands` opt-in komut bakımıdır; yalnız `implement` ile ve `--resume`
+olmadan kabul edilir, aksi provider başlamadan CLI hatasıdır (exit 2; doğrudan API
+`ValueError`). Kısaltılmış seçenekler (`--maint`, `--mod`) kabul edilmez. Yol listesi veya
+wildcard parametresi yoktur; hedef yalnız mevcut `.opencode/commands/continue.md` ve
+`.opencode/commands/oturumabasla.md` gövdeleridir. Kullanım koşulları:
+- Her görev için açık kullanıcı onayı gerekir; lead kendiliğinden başlatmaz.
+- Resume yoktur: düzeltme turu aynı modelle yeni çağrıdır; bakım session'ı başka modda
+  resume edilmez. Session deposu yoktur.
+- Model seçimi aynıdır (Sonnet varsayılan, `--model opus` isteğe bağlı); izinler family'ye göre
+  değişmez. Hata/denial/mismatch başarısızdır, retry/fallback yoktur.
+- Prompt yalnız gövde değişikliğini ister; ilk `--- ... ---` frontmatter bayt bayt korunur ve
+  rapor "frontmatter unchanged" der. Bu prompt şartıdır, teknik alan-sınırı değildir; lead
+  diff'i okur, GPT reviewer bağımsız inceler, gerektiğinde salt-okunur Opus güvenlik review'u
+  yapılır.
+- Komut gövdesi lead talimatıdır. Bakım diff checklist'i: frontmatter bayt bayt aynı; yeni
+  `` !`...` `` shell template veya `@dosya` referansı yok; `$ARGUMENTS` kapsamı korunur;
+  izin/ajan/model/araç/commit/push/fetch yetkisi açık görev onayı ve mevcut WORKFLOW sınırları
+  dışında genişlemez. Onaylı fetch akışıyla uyum için mevcut metin güncellenebilir. Bu
+  prompt + diff review politikasıdır; teknik enforcement yoktur.
+- Normal `implement`/`consult`/`review` argv, izin ve prompt'u değişmez. Bakım akışı yalnız
+  fake testlerle sınanmıştır; canlı izin davranışı doğrulanmamıştır.
 
 `--model` yalnız `sonnet|opus` kabul eder. `implement` varsayılanı Sonnet'tir;
 `consult`/`review` varsayılan ve sabit Opus'tur (`--model opus` kabul edilir,
@@ -151,6 +254,19 @@ doğrulanmış iddia edilmez. Server/tmux/ek altyapı yoktur.
   dizinine ayrı `cd` ile geçebilir; zincir/pipe/yönlendirme yoktur. Git yazma,
   destructive shell, başka CLI/ajan komutu allow listesinde değildir; `dontAsk`
   izin isteyen diğer eylemleri reddeder. STATE ve kalıcı ajan config düzenlemesi yasaktır.
+  Normal implement deny listesi `.opencode/**` Edit/Write'ı kapsar.
+- Tek istisna `--maintain-commands` bakım setidir; normal rollere eklenmez. tools yalnız
+  Read/Grep/Glob/Edit; allow yalnız Read/Grep/Glob ile
+  `Edit(./.opencode/commands/continue.md)` ve `Edit(./.opencode/commands/oturumabasla.md)`.
+  Genel Edit/Write/Bash ve test izinleri yoktur; Agent/Task/Skill/MCP/Bash/Write disallowed'dır.
+  Deny: `.env` okuma kuralları, `STATE.md`, `.claude/**`, `.git/**`, `.opencode/agents/**`.
+  Geniş `.opencode/**` deny bu ayrı sette yoktur (iki allow'u öldürürdü); `dontAsk` allowlist
+  dışını reddettiği için genel `.opencode` yazma açılmaz. Bu iki gövde, kalıcı ajan config
+  yasağının kullanıcı onaylı dar istisnasıdır; ajan tanımları, komut frontmatter'ı ve diğer
+  config yasak kalır. Bu izinler de OS sandbox değildir.
+- Bakım seçeneğini ekleyen bootstrap tek seferliktir: kapanınca scripts/test/WORKFLOW
+  için verilen bootstrap izni tekrar kullanılamaz; lead STATE'e tüketildiğini yazar,
+  kullanıcı lead.md istisnasını kaldırır.
 - **Tool izinleri OS sandbox değildir.** İzinli dosya listesi lead'in açık prompt
   sınırıdır; dosya bazında teknik enforcement yoktur. Testler/config keyfi kod
   çalıştırabilir ve yan dosya yazabilir; Bash pattern'leri mutlak güvenlik garantisi

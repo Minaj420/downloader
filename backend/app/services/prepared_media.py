@@ -7,6 +7,7 @@ Child callers opt into the bounded child CLI; the single CLI is unchanged.
 """
 
 import asyncio
+import secrets
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,12 @@ from app.services.conversion_plan import plan_conversion
 from app.services.storage_service import StorageService
 
 HookTask = asyncio.Task[Any] | None
+
+
+def _fresh_name(stem: str, extension: str) -> str:
+    # The FFmpeg adapter refuses existing targets; a fresh name per call lets a
+    # retry reuse staging without touching outputs left by an earlier attempt.
+    return f"{stem}-{secrets.token_hex(8)}.{extension}"
 
 
 def merge_container(video: NormalizedFormat, audio: NormalizedFormat) -> str:
@@ -97,7 +104,7 @@ async def prepare_media(
             await before_merge()
             # The caller's status/activity hook may yield to a Cancel request.
             await check_cancelled()
-            merged = staging_dir / f"merged.{merge_container(selected, companion)}"
+            merged = staging_dir / _fresh_name("merged", merge_container(selected, companion))
             await ffmpeg.merge_streams(video, audio, merged, on_process_started=register)
             if output is None or plan is None:
                 return merged
@@ -109,7 +116,7 @@ async def prepare_media(
             await check_cancelled()
             await before_merge()
         await check_cancelled()
-        converted = staging_dir / f"converted.{output_extension(output)}"
+        converted = staging_dir / _fresh_name("converted", output_extension(output))
         await ffmpeg.convert(
             source, converted, output,
             copy_audio=plan.copy_audio, copy_video=plan.copy_video,

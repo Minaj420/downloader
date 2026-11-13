@@ -24,6 +24,35 @@ COMMON = (
     "STATE yazma, git yazma, başka ajan/CLI çağırma, kalıcı ajan config değiştirme. "
     "İzin/kota/kimlik hatasında tekrar veya başka yol deneme; dur ve raporla. "
 )
+# Opt-in command maintenance: fixed paths only; callers cannot pass paths or wildcards.
+MAINTENANCE_TOOLS = ["Read", "Grep", "Glob", "Edit"]
+MAINTENANCE_ALLOW = [
+    "Read", "Grep", "Glob",
+    "Edit(./.opencode/commands/continue.md)", "Edit(./.opencode/commands/oturumabasla.md)",
+]
+MAINTENANCE_DENY = [
+    "Read(./.env)", "Read(./.env.*)", "Read(./**/.env)", "Read(./**/.env.*)",
+    "Edit(./STATE.md)", "Edit(./.claude/**)", "Edit(./.git/**)", "Edit(./.opencode/agents/**)",
+]
+MAINTENANCE_DISALLOWED = "Agent,Task,Skill,mcp__*,Bash,Write"
+MAINTENANCE_INSTRUCTION = (
+    "Komut bakımı modu: yalnız MEVCUT .opencode/commands/continue.md ve "
+    ".opencode/commands/oturumabasla.md dosyalarının gövdesini Edit ile düzenle. Her dosyanın "
+    "başındaki ilk --- ... --- frontmatter bloğu bayt bayt değişmez. Bash/Write, test "
+    "çalıştırma, başka config veya dosya düzenleme ve yeni dosya oluşturma yok. Yalnız bu iki "
+    "gövde, normal kalıcı ajan config değiştirme yasağının kullanıcı onaylı dar istisnasıdır; "
+    "diğer her yerde yasak geçerlidir. Gövde lead talimatıdır: yeni !`...` shell template "
+    "ekleme, yeni @dosya referansı ekleme, $ARGUMENTS kapsamını genişletme; izin/ajan/model/"
+    "araç/commit/push veya fetch yetkisini açık görev onayı ve mevcut docs/WORKFLOW.md "
+    "sınırları dışında genişleten talimat yazma. Onaylı WORKFLOW akışıyla uyum için mevcut "
+    "fetch metni güncellenebilir. Raporda düzenlenen dosyaları ve frontmatter'ın "
+    "değişmediğini (frontmatter unchanged) açıkça yaz. "
+)
+
+
+def check_maintenance(role, resume, maintain_commands):
+    if maintain_commands and (role != "implement" or resume is not None):
+        raise ValueError("--maintain-commands requires implement without --resume")
 
 
 def selected_model(role, model=None):
@@ -35,8 +64,11 @@ def selected_model(role, model=None):
     return model
 
 
-def command(role, resume=None, model=None):
+def command(role, resume=None, model=None, *, maintain_commands=False):
+    check_maintenance(role, resume, maintain_commands)
     model = selected_model(role, model)
+    if maintain_commands:
+        return maintenance_command(model)
     tools = ["Read", "Grep", "Glob"]
     allow = tools.copy()
     deny = ["Read(./.env)", "Read(./.env.*)", "Read(./**/.env)", "Read(./**/.env.*)"]
@@ -64,6 +96,21 @@ def command(role, resume=None, model=None):
     return argv
 
 
+def maintenance_command(model):
+    # Separate set: no broad .opencode deny here, otherwise the two allows would be dead.
+    settings = {
+        "disableAllHooks": True, "enabledPlugins": {}, "autoMemoryEnabled": False,
+        "permissions": {"allow": MAINTENANCE_ALLOW.copy(), "deny": MAINTENANCE_DENY.copy()},
+    }
+    return [
+        "claude", "-p", "--model", model, "--output-format", "stream-json", "--verbose",
+        "--setting-sources", "", "--settings", json.dumps(settings),
+        "--permission-mode", "dontAsk", "--tools", ",".join(MAINTENANCE_TOOLS),
+        "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
+        "--disable-slash-commands", "--no-chrome", "--disallowedTools", MAINTENANCE_DISALLOWED,
+    ]
+
+
 def environment():
     # Keep subscription HOME/keychain, not API/provider overrides or nested-host settings.
     env = {k: v for k, v in os.environ.items() if not
@@ -85,9 +132,10 @@ def git_context():
     return "\n".join(sections)
 
 
-def run(role, prompt, resume=None, log=None, model=None):
+def run(role, prompt, resume=None, log=None, model=None, *, maintain_commands=False):
+    check_maintenance(role, resume, maintain_commands)  # Before git_context/Popen.
     requested_model = selected_model(role, model)
-    instruction = (
+    instruction = MAINTENANCE_INSTRUCTION if maintain_commands else (
         "Yalnız görevde izin verilen dosyaları düzenle. Önceden kararlaştırılmış hedefli "
         "test/lint komutlarını kendin çalıştır; sonuçları PASS/FAIL/NOT RUN olarak raporla. "
         "Bash yalnız backend/frontend hedefli kontroller içindir. İlgili dizine geçmek "
@@ -103,8 +151,9 @@ def run(role, prompt, resume=None, log=None, model=None):
     model = session = None
     denied = malformed = False
     denial_details = []
+    argv = command(role, resume, requested_model, maintain_commands=maintain_commands)
     with subprocess.Popen(
-        command(role, resume, requested_model), cwd=ROOT, env=environment(), stdin=subprocess.PIPE,
+        argv, cwd=ROOT, env=environment(), stdin=subprocess.PIPE,
         stdout=subprocess.PIPE, text=True, encoding="utf-8",  # stderr stays in owning terminal.
     ) as child:
         child.stdin.write(text)
@@ -152,14 +201,21 @@ def run(role, prompt, resume=None, log=None, model=None):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument("role", choices=("consult", "review", "implement"))
     parser.add_argument("prompt", nargs="?", help="Omit to read plain text from stdin")
     parser.add_argument("--resume", metavar="SESSION_ID")
     parser.add_argument("--model", choices=("sonnet", "opus"),
                         help="implement defaults to sonnet; consult/review require opus")
     parser.add_argument("--log", action="store_true", help="Save stream JSONL under tmp/claude")
+    parser.add_argument("--maintain-commands", action="store_true",
+                        help="implement only, no --resume: edit bodies of continue.md and "
+                             "oturumabasla.md under .opencode/commands; no Bash/Write")
     args = parser.parse_args()
+    try:
+        check_maintenance(args.role, args.resume, args.maintain_commands)
+    except ValueError as exc:
+        parser.error(str(exc))
     if args.resume and args.role == "implement" and args.model is None:
         parser.error("implement --resume requires explicit --model sonnet|opus")
     try:
@@ -171,7 +227,8 @@ def main():
         parser.error("Nonempty prompt required")
     try:
         if not args.log:
-            return run(args.role, prompt, args.resume, model=model)
+            return run(args.role, prompt, args.resume, model=model,
+                       maintain_commands=args.maintain_commands)
         if LOGS.is_symlink() or (ROOT / "tmp").is_symlink():
             raise ValueError("Symlink log directories are not supported")
         LOGS.mkdir(parents=True, exist_ok=True)
@@ -179,7 +236,8 @@ def main():
         path = LOGS / name
         with path.open("x", encoding="utf-8") as log:
             print(f"WATCH: bash scripts/claude-watch.sh tmp/claude/{name}", flush=True)
-            return run(args.role, prompt, args.resume, log, model=model)
+            return run(args.role, prompt, args.resume, log, model=model,
+                       maintain_commands=args.maintain_commands)
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
         print(f"FAIL/INCOMPLETE: {exc}; no retry/fallback", file=sys.stderr)
         return 1

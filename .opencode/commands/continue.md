@@ -6,6 +6,8 @@ model: openai/gpt-6.1-sol
 
 Türkçe cevap ver.
 
+Önce `docs/WORKFLOW.md` "Oturum başlangıcı ve git tazeliği" kontrolünü uygula. Son tazelik sıfırlama tetikleyicisinden sonra geçerli fetch kanıtı yoksa repo kökünü araç `workdir` parametresiyle vererek ayrı, doğrudan tek `git fetch --verbose origin` çağrısı yap; geçerli kanıt varsa tekrarlama. Fetch sonrası WORKFLOW'daki status/log/dal kontrollerini ayrı doğrudan çağrılarla uygula; geçerli fetch kanıtı olsa bile dal kontrolünü atlama. Aynı oturum/worktree/dalda yalnız lead'in kendi commit'leri istisnası WORKFLOW'daki gibidir. Hata, izin/kimlik/ağ/kota hatası, sıfır olmayan çıkış, timeout veya etkileşimli istemde iş seçmeden dur; aynı veya diğer biçimle tekrar, fallback veya worker devri yok. Kullanıcı terminal çıktısı yalnız isteğe bağlı kanıttır, otomatik istenmez. Farklar için WORKFLOW’daki açık kullanıcı kabulü uygulanır; bu kabul fetch başarısızlığını aşmaz. Otomatik pull/merge/push yok. `/oturumabasla` komutunun atlanması kontrolü atlatmaz.
+
 `STATE.md` ve `docs/WORKFLOW.md`'yi oku ve döngüyü uygula. Argüman bir sayıysa
 en fazla o kadar iş yap (üst sınır 5); boşsa tek iş. Ek talimat varsa kapsamı
 ona göre daralt:
