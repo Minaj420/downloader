@@ -266,6 +266,238 @@ def test_missing_or_unknown_observed_model_is_left_to_lead_verification(
     assert len(bridge.calls) == 1  # No adapter retry or fallback.
 
 
+# Hardcoded baselines: normal roles must stay byte-identical when maintenance is added.
+# Fake argv/settings coverage only; this is not proof of live permission enforcement.
+BASE_COMMON = (
+    "Türkçe cevap ver. AGENTS.md ve docs/WORKFLOW.md ile ilgili spec/kod/testleri oku. "
+    "Yalnız verilen görevi yap; kapsam dışına çıkman gerekirse dur ve raporla. "
+    "STATE yazma, git yazma, başka ajan/CLI çağırma, kalıcı ajan config değiştirme. "
+    "İzin/kota/kimlik hatasında tekrar veya başka yol deneme; dur ve raporla. "
+)
+ENV_DENY = ["Read(./.env)", "Read(./.env.*)", "Read(./**/.env)", "Read(./**/.env.*)"]
+BASE_TEST_PERMISSIONS = [
+    "Bash(cd backend)", "Bash(cd frontend)",
+    "Bash(.venv/bin/pytest *)", "Bash(.venv/bin/ruff check *)", "Bash(.venv/bin/mypy *)",
+    "Bash(npm test *)", "Bash(npm run lint *)", "Bash(npm run typecheck *)",
+    "Bash(npm run build *)", "Bash(npm run check:contrast *)",
+    "Bash(npm test)", "Bash(npm run lint)", "Bash(npm run typecheck)",
+    "Bash(npm run build)", "Bash(npm run check:contrast)",
+]
+IMPLEMENT_DENY = ENV_DENY + [
+    "Edit(./STATE.md)", "Write(./STATE.md)", "Edit(./.claude/**)", "Write(./.claude/**)",
+    "Edit(./.opencode/**)", "Write(./.opencode/**)", "Edit(./.git/**)", "Write(./.git/**)",
+]
+MAINT_ALLOW = [
+    "Read", "Grep", "Glob",
+    "Edit(./.opencode/commands/continue.md)", "Edit(./.opencode/commands/oturumabasla.md)",
+]
+MAINT_DENY = ENV_DENY + [
+    "Edit(./STATE.md)", "Edit(./.claude/**)", "Edit(./.git/**)", "Edit(./.opencode/agents/**)",
+]
+
+
+def expected_argv(model, tools, allow, deny, disallowed):
+    settings = {
+        "disableAllHooks": True, "enabledPlugins": {}, "autoMemoryEnabled": False,
+        "permissions": {"allow": allow, "deny": deny},
+    }
+    return [
+        "claude", "-p", "--model", model, "--output-format", "stream-json", "--verbose",
+        "--setting-sources", "", "--settings", json.dumps(settings),
+        "--permission-mode", "dontAsk", "--tools", tools,
+        "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
+        "--disable-slash-commands", "--no-chrome", "--disallowedTools", disallowed,
+    ]
+
+
+NORMAL_BASELINE = {
+    "implement": expected_argv(
+        "sonnet", "Read,Grep,Glob,Edit,Write,Bash",
+        ["Read", "Grep", "Glob", "Edit", "Write", *BASE_TEST_PERMISSIONS], IMPLEMENT_DENY,
+        "Agent,Task,Skill,mcp__*",
+    ),
+    "consult": expected_argv("opus", "Read,Grep,Glob", ["Read", "Grep", "Glob"], ENV_DENY,
+                             "Agent,Task,Skill,mcp__*,Bash,Edit,Write"),
+    "review": expected_argv("opus", "Read,Grep,Glob", ["Read", "Grep", "Glob"], ENV_DENY,
+                            "Agent,Task,Skill,mcp__*,Bash,Edit,Write"),
+}
+
+
+def test_common_text_unchanged(bridge):
+    assert bridge.COMMON == BASE_COMMON
+
+
+@pytest.mark.parametrize("role", ["implement", "consult", "review"])
+def test_normal_roles_default_and_explicit_false_match_baseline(bridge, role):
+    bridge.events[0]["model"] = "claude-sonnet-fake" if role == "implement" else None
+    assert bridge.run(role, "same task") == 0
+    assert bridge.run(role, "same task", maintain_commands=False) == 0
+    default, explicit = bridge.calls
+    assert default.argv == explicit.argv == NORMAL_BASELINE[role]
+    assert default.kwargs == explicit.kwargs
+    assert default.stdin.saved == explicit.stdin.saved
+    assert bridge.command(role) == bridge.command(role, maintain_commands=False)
+    assert bridge.command(role) == NORMAL_BASELINE[role]
+    assert "--resume" not in default.argv
+    assert default.stdin.saved.startswith(BASE_COMMON)
+    assert bridge.MAINTENANCE_INSTRUCTION not in default.stdin.saved
+    assert "Komut bakımı" not in default.stdin.saved
+    if role == "implement":
+        deny = json.loads(default.argv[default.argv.index("--settings") + 1])
+        assert "Edit(./.opencode/**)" in deny["permissions"]["deny"]
+        assert "Write(./.opencode/**)" in deny["permissions"]["deny"]
+        assert "Yalnız görevde izin verilen dosyaları düzenle." in default.stdin.saved
+    else:
+        assert "Salt-okunur çalış." in default.stdin.saved
+
+
+@pytest.mark.parametrize("role", ["implement", "consult", "review"])
+def test_normal_resume_argv_unchanged(bridge, role):
+    bridge.events[0]["model"] = "claude-opus-fake"
+    assert bridge.run(role, "task", resume="s9", model="opus", maintain_commands=False) == 0
+    base = NORMAL_BASELINE[role].copy()
+    base[3] = "opus"
+    assert bridge.calls[0].argv == [*base, "--resume", "s9"]
+
+
+def test_maintenance_models_exact_permissions_and_prompt(bridge):
+    for model in ("sonnet", "opus"):
+        bridge.events[0]["model"] = f"claude-{model}-fake"
+        assert bridge.run("implement", "Gövde görevi", model=model, maintain_commands=True) == 0
+    sonnet, opus = bridge.calls
+    for model, child in (("sonnet", sonnet), ("opus", opus)):
+        assert child.argv == expected_argv(
+            model, "Read,Grep,Glob,Edit", MAINT_ALLOW, MAINT_DENY,
+            "Agent,Task,Skill,mcp__*,Bash,Write",
+        )
+        settings = json.loads(child.argv[child.argv.index("--settings") + 1])
+        allow, deny = settings["permissions"]["allow"], settings["permissions"]["deny"]
+        assert not any(x in {"Edit", "Write"} or x.startswith(("Bash", "Write")) for x in allow)
+        assert "Edit(./.opencode/**)" not in deny  # Would kill the two narrow allows.
+        assert "--resume" not in child.argv
+        text = child.stdin.saved
+        assert text.startswith(BASE_COMMON + bridge.MAINTENANCE_INSTRUCTION)
+        assert "Gövde görevi" in text and "fixed read-only snapshot" in text
+        assert "frontmatter unchanged" in text
+        # Prompt policy only (no enforcement): no new shell templates/file refs/authority.
+        assert "yeni !`...` shell template ekleme" in text
+        assert "yeni @dosya referansı ekleme" in text
+        assert "$ARGUMENTS kapsamını genişletme" in text
+        assert "commit/push veya fetch yetkisini açık görev onayı" in text
+        assert "mevcut fetch metni güncellenebilir" in text
+        assert "test/lint" not in text and "Salt-okunur çalış." not in text
+    assert sonnet.argv[4:] == opus.argv[4:]
+    assert sonnet.kwargs == opus.kwargs
+    assert sonnet.stdin.saved == opus.stdin.saved
+
+
+@pytest.mark.parametrize("argv", [
+    ["consult", "task", "--maintain-commands"],
+    ["review", "task", "--maintain-commands"],
+    ["consult", "task", "--maintain-commands", "--model", "opus"],
+    ["implement", "task", "--maintain-commands", "--resume", "s1", "--model", "sonnet"],
+    ["implement", "task", "--maintain-commands", "--resume", "s1"],
+    ["implement", "task", "--maintain-commands", "--resume", ""],
+    ["implement", "task", "--maint"],
+    ["implement", "task", "--mod", "opus"],
+    ["implement", "task", "--maintain-commands", "--log", "--resume", "s1"],
+])
+def test_maintenance_misuse_and_abbreviations_rejected_by_cli(
+    bridge, monkeypatch, tmp_path, capsys, argv
+):
+    monkeypatch.setattr(bridge, "LOGS", tmp_path / "tmp" / "claude")
+    monkeypatch.setattr(sys, "argv", ["bridge", *argv])
+    with pytest.raises(SystemExit) as exc:
+        bridge.main()
+    assert exc.value.code == 2
+    assert capsys.readouterr().err
+    assert not bridge.calls
+    assert not (tmp_path / "tmp").exists()
+
+
+@pytest.mark.parametrize("role,resume", [
+    ("consult", None), ("review", None), ("implement", "s1"), ("implement", ""),
+    ("consult", "s1"),
+])
+def test_maintenance_direct_api_guard_before_git_and_provider(bridge, monkeypatch, role, resume):
+    seen = []
+
+    def git_context():
+        seen.append("git")
+        return "snapshot"
+
+    monkeypatch.setattr(bridge, "git_context", git_context)
+    with pytest.raises(ValueError, match="--maintain-commands"):
+        bridge.run(role, "task", resume=resume, model="opus", maintain_commands=True)
+    with pytest.raises(ValueError, match="--maintain-commands"):
+        bridge.command(role, resume, "opus", maintain_commands=True)
+    assert not seen and not bridge.calls
+
+
+@pytest.mark.parametrize("use_log", [False, True])
+@pytest.mark.parametrize("use_stdin", [False, True])
+def test_maintenance_cli_happy_path(bridge, monkeypatch, tmp_path, capsys, use_log, use_stdin):
+    bridge.events[0]["model"] = "claude-sonnet-fake"
+    monkeypatch.setattr(bridge, "ROOT", tmp_path)
+    monkeypatch.setattr(bridge, "LOGS", tmp_path / "tmp" / "claude")
+    task = "Yalnız iki komut gövdesi"
+    argv = ["bridge", "implement", "--maintain-commands"]
+    if use_stdin:
+        monkeypatch.setattr(sys, "stdin", io.StringIO(task))
+    else:
+        argv.insert(2, task)
+    if use_log:
+        argv.append("--log")
+    monkeypatch.setattr(sys, "argv", argv)
+    assert bridge.main() == 0
+    assert len(bridge.calls) == 1
+    child = bridge.calls[0]
+    assert child.argv == expected_argv(
+        "sonnet", "Read,Grep,Glob,Edit", MAINT_ALLOW, MAINT_DENY,
+        "Agent,Task,Skill,mcp__*,Bash,Write",
+    )
+    assert task in child.stdin.saved and task not in child.argv
+    assert bridge.MAINTENANCE_INSTRUCTION in child.stdin.saved
+    output = capsys.readouterr().out
+    report = json.loads(output[output.index("{"):])
+    assert report["success"] is True and report["requested_model"] == "sonnet"
+    logs = list(bridge.LOGS.glob("*.jsonl")) if bridge.LOGS.exists() else []
+    if use_log:
+        assert len(logs) == 1 and f"tmp/claude/{logs[0].name}" in output
+    else:
+        assert not logs and "WATCH:" not in output
+
+
+def test_maintenance_cli_opus_model(bridge, monkeypatch):
+    bridge.events[0]["model"] = "claude-opus-fake"
+    monkeypatch.setattr(sys, "argv", [
+        "bridge", "implement", "task", "--maintain-commands", "--model", "opus",
+    ])
+    assert bridge.main() == 0
+    assert bridge.calls[0].argv[:4] == ["claude", "-p", "--model", "opus"]
+    assert bridge.calls[0].argv[bridge.calls[0].argv.index("--tools") + 1] == "Read,Grep,Glob,Edit"
+
+
+@pytest.mark.parametrize("failure", ["denial", "mismatch", "exit"])
+def test_maintenance_failure_is_not_success_and_not_retried(bridge, capsys, failure):
+    if failure == "denial":
+        bridge.events[-1]["permission_denials"] = [{"tool_name": "Edit"}]
+    elif failure == "mismatch":
+        bridge.events[0]["model"] = "claude-opus-fake"
+    else:
+        bridge.exit_code = 3
+    assert bridge.run("implement", "task", maintain_commands=True) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["success"] is False
+    if failure == "denial":
+        assert report["permission_denial_details"] == [{"tool_name": "Edit"}]
+    assert set(report) == {
+        "role", "requested_model", "observed_model", "session_id", "exit_code", "success",
+        "permission_denials", "permission_denial_details", "is_error", "result",
+    }
+    assert len(bridge.calls) == 1  # No adapter retry or fallback.
+
+
 def test_git_snapshot_is_fixed_read_only(monkeypatch):
     module = load("claude-agent")
     calls = []
