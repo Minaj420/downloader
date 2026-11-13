@@ -4,6 +4,10 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-11-13.
 
 ## Şu an
 
+- WF — Kullanıcı remote okuma, yalnız reconcile/conversion push (ask), gh PR list/view
+  ve PR create (ask) izinlerini ekledi; lead config yazmadı. Bu izinler ayrı commit kapsamında.
+  Kullanıcı OpenCode restart bildirdi; lead fetch ve remote okuma başarılı. Bu kayıt
+  kalıcı tazelik kanıtı değildir; tüm izin eşleşmeleri/canlı deny davranışı doğrulanmadı.
 - WF — Komut bakımı bootstrap TAMAMLANDI; tek seferlik istisna TÜKETİLDİ/KAPALI.
   `implement --maintain-commands` yalnız mevcut continue.md/oturumabasla.md gövdelerine
   dar Edit izni verir; Bash/Write/test/resume yok. Rol/resume yanlış kullanımı provider ve
@@ -63,12 +67,13 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-11-13.
 ## Sıradaki iş
 
 - lead.md kullanıcı temizliği tamam; iki dar fetch allow satırı korunarak STATE ile ayrı
-  commit kapsamına alındı. Push/PR bu kapanışın dışında.
-- OpenCode'u bir kez yeniden başlatıp `/oturumabasla` ile tek fetch/dal kontrolü/rapor
-  davranışını yeni oturumda canlı doğrula; mevcut runtime reload olmuş sayılmaz.
-  Eski bootstrap istisnası kullanılmaz; slash kontrolü henüz canlı doğrulanmış değil.
-- Önce uzlaştırma dalını kullanıcıyla ana akışa alma/push kararı; eski ayrışmış `main` üzerinden
-  geliştirmeye dönme. Yedek dal korunmalı, force push veya geçmiş değişikliği yapılmamalı.
+  commit kapsamına alındı. Önceki fetch izin kapanışında push/PR kapsam dışıydı.
+- Kullanıcı restart bildirdi; başlangıç fetch/dal kontrolü çalıştı. Slash komutunun yüklenmesi
+  ve tüm izin sınırları ayrıca kanıtlanmış sayılmaz. Eski bootstrap istisnası kullanılmaz.
+- Kullanıcı reconcile/conversion push ve main hedefli PR açılmasını açıkça onayladı;
+  merge yasak. Önce izin commit'i, ardından dalın bütün farkını incele ve push/PR yap.
+- Push/PR onaylı, merge kararı ayrı; eski ayrışmış `main` üzerinden geliştirmeye dönme.
+  Yedek dal korunmalı, force push veya geçmiş değişikliği yapılmamalı.
 - M6 — Metadata ve Adlandırma → M6.5 — Metadata/etiket pipeline bağlantısı:
   önce Opus görüşüyle küçük kapsama böl; Original Opus remux ve fallback sınırlarını netleştir.
 - Sonra M6.6 müzik yolları/katalog → M6.7 kaynak kapak → M6.8 önizleme/düzenleme →
@@ -116,9 +121,17 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-11-13.
   lead.md içindeki eski bootstrap referansı ayrı kullanıcı bakımında değerlendirilmeli.
 - should-fix: mevcut geniş git diff/log izinleri --output seçeneğini teknik olarak dışlamıyor;
   ayrı kullanıcı config bakımında değerlendirilmeli; lead yalnız izinli salt-okunur biçimleri kullanır.
+- should-fix: gh PR wildcard izinleri repo/hedef/body-file sınırını teknik olarak sağlamaz;
+  bu işte açık repo/base/head ve düz metin body kullanılır; shell yönlendirme yok.
+- Accepted: reconcile/conversion upstream'i origin/main; hedefli push bunu değiştirmez.
+  Push sonrası main'e göre ahead, tek başına pushlanmamış commit anlamına gelmez.
+  Çıplak git push kullanılmaz; yalnız git push origin reconcile/conversion.
 
 ## Son gate
 
+- 2026-11-13 Fedora, WF kullanıcı push/PR izinleri: Opus görüşü, bağımsız GPT ve Opus
+  güvenlik review must-fix yok; Opus family eşleşti, izin reddi yok. GPT diff --check PASS.
+  Uygulama testi/full gate yok; ask/deny eşleşmelerinin tamamı canlı doğrulanmadı.
 - 2026-11-13 Fedora, WF dar fetch izin kapanışı: kullanıcı lead.md temizliğini yaptı;
   diff yalnız iki tam fetch allow satırı. Opus görüşü, bağımsız GPT ve salt-okunur Opus
   güvenlik incelemesi must-fix yok; Opus family eşleşti, izin reddi yok.

@@ -43,6 +43,11 @@ permission:
     "git add -- *": allow
     "git commit -m *": allow
     "git push": ask
+    "git remote -v": allow
+    "git push origin reconcile/conversion": ask
+    "gh pr list *": allow
+    "gh pr view *": allow
+    "gh pr create *": ask
     "git commit *--amend*": deny
 ---
 
