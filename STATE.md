@@ -13,8 +13,8 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-11-13.
   Frontmatter/gövde kapsamı prompt ve bağımsız diff review şartıdır, teknik alan-sınırı garantisi değil.
   Sonraki ayrı onaylı komut bakımında iki izinli dosyanın canlı Edit'i başarılı oldu;
   canlı deny/yol dışı reddi sınanmadı. Fake CLI testleri teknik sandbox kanıtı değil.
-  lead.md bootstrap bölümü fiziksel silme kullanıcıda; bölüm dururken scripts/test/WORKFLOW
-  için tek seferlik Opus istisnası tekrar kullanılmaz. Ajan tanımı/komut frontmatter'ı değiştirilmedi.
+  lead.md bootstrap bölümü mevcut dosyada yok; kullanıcı sondaki whitespace satırını da kaldırdı.
+  scripts/test/WORKFLOW için tek seferlik Opus istisnası tekrar kullanılmaz.
 - WF — Dar fetch komut gövdesi uyumu tamamlandı: kullanıcı lead.md'ye yalnız `git fetch origin` ve
   `git fetch --verbose origin` allow ekledi; lead diff'i doğruladı. Sonnet docs/WORKFLOW.md'yi
   lead fetch akışına güncelledi; `.opencode/commands/oturumabasla.md` ve `continue.md` Edit
@@ -24,8 +24,8 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-11-13.
   Frontmatter ve ARGUMENTS korundu; tek lead fetch, dal kontrolü, hata/ret/no retry sınırları
   WORKFLOW ile uyumlu. GPT review must-fix yok, düzeltme turu gerekmedi.
   Önceki fetch WORKFLOW hunk'ları bootstrap belgesiyle korunarak
-  aynı commit kapsamına alındı, GPT/Opus statik incelemesinden geçti. lead.md fetch allow satırları
-  kullanıcının commit edilmemiş değişikliğidir; WORKFLOW fetch akışı bu izinlere dayanır.
+  aynı commit kapsamına alındı, GPT/Opus statik incelemesinden geçti. Kullanıcının lead.md fetch
+  allow satırları bu kapanışın commit kapsamındadır; yalnız iki tam fetch komutu, wildcard yok.
   Önceki bootstrap çağrısında tek lead fetch başarıyla çalıştı; başlangıç slash kapısı
   yeni gövdeler yüklenince canlı doğrulanacak, şu an doğrulanmış sayılmıyor.
 - WF — Oturum başlangıcı: `/oturumabasla` salt-okunur Git/devam noktası raporu eklendi;
@@ -62,11 +62,10 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-11-13.
 
 ## Sıradaki iş
 
-- Kullanıcı lead.md sonundaki TÜKETİLMİŞ bootstrap bölümünü ve önündeki whitespace satırını
-  kaldırmalı; iki dar fetch allow satırı korunmalı. Kullanıcı dosyası bootstrap commitine katılmadı.
-- İki komut gövdesi artık uyumlu. Kullanıcı lead dosyası temizliği sonrası dar fetch izin
-  diff'ini ayrı incele/commit et; user dosyası hâlâ commit dışında. Ardından OpenCode'u bir kez
-  yeniden başlatıp `/oturumabasla` ile tek fetch/dal kontrolü/rapor davranışını canlı doğrula.
+- lead.md kullanıcı temizliği tamam; iki dar fetch allow satırı korunarak STATE ile ayrı
+  commit kapsamına alındı. Push/PR bu kapanışın dışında.
+- OpenCode'u bir kez yeniden başlatıp `/oturumabasla` ile tek fetch/dal kontrolü/rapor
+  davranışını yeni oturumda canlı doğrula; mevcut runtime reload olmuş sayılmaz.
   Eski bootstrap istisnası kullanılmaz; slash kontrolü henüz canlı doğrulanmış değil.
 - Önce uzlaştırma dalını kullanıcıyla ana akışa alma/push kararı; eski ayrışmış `main` üzerinden
   geliştirmeye dönme. Yedek dal korunmalı, force push veya geçmiş değişikliği yapılmamalı.
@@ -113,9 +112,18 @@ Güncel özet; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-11-13.
   restart/model reload ve farklı-rol resume izolasyonu kanıtlanmadı.
 - should-fix: Claude-only `/devam-claude` skill'inde STATE mod işaretinden önce yeni başlangıç
   kapısına açık yönlendirme ayrı kapsam; bu işte skill/izin dosyaları değiştirilmedi.
+- should-fix: WORKFLOW'daki runtime fetch denenmedi ifadesi tarihsel kayıtla uyumsuz;
+  lead.md içindeki eski bootstrap referansı ayrı kullanıcı bakımında değerlendirilmeli.
+- should-fix: mevcut geniş git diff/log izinleri --output seçeneğini teknik olarak dışlamıyor;
+  ayrı kullanıcı config bakımında değerlendirilmeli; lead yalnız izinli salt-okunur biçimleri kullanır.
 
 ## Son gate
 
+- 2026-11-13 Fedora, WF dar fetch izin kapanışı: kullanıcı lead.md temizliğini yaptı;
+  diff yalnız iki tam fetch allow satırı. Opus görüşü, bağımsız GPT ve salt-okunur Opus
+  güvenlik incelemesi must-fix yok; Opus family eşleşti, izin reddi yok.
+  GPT hedefli diff --check PASS. Uygulama testleri/full gate çalıştırılmadı;
+  yeni oturum slash davranışı ve canlı izin reddi kapsamı doğrulanmadı.
 - 2026-11-13 Fedora, WF komut bakımı: Opus requested/observed family eşleşti, başarı ve
   permission_denials=false; canlı init tools yalnız Edit/Glob/Grep/Read, dontAsk, MCP/skills/
   slash boş. İki gövde Edit'i başarılı, frontmatter/ARGUMENTS korunmuş; GPT review ve lead scoped

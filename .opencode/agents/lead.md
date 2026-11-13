@@ -26,6 +26,8 @@ permission:
     "git diff*": allow
     "git log*": allow
     "git show*": allow
+    "git fetch origin": allow
+    "git fetch --verbose origin": allow
     "git branch --show-current": allow
     "scripts/claude-review.sh": allow
     "scripts/claude-review.sh *": allow
