@@ -65,12 +65,13 @@ Only run commands that are actually configured in the repository; report clearly
 
 - Inspect `git status` before making changes; do not overwrite unrelated user changes.
 - Read-only commands (`status`, `diff`, `log`, `show`, `fetch`) and non-destructive branch switches (`switch`/`checkout` to change branches) are normal workflow operations when the task and permissions call for them.
-- The orchestrator (`lead` in OpenCode `/continue`; Claude `/devam` is obsolete) commits each task automatically once it has passed review and its checks unless the task forbids it: stage only that task's files one by one (never `git add .`/`-A`), one commit per task, message describing the behaviour change. Worker agents never commit or edit STATE.md.
+- The orchestrator (`lead` in OpenCode `/continue`; Claude `/devam` is obsolete) commits each task automatically once it has passed review and its checks unless the task forbids it: stage only files actually changed by the task one by one (never `git add .`/`-A`), one commit per task with `git commit -m <title> -m <body>`; title `type(task-code): description`, short body per `docs/WORKFLOW.md`. Update `STATE.md` only when the real continuation state changes (see WORKFLOW). Worker agents never commit or edit STATE.md.
 - Never push unless the user explicitly asks.
 - Never run destructive or history-rewriting operations (`reset --hard`, file-deleting `clean`, force push, change-discarding `restore`, `rebase`, `commit --amend`, or any history rewrite) without an explicit user request.
 
 ## Communication
 
 - Respond to the user in Turkish unless explicitly asked to use another language.
+- Report progress and the next task with the milestone number/name, sub-task code and a short description.
 - When starting a task, briefly state what you found, what you intend to change, and any key assumption.
 - When finished, report files changed, behaviour implemented, checks actually run (with results), and any remaining issue or follow-up.

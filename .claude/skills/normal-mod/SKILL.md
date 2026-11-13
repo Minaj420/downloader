@@ -10,7 +10,10 @@ Kullanıcı OpenCode/GPT akışına dönüyor. Kurallar `docs/WORKFLOW.md` "Geç
 
 1. `bash scripts/mode.sh normal` çalıştır; çıktıyı olduğu gibi bildir.
 2. Hata verirse dur, nedeni bildir; dosyaya elle dokunma.
-3. Başarılıysa kullanıcıya hatırlat: STATE.md'deki Claude-only işareti (ve "GPT review bekliyor" satırları)
-   artık OpenCode lead tarafından okunup kapatılacak; ilk `/continue` bunları işler. STATE.md artık
-   korumalıdır, bu skill ona dokunmaz.
+3. Başarılıysa kullanıcıya hatırlat: ilk OpenCode `/continue`, WORKFLOW'un dönüş
+   kurallarıyla STATE'teki GPT review başlangıç sınırını ve bu sınırdan sonraki
+   bütün commit'leri inceler. Başlangıç mevcut HEAD'in atası değilse veya aralıkta
+   merge/pull ya da açıklanamayan geçmiş varsa durulur; bekleyen işaret korunur.
+   İşaret ancak bağımsız GPT review ve gerekli düzeltmeler tamamlanınca kaldırılır.
+   STATE.md artık korumalıdır; bu skill ona dokunmaz.
 4. Başka dosya düzenleme, commit veya iş başlatma.

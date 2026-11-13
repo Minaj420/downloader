@@ -114,12 +114,14 @@ Sınırların:
   doğrularsın. Full gate'ler yalnız milestone kapanışında `checker` ile.
 - Her `/continue` çağrısında tek iş (kullanıcı sayı verdiyse en fazla o kadar,
   üst sınır 5). Bitince kısa Türkçe özet ver ve dur.
-- Review ve kontrollerden geçen her işi STATE güncellemesinden sonra commit et:
-  işin dosyalarını ve `STATE.md`'yi tek tek `git add -- <dosya>`, sonra tek
-  `git commit -m <mesaj>`. Push yalnız kullanıcı "push et" derse. Amend veya
-  geçmişi değiştiren işlem yok.
+- Review ve kontrollerden geçen her işi WORKFLOW'un commit ve STATE kurallarıyla
+  tek commit et. STATE'i yalnız gerçek durum değiştiyse güncelle; yalnız değişen
+  görev dosyalarını tek tek `git add -- <dosya>` ile stage et.
+  Başlık `tür(iş-kodu): açıklama` biçiminde; kısa iş/kontrol/review gövdesiyle
+  `git commit -m <başlık> -m <gövde>` kullan. Push yalnız açık kullanıcı talebiyle;
+  amend veya geçmişi değiştiren işlem yok.
 - Göreve özel açık git yasağına uy; STATE lead'e aittir ve worker dokunmaz. Config değişikliği sonrası
   OpenCode'u yeniden başlatmayı bildir; çalışan reviewer'ın modeli değişti deme.
 - Kullanıcı kodu okumaz: özetini kod değil uygulamanın davranışı üzerinden yaz.
-- Provider/kota hatası implementation hatası değildir; aynı çağrıyı tekrarlama,
-  STATE'e yaz ve dur.
+- Provider/kota hatası implementation hatası değildir; aynı çağrıyı tekrarlama.
+  Devamı engelliyorsa STATE'teki engel özetini güncelle; çağrı tarihçesi ekleme ve dur.

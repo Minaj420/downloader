@@ -99,7 +99,7 @@ yapılır. Rapor dal/HEAD, uzak karşılaştırma, milestone/alt iş ve sıradak
 "Oturum doğrulandı" yalnız Git/devam noktası doğrulamasıdır; güncel test/gate, runtime,
 Claude giriş/kota veya her makinedeki bağımlılıkların hazır olduğu iddiası değildir.
 Yeni komut ve yeni lead izinleri ancak OpenCode yeniden başlatılınca yüklenir; mevcut oturum
-reload olmuş sayılmaz ve bu uygulamada runtime fetch denenmemiştir.
+reload olmuş sayılmaz.
 
 ## Döngü
 
@@ -133,9 +133,17 @@ reload olmuş sayılmaz ve bu uygulamada runtime fetch denenmemiştir.
    **En fazla bir review düzeltme turu**, mümkünse aynı Claude session; lead bu
    politikayı yönetir, adapter tur saymaz. Must-fix sürerse dur.
 7. Lead yalnız hedefli kontrolleri kendi yeniden çalıştırır; worker PASS raporu yetmez.
-8. Lead STATE'i günceller; review ve kontrollerden geçen her işi otomatik commit eder:
-   yalnız görev dosyaları ve STATE tek tek stage, tek davranış commit'i. Göreve özel
-   açık git yasağına uyulur. Worker stage/commit yapmaz. Push yalnız açık kullanıcı talebiyle.
+8. STATE yalnız gerçek devam durumu değişince güncellenir. Review ve kontrollerden geçen iş
+   tek otomatik commit olur: görevde gerçekten değişen dosyalar (STATE değiştiyse o da) tek tek
+   stage edilir; worker STATE/git yazmaz. Göreve özel açık git yasağına uyulur.
+   Komut: `git commit -m <başlık> -m <gövde>`. Başlık `tür(iş-kodu): açıklama`
+   (örn. `feat(M6.5a): ...`, `chore(WF-S1): ...`). Gövde kısa olur: milestone/alt iş,
+   davranış ve gerekçe; gerçekten yapılan kontrol/sonuç ve atlanan önemli kontrol; review ve
+   kalan önemli sınır. Gerekli requested/observed model doğrulama ayrıntısı da burada yazılır,
+   STATE'te değil; ham çıktı/log/session kimliği yazılmaz. Sırf kendi hash'ini kaydetmek veya
+   biten işi tekrar anlatmak için STATE-only commit yoktur; gerçek karar/engel/review veya gate
+   kapanışı için olabilir. Amend/history rewrite yok, eski commit'ler değişmez.
+   Push yalnız açık kullanıcı talebiyle.
 
 Kota/provider/kimlik hatasında tekrar veya sessiz model fallback yok. İzin reddini
 başka rol/yolla aşma. Kapsam dışı ihtiyaç, beklenmeyen git değişikliği, etkileşimli
@@ -264,9 +272,9 @@ doğrulanmış iddia edilmez. Server/tmux/ek altyapı yoktur.
   dışını reddettiği için genel `.opencode` yazma açılmaz. Bu iki gövde, kalıcı ajan config
   yasağının kullanıcı onaylı dar istisnasıdır; ajan tanımları, komut frontmatter'ı ve diğer
   config yasak kalır. Bu izinler de OS sandbox değildir.
-- Bakım seçeneğini ekleyen bootstrap tek seferliktir: kapanınca scripts/test/WORKFLOW
-  için verilen bootstrap izni tekrar kullanılamaz; lead STATE'e tüketildiğini yazar,
-  kullanıcı lead.md istisnasını kaldırır.
+- Bakım seçeneğini ekleyen tek seferlik bootstrap tamamlandı; izni tüketildi/KAPALI.
+  scripts/test/WORKFLOW için bootstrap izni yeniden kullanılamaz; lead.md içindeki eski
+  bu bootstrap ifadesi yeni izin vermez.
 - **Tool izinleri OS sandbox değildir.** İzinli dosya listesi lead'in açık prompt
   sınırıdır; dosya bazında teknik enforcement yoktur. Testler/config keyfi kod
   çalıştırabilir ve yan dosya yazabilir; Bash pattern'leri mutlak güvenlik garantisi
@@ -298,16 +306,26 @@ tarafından çağrılır; model bu geçişi kendiliğinden başlatmaz. Ardından
 
 **Roller.** lead: Claude Code ana oturumu. danışman ve implementer: değişmez (adapter, Opus/Sonnet).
 reviewer: Sonnet kodunu Opus `scripts/claude-review.sh` ile inceler; **Opus kodu bu modda
-review edilmez**, STATE'e "GPT review bekliyor" yazılır. Luna/checker yoktur; lead hedefli kontrolleri
+review edilmez**, commit gövdesinde "GPT review bekliyor" yazılır ve kullanıcıya bildirilir.
+STATE'te iş başına review/hash listesi yok. Luna/checker yoktur; lead hedefli kontrolleri
 ve milestone gate'lerini kendisi çalıştırır. Diğer tüm kurallar (Opus görüşü, tek yazıcı, bir review
 düzeltme turu, “Uygulayıcı: ...” duyurusu, otomatik commit, push yalnız kullanıcı) aynen geçerlidir.
 
-**STATE işareti.** `Şu an` bölümünde `Mod: Claude-only (<tarih>); commit'ler: <hash>, ...` ve
-bekleyen GPT review satırları. Yalnız lead yazar.
+**STATE işareti.** İlk gerçek işten önce mevcut HEAD'in tam SHA'sı tek başlangıç sınırıdır;
+`Şu an` bölümünde ilk gerçek işle aynı commit'te mevcut Mod satırının YERİNE
+`Mod: Claude-only; GPT review başlangıcı: <SHA>` yazılır; `<SHA>` yalnız tam 40 hex commit
+kimliğidir. Bekleyen review başlangıcı varsa her durumda korunur, yeniden girişte sıfırlanmaz. İş yoksa yalnız işaret
+için commit yoktur; commit sonrası kendi hash'i yazılmaz. İşaret mod izni veya tazelik
+sertifikası değildir. Yalnız lead yazar.
 
 **Dönüş.** Kullanıcı `/normal-mod` yazar (`bash scripts/mode.sh normal`); STATE yasağı geri gelir.
-Sonraki ilk OpenCode `/continue`'da lead mod işaretini okur, o commit'leri GPT reviewer'a
-inceletir (bekleyen Opus-kodu review'ları dahil), bulguları normal sınıflara göre işler ve işareti kaldırır.
+Sonraki ilk OpenCode `/continue`'da lead başlangıç sınırının mevcut HEAD'in atası olduğunu izinli
+git log/show ile doğrular (kısa SHA, dal/etiket adı veya başka seçenek kabul edilmez): salt `git log <sha>..HEAD` başarısı atalık kanıtı değildir; tam SHA
+HEAD geçmişinde bulunmalıdır. Aralıkta merge/pull veya açıklanamayan geçmiş varsa dur, işareti koru.
+Sınırdan sonraki bütün commit'ler (Sonnet/Opus dahil) bağımsız GPT review'a girer; bulgular normal
+sınıflara göre işlenir. Temiz review ve gerekli düzeltmelerin doğrulaması bitmeden işaret kalkmaz;
+review eksik veya must-fix varsa başlangıç korunur. İşareti kaldırmak gerçek STATE-only kapanış
+commit'i olabilir.
 
 ## Gate ve STATE
 
@@ -315,7 +333,15 @@ Küçük işlerde yalnız görevdeki hedefli kontroller. Milestone kapanışınd
 backend `.venv/bin/ruff check .`, `.venv/bin/mypy app tests`, `.venv/bin/pytest`;
 frontend `npm run lint`, `npm run typecheck`, `npm test`, `npm run build`,
 `npm run check:contrast`. Her biri kendi backend/frontend çalışma dizininde.
-Sonuç STATE'e tarih + makine ile; kaynak değişince önceki gate bayattır.
-STATE üstüne yazılan yaklaşık 60 satırlık durumdur, journal değildir; log/task/session
-kimliği ve ham çıktı içermez. Bölümler: Şu an, Sıradaki iş, Açık kararlar, Açık bulgular,
-Son gate, Bilinen riskler, Sonraki fazlar. Yalnız lead yazar.
+Uygulama gate komutları aynen geçerlidir; yalnız belge işi uygulama gate'i gerektirmez.
+
+STATE kısa, tek kaynaklı aktif durumdur: hedef ~60, kapanış üst sınırı 80 fiziksel satır.
+İçerik yalnız: aktif durum/devam noktası, sıradaki bounded iş, gerçekten açık karar/engel,
+çözülmemiş bulgu ve hâlâ geçerli kısa risk, en son ilgili gate özeti. Eski sonuçlara ekleme
+değil yerine yazılır; gate özeti tarih + makine/sınır taşır ve kaynak değişince bayattır.
+İş geçmişi commit gövdesindedir; onaylı kalıcı karar yetkili spec/mimaride, kalıcı iletişim
+tercihi AGENTS'te durur; git status, probe listesi, hash eşlemeleri, log/session kimliği ve ham
+çıktı STATE'te yoktur. İş kodu görev/session kimliği değildir; STATE aktif iş için kullanabilir.
+Lead ve bağımsız reviewer her kapanışta STATE'i Read ile satır sayısı ve güncelliği için
+kontrol eder; sığmazsa canlı bulguyu silmek veya dev satıra sıkıştırmak yerine sınıflandırma/karar
+için dur. Yeni journal/backlog/history dosyası ve kalıcı sayaç yoktur. Yalnız lead yazar.
