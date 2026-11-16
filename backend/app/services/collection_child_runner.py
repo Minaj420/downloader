@@ -27,7 +27,8 @@ from app.domain.jobs import (
 from app.domain.platforms import detect_platform
 from app.integrations.ffmpeg import FFmpegError, FFmpegProcessor
 from app.integrations.ytdlp import DownloadProgress, YtDlpAnalyzer, YtDlpDownloader, YtDlpError
-from app.models.jobs import DownloadJob, JobItem
+from app.models.jobs import ActivityEvent, DownloadJob, JobItem
+from app.repositories import activity
 from app.services.collection_persistence import (
     stage_child_completion,
     stage_child_progress,
@@ -35,8 +36,13 @@ from app.services.collection_persistence import (
 )
 from app.services.collection_profile_resolver import resolve_native_child
 from app.services.conversion_plan import plan_conversion, resolve_output_profile
-from app.services.job_runner import _FFMPEG_KIND_TO_JOB_CODE, _YT_DLP_KIND_TO_JOB_CODE
-from app.services.prepared_media import prepare_media
+from app.services.job_runner import (
+    _FFMPEG_KIND_TO_JOB_CODE,
+    _REMUX_FALLBACK_SAVED,
+    _REMUX_FALLBACK_SKIPPED,
+    _YT_DLP_KIND_TO_JOB_CODE,
+)
+from app.services.prepared_media import OriginalRemux, prepare_media
 from app.services.storage_service import PlacementCancelled, StorageService
 
 
@@ -80,17 +86,20 @@ class ChildRunnerDeps:
 async def run_collection_child(
     job_id: str, owner_id: str, child_id: str, *, deps: ChildRunnerDeps,
     cancel_event: asyncio.Event, processes: dict[str, asyncio.subprocess.Process],
-    cancel_gate: threading.Lock,
+    cancel_gate: threading.Lock, committed_activities: list[ActivityEvent] | None = None,
 ) -> ChildResult:
     """Claim persisted eligibility before probing; commit each staged transaction.
 
     The owned task receives cancellation once, even when the caller repeatedly
     cancels while adapters reap subprocesses. Parent event cancellation also
     interrupts a blocked probe/download/merge, including spawn registration races.
-    No SSE events are emitted by this internal boundary.
+    No SSE events are emitted by this internal boundary. ``committed_activities``
+    is a per-call caller-owned sink: an Activity row is appended only right
+    after its transaction committed, so the caller may publish it even when
+    this call later raises (e.g. cancellation or cleanup failure).
     """
     execution = _ChildExecution(job_id, owner_id, child_id, deps, cancel_event,
-                                processes, cancel_gate)
+                                processes, cancel_gate, committed_activities)
     task = asyncio.create_task(execution.run())
     cancel_task: asyncio.Task[None] | None = None
 
@@ -163,10 +172,12 @@ async def run_collection_child(
 class _ChildExecution:
     def __init__(self, job_id: str, owner_id: str, child_id: str, deps: ChildRunnerDeps,
                  cancel_event: asyncio.Event, processes: dict[str, asyncio.subprocess.Process],
-                 cancel_gate: threading.Lock) -> None:
+                 cancel_gate: threading.Lock,
+                 committed_activities: list[ActivityEvent] | None = None) -> None:
         self.job_id, self.owner_id, self.child_id = job_id, owner_id, child_id
         self.deps, self.cancel_event = deps, cancel_event
         self.processes, self.cancel_gate = processes, cancel_gate
+        self.committed_activities = committed_activities
         self.stopped = threading.Event()
         self.cancel_pending = False
         self.process: asyncio.subprocess.Process | None = None
@@ -260,12 +271,21 @@ class _ChildExecution:
             async def before_merge() -> None:
                 await self.transition(JobStatus.POST_PROCESSING)
 
+            # Only recorded here; the warning is written with the completion
+            # transaction so a rolled back or lost completion leaves none.
+            remux_fallback = False
+
+            def record_remux_fallback() -> None:
+                nonlocal remux_fallback
+                remux_fallback = True
+
             media = await prepare_media(
                 selected=plan.selected, companion=plan.companion, source_url=child.source_url,
                 staging_key=child.id, storage=self.deps.storage, downloader=self.deps.downloader,
                 ffmpeg=self.deps.ffmpeg, check_cancelled=self.check,
                 on_process_started=self.register, progress_forwarder=self.forwarder,
                 before_merge=before_merge, child_output=True, output=output,
+                original_remux=OriginalRemux(before_merge, record_remux_fallback),
             )
             await self.transition(JobStatus.FINALIZING)
             # Storage owns the shielded thread drain. Signal cancellation through
@@ -292,13 +312,33 @@ class _ChildExecution:
             duration_seconds = _safe_duration_seconds(source.get("duration"))
             platform = detect_platform(source, child.source_url).value
             async with self.deps.session_factory() as session:
-                if not await stage_child_completion(
-                    session, self.deps.storage, job_id=self.job_id, owner_id=self.owner_id,
-                    child_id=child.id, selected=plan.selected, placement=placement,
-                    duration_seconds=duration_seconds, platform=platform, plan=conversion,
-                ):
-                    raise _LostClaim
-                await session.commit()
+                try:
+                    if not await stage_child_completion(
+                        session, self.deps.storage, job_id=self.job_id,
+                        owner_id=self.owner_id, child_id=child.id, selected=plan.selected,
+                        placement=placement, duration_seconds=duration_seconds,
+                        platform=platform, plan=conversion,
+                    ):
+                        raise _LostClaim
+                    warning = None
+                    if remux_fallback:
+                        # Fixed shared text only; the child link lives in details.
+                        warning = await activity.add_activity_event(
+                            session, job_id=self.job_id, level="warning", event_type="job",
+                            message=(_REMUX_FALLBACK_SKIPPED if placement.skipped_existing
+                                     else _REMUX_FALLBACK_SAVED),
+                            details={"child_id": child.id},
+                        )
+                    await session.commit()
+                except BaseException:
+                    # Persistence contract: a failed COMMIT leaves the SQLite
+                    # transaction open; roll back the whole unit explicitly.
+                    await session.rollback()
+                    raise
+                # Committed facts only: the caller publishes this sink even if
+                # session close or a later step raises/cancels.
+                if warning is not None and self.committed_activities is not None:
+                    self.committed_activities.append(warning)
             self.deps.storage.remove_staging(child.id)
             return ChildResult.COMPLETED
         except _LostClaim:

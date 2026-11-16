@@ -9,13 +9,25 @@ from typing import Any, cast
 import pytest
 from sqlalchemy import select, update
 
-from app.domain.jobs import JobError, JobErrorCode
-from app.integrations.ffmpeg import ConversionProfile, FFmpegProcessor
+from app.domain.jobs import JobError, JobErrorCode, JobStatus
+from app.integrations.ffmpeg import (
+    ConversionProfile,
+    FFmpegError,
+    FFmpegFailureCause,
+    FFmpegFailureKind,
+    FFmpegProcessor,
+)
 from app.integrations.ytdlp import DownloadProgress, YtDlpAnalyzer, YtDlpDownloader
-from app.models.jobs import DownloadJob, JobItem
+from app.models.jobs import ActivityEvent, DownloadJob, JobItem
 from app.models.library import LibraryItem, MediaFile
 from app.repositories import jobs
+from app.services import collection_child_runner as child_runner
 from app.services.collection_child_runner import ChildResult, ChildRunnerDeps, run_collection_child
+from app.services.collection_persistence import (
+    CollectionCancelRequestOutcome,
+    stage_collection_cancel_request,
+)
+from app.services.job_runner import _REMUX_FALLBACK_SAVED, _REMUX_FALLBACK_SKIPPED
 from app.services.storage_service import StorageService
 from tests.test_collection_repository import child, factory, parent
 from tests.test_prepared_media import source
@@ -43,6 +55,8 @@ class Adapters(YtDlpAnalyzer, YtDlpDownloader, FFmpegProcessor):
         self.after_probe: Any = None
         self.on_convert: Any = None
         self.conversions: list[tuple[str, str, str, bool, bool]] = []
+        self.download_ext = "mp4"
+        self.convert_error: BaseException | None = None
 
     async def step(self, name: str) -> None:
         self.calls.append(name)
@@ -74,7 +88,7 @@ class Adapters(YtDlpAnalyzer, YtDlpDownloader, FFmpegProcessor):
         self.callbacks.append(kwargs["on_progress"])
         kwargs["on_progress"](DownloadProgress(3, 10, None, 8, 2))
         await self.step(kwargs["format_selector"])
-        path = Path(kwargs["output_template"].replace("%(ext)s", "mp4"))
+        path = Path(kwargs["output_template"].replace("%(ext)s", self.download_ext))
         path.write_bytes(b"media")
         return [str(path)]
 
@@ -99,6 +113,8 @@ class Adapters(YtDlpAnalyzer, YtDlpDownloader, FFmpegProcessor):
         await self.step("convert")
         if self.on_convert:
             await self.on_convert()
+        if self.convert_error is not None:
+            raise self.convert_error
         output_path.write_bytes(b"converted:" + input_path.read_bytes())
 
 
@@ -115,20 +131,27 @@ class Harness:
         self.gate = threading.Lock()
 
     async def seed(self, mode: str = "video", height: int | None = None,
-                   **values: Any) -> None:
+                   output: str | None = None, **values: Any) -> None:
         async with self.sessions() as session:
             await jobs.stage_collection_job(session, parent(
-                    status="analyzing", collection_mode=mode,
+                    status="analyzing", collection_mode=mode, output_profile=output,
                     collection_profile_json=json.dumps({"max_height": height}),
                     variant_id="NOT-A-CHILD-SELECTOR",
                 ), [child(2, title="Track", **values), child(9, status="failed")], owner_id="owner")
             await session.commit()
 
-    async def run(self, owner_id: str = "owner", child_id: str = "child-2") -> ChildResult:
+    async def run(self, owner_id: str = "owner", child_id: str = "child-2",
+                  committed: list[ActivityEvent] | None = None) -> ChildResult:
         return await run_collection_child(
             "parent", owner_id, child_id, deps=self.deps, cancel_event=self.adapters.cancel,
-            processes=self.processes, cancel_gate=self.gate,
+            processes=self.processes, cancel_gate=self.gate, committed_activities=committed,
         )
+
+    async def warnings(self) -> list[ActivityEvent]:
+        async with self.sessions() as session:
+            return list((await session.scalars(
+                select(ActivityEvent).where(ActivityEvent.level == "warning")
+                .order_by(ActivityEvent.id))).all())
 
     async def facts(self) -> tuple[Any, ...]:
         async with self.sessions() as session:
@@ -515,5 +538,299 @@ async def test_finalization_never_lies(tmp_path: Path, monkeypatch: pytest.Monke
         facts = await h.facts()
         assert facts[0] != "completed" and facts[2] == 0 and facts[4] == 0
         assert facts[5] is None and facts[6] == []
+    finally:
+        await h.engine.dispose()
+
+
+# --- M6.5c Collection Original WebM/Opus remux ---------------------------------------
+
+
+def opus_source() -> dict[str, Any]:
+    return {"formats": [{"format_id": "opus", "ext": "webm", "vcodec": "none",
+                         "acodec": "opus", "abr": 160}]}
+
+
+def exit_status() -> FFmpegError:
+    # Raw detail stands in for stderr/paths that must never reach Activity.
+    return FFmpegError(FFmpegFailureKind.FAILED, "stderr /private/staging/media.webm",
+                       cause=FFmpegFailureCause.EXIT_STATUS)
+
+
+def original_opus(h: Harness, error: BaseException | None = None) -> None:
+    h.adapters.source = opus_source()
+    h.adapters.download_ext = "webm"
+    h.adapters.convert_error = error
+
+
+def record_transitions(monkeypatch: pytest.MonkeyPatch) -> list[JobStatus]:
+    seen: list[JobStatus] = []
+    real = child_runner.stage_child_transition
+
+    async def recording(session: Any, **kwargs: Any) -> bool:
+        won = await real(session, **kwargs)
+        if won:
+            seen.append(kwargs["status"])
+        return won
+
+    monkeypatch.setattr(child_runner, "stage_child_transition", recording)
+    return seen
+
+
+def published_files(h: Harness) -> list[Path]:
+    return sorted(p for p in h.storage.library_root.rglob("*") if p.is_file())
+
+
+@pytest.mark.anyio
+async def test_original_opus_child_remuxes_losslessly_without_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    h = Harness(tmp_path)
+    try:
+        await h.seed("audio")
+        original_opus(h)
+        transitions = record_transitions(monkeypatch)
+        committed: list[ActivityEvent] = []
+        assert await h.run(committed=committed) == ChildResult.COMPLETED
+        assert h.adapters.calls == ["probe", "opus", "convert"]
+        assert transitions == [JobStatus.ANALYZING, JobStatus.DOWNLOADING,
+                               JobStatus.POST_PROCESSING, JobStatus.FINALIZING]
+        [(source_name, output_name, profile, copy_audio, copy_video)] = h.adapters.conversions
+        assert (source_name, profile, copy_audio, copy_video) == ("media.webm", "opus", True,
+                                                                  False)
+        assert output_name.startswith("remuxed-") and output_name.endswith(".opus")
+        facts = await h.facts()
+        assert facts[:5] == ("completed", "analyzing", 1, 1, 50)
+        item, copies = facts[5:]
+        # Lossless copy: source codec and bitrate stay real facts.
+        assert (item.format, item.codec, item.bitrate) == ("opus", "opus", 160)
+        assert [c.path for c in copies] == ["audio/Track.opus"]
+        assert (h.storage.library_root / "audio" / "Track.opus").read_bytes() == (
+            b"converted:media")
+        assert committed == [] and await h.warnings() == []
+        assert not h.processes and not (tmp_path / "staging" / "child-2").exists()
+    finally:
+        await h.engine.dispose()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("existing", [False, True], ids=["saved", "skip_existing"])
+async def test_exit_status_publishes_original_webm_with_one_committed_warning(
+    tmp_path: Path, existing: bool,
+) -> None:
+    h = Harness(tmp_path)
+    try:
+        await h.seed("audio")
+        original_opus(h, exit_status())
+        target = h.storage.library_root / "audio" / "Track.webm"
+        if existing:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(b"older")
+        committed: list[ActivityEvent] = []
+        assert await h.run(committed=committed) == ChildResult.COMPLETED
+        assert h.adapters.calls == ["probe", "opus", "convert"]
+        assert target.read_bytes() == (b"older" if existing else b"media")
+        facts = await h.facts()
+        assert facts[:5] == ("completed", "analyzing", 1, 1, 50)
+        item, copies = facts[5:]
+        assert item.format == "webm" and [c.path for c in copies] == ["audio/Track.webm"]
+        rows = await h.warnings()
+        message = _REMUX_FALLBACK_SKIPPED if existing else _REMUX_FALLBACK_SAVED
+        assert [(r.job_id, r.event_type, r.message, json.loads(r.details_json or "null"))
+                for r in rows] == [("parent", "job", message, {"child_id": "child-2"})]
+        assert "stderr" not in message and "/private" not in message
+        if existing:
+            assert "saved the original" not in message
+        assert [e.id for e in committed] == [rows[0].id]
+        assert not h.processes and not (tmp_path / "staging" / "child-2").exists()
+    finally:
+        await h.engine.dispose()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("error, code", [
+    (FFmpegError(FFmpegFailureKind.BINARY_MISSING), JobErrorCode.FFMPEG_MISSING),
+    (FFmpegError(FFmpegFailureKind.TIMEOUT), JobErrorCode.POST_PROCESSING_FAILED),
+    (FFmpegError(FFmpegFailureKind.FAILED, cause=FFmpegFailureCause.OUTPUT_GUARD),
+     JobErrorCode.POST_PROCESSING_FAILED),
+    (FFmpegError(FFmpegFailureKind.FAILED, cause=FFmpegFailureCause.SPAWN),
+     JobErrorCode.POST_PROCESSING_FAILED),
+    (FFmpegError(FFmpegFailureKind.FAILED, cause=FFmpegFailureCause.NO_OUTPUT),
+     JobErrorCode.POST_PROCESSING_FAILED),
+    (FFmpegError(FFmpegFailureKind.FAILED, cause=FFmpegFailureCause.OUTPUT_UNVERIFIABLE),
+     JobErrorCode.POST_PROCESSING_FAILED),
+    (FFmpegError(FFmpegFailureKind.FAILED), JobErrorCode.POST_PROCESSING_FAILED),
+    (OSError(28, "No space left on device"), JobErrorCode.DISK_WRITE_FAILED),
+    (JobError(JobErrorCode.MALFORMED_OUTPUT), JobErrorCode.MALFORMED_OUTPUT),
+], ids=["binary_missing", "timeout", "output_guard", "spawn", "no_output",
+        "output_unverifiable", "unclassified", "oserror", "joberror"])
+async def test_ineligible_remux_failure_fails_child_without_warning(
+    tmp_path: Path, error: BaseException, code: JobErrorCode,
+) -> None:
+    h = Harness(tmp_path)
+    try:
+        await h.seed("audio")
+        original_opus(h, error)
+        committed: list[ActivityEvent] = []
+        with pytest.raises(JobError) as caught:
+            await h.run(committed=committed)
+        assert caught.value.code == code
+        assert h.adapters.calls == ["probe", "opus", "convert"]
+        facts = await h.facts()
+        assert facts[0] == "post_processing" and facts[2] == 0
+        assert facts[5] is None and facts[6] == []
+        assert committed == [] and await h.warnings() == []
+        assert not published_files(h)
+        assert not h.processes
+    finally:
+        await h.engine.dispose()
+
+
+@pytest.mark.anyio
+async def test_explicit_opus_output_exit_status_fails_without_fallback(tmp_path: Path) -> None:
+    h = Harness(tmp_path)
+    try:
+        await h.seed("audio", output="opus")
+        original_opus(h, exit_status())
+        committed: list[ActivityEvent] = []
+        with pytest.raises(JobError) as caught:
+            await h.run(committed=committed)
+        assert caught.value.code == JobErrorCode.POST_PROCESSING_FAILED
+        [(source_name, output_name, *_)] = h.adapters.conversions
+        assert source_name == "media.webm" and output_name.startswith("converted-")
+        facts = await h.facts()
+        assert facts[0] == "post_processing" and facts[5] is None and facts[6] == []
+        assert committed == [] and await h.warnings() == []
+        assert not published_files(h)
+    finally:
+        await h.engine.dispose()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("case", ["blocked", "sigterm_exit", "event_exit", "marker",
+                                  "lost_finalizing"])
+async def test_cancel_around_child_remux_never_falls_back_or_warns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str,
+) -> None:
+    h = Harness(tmp_path)
+    entered = asyncio.Event()
+    task = None
+
+    async def mark() -> None:
+        # Durable marker only: no runtime event reaches this attempt.
+        async with h.sessions() as session:
+            assert await stage_collection_cancel_request(
+                session, job_id="parent", owner_id="owner") == (
+                    CollectionCancelRequestOutcome.STAGED)
+            await session.commit()
+
+    async def sigterm() -> None:
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            # Cancel's SIGTERM surfaces from the adapter as a non-zero exit.
+            raise exit_status() from None
+
+    try:
+        await h.seed("audio")
+        original_opus(h, None if case in {"blocked", "sigterm_exit"} else exit_status())
+        if case == "blocked":
+            h.adapters.block = "convert"
+        elif case == "sigterm_exit":
+            h.adapters.on_convert = sigterm
+        elif case == "event_exit":
+            h.adapters.cancel_at = "convert"
+        elif case == "marker":
+            h.adapters.on_convert = mark
+        else:
+            real_place = h.storage.place_child_final
+
+            async def place(*args: Any, **kwargs: Any) -> Any:
+                await mark()
+                return await real_place(*args, **kwargs)
+            monkeypatch.setattr(h.storage, "place_child_final", place)
+        committed: list[ActivityEvent] = []
+        task = asyncio.create_task(h.run(committed=committed))
+        if case in {"blocked", "sigterm_exit"}:
+            await asyncio.wait_for((h.adapters.started if case == "blocked"
+                                    else entered).wait(), 2)
+            with h.gate:
+                h.adapters.cancel.set()
+            if case == "blocked":
+                await asyncio.wait_for(h.adapters.cleanup.wait(), 2)
+                for _ in range(2):
+                    task.cancel()
+                    await asyncio.sleep(0)
+                assert not task.done()
+                h.adapters.release.set()
+        if case in {"marker", "lost_finalizing"}:
+            assert await asyncio.wait_for(task, 2) == ChildResult.SKIPPED
+        else:
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(task, 2)
+        if case == "blocked":
+            assert h.adapters.reaped
+        assert h.adapters.calls == ["probe", "opus", "convert"]
+        facts = await h.facts()
+        assert facts[0] == ("finalizing" if case == "lost_finalizing" else "post_processing")
+        assert facts[2] == 0 and facts[5] is None and facts[6] == []
+        assert committed == [] and await h.warnings() == []
+        published = published_files(h)
+        # Placement before a lost completion CAS is existing accepted behaviour.
+        assert [p.name for p in published] == (
+            ["Track.webm"] if case == "lost_finalizing" else [])
+        assert not h.processes
+    finally:
+        h.adapters.release.set()
+        if task is not None:
+            await asyncio.gather(task, return_exceptions=True)
+        await h.engine.dispose()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("failure", ["catalog", "activity", "commit"])
+async def test_fallback_completion_rollback_leaves_no_warning_or_catalog(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str,
+) -> None:
+    from sqlalchemy import text
+
+    h = Harness(tmp_path)
+    try:
+        await h.seed("audio")
+        original_opus(h, exit_status())
+        if failure == "catalog":
+            async def fail_catalog(*args: Any, **kwargs: Any) -> None:
+                raise RuntimeError("catalog re-verification failure")
+            monkeypatch.setattr(
+                "app.services.collection_persistence.stage_media_catalog_reference",
+                fail_catalog)
+        elif failure == "activity":
+            async def fail_activity(*args: Any, **kwargs: Any) -> Any:
+                raise RuntimeError("warning Activity write")
+            monkeypatch.setattr(child_runner.activity, "add_activity_event", fail_activity)
+        else:
+            async with h.sessions() as session:
+                await session.execute(text(
+                    "CREATE TABLE child_commit_probe (id INTEGER PRIMARY KEY, "
+                    "parent_id INTEGER REFERENCES child_commit_probe(id) "
+                    "DEFERRABLE INITIALLY DEFERRED)"))
+                await session.commit()
+            real_completion = child_runner.stage_child_completion
+
+            async def staged(session: Any, *args: Any, **kwargs: Any) -> bool:
+                won = await real_completion(session, *args, **kwargs)
+                # Real SQLite COMMIT failure after the warning is staged.
+                await session.execute(text("INSERT INTO child_commit_probe VALUES (1, 2)"))
+                return won
+            monkeypatch.setattr(child_runner, "stage_child_completion", staged)
+        committed: list[ActivityEvent] = []
+        with pytest.raises(JobError) as caught:
+            await h.run(committed=committed)
+        assert caught.value.code == JobErrorCode.INTERNAL_ERROR
+        facts = await h.facts()
+        assert facts[0] == "finalizing" and facts[2] == 0 and facts[4] == 0
+        assert facts[5] is None and facts[6] == []
+        assert committed == [] and await h.warnings() == []
+        assert not h.processes
     finally:
         await h.engine.dispose()

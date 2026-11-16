@@ -178,14 +178,18 @@ def test_merge_container_uses_normalized_audio_subtype(raw_audio: str, container
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("mode, ext, remux", [
+    ("video", "mp4", False), ("audio", "webm", True),
+], ids=["native", "original_remux_opt_in"])
 async def test_child_boundary_rejects_multiple_adapter_outputs(
-    pipeline: Pipeline, monkeypatch: pytest.MonkeyPatch,
+    pipeline: Pipeline, monkeypatch: pytest.MonkeyPatch, mode: str, ext: str, remux: bool,
 ) -> None:
     async def multiple(**kwargs: Any) -> list[str]:
         assert kwargs["child_output"] is True
-        return ["one.mp4", "two.mp4"]
+        return [f"one.{ext}", f"two.{ext}"]
     monkeypatch.setattr(pipeline, "download", multiple)
-    plan = resolve_native_child(source(), mode="video")
+    plan = (resolve_native_child(source(audio_codec="opus"), mode="audio") if remux
+            else resolve_native_child(source(), mode=mode))
     with pytest.raises(JobError) as caught:
         await prepare_media(
             selected=plan.selected, companion=plan.companion,
@@ -193,10 +197,10 @@ async def test_child_boundary_rejects_multiple_adapter_outputs(
             storage=pipeline.storage, downloader=pipeline, ffmpeg=pipeline,
             check_cancelled=pipeline.check, on_process_started=pipeline.process_hook,
             progress_forwarder=pipeline.forwarder, before_merge=pipeline.before_merge,
-            child_output=True,
+            child_output=True, original_remux=pipeline.remux() if remux else None,
         )
     assert caught.value.code == JobErrorCode.MALFORMED_OUTPUT
-    assert not pipeline.calls
+    assert not pipeline.calls and not pipeline.conversions and pipeline.fallbacks == 0
 
 
 @pytest.mark.anyio
@@ -700,13 +704,14 @@ async def test_remux_registration_race_terminates_drains_and_cancels(
 @pytest.mark.anyio
 @pytest.mark.parametrize("raw_audio, kind, ext, enabled, child", [
     ("opus", "audio", "webm", False, False),
-    ("opus", "audio", "webm", True, True),
-    ("mp4a.40.2", "audio", "webm", True, False),
+    ("opus", "audio", "webm", False, True),
+    ("mp4a.40.2", "audio", "webm", True, True),
     ("opus", "audio", "m4a", True, False),
-    ("opus", "audio", "mp4", True, False),
+    ("opus", "audio", "mp4", True, True),
     ("opus", "audio", "WEBM", True, False),
-    ("opus", "muxed", "webm", True, False),
-], ids=["default_off", "child", "aac", "m4a", "mp4", "upper_suffix", "muxed"])
+    ("opus", "muxed", "webm", True, True),
+], ids=["default_off", "child_default_off", "aac", "m4a", "child_mp4", "upper_suffix",
+        "child_muxed"])
 async def test_ineligible_original_returns_download_without_remux(
     pipeline: Pipeline, raw_audio: str, kind: str, ext: str, enabled: bool, child: bool,
 ) -> None:
@@ -718,6 +723,35 @@ async def test_ineligible_original_returns_download_without_remux(
     assert result.name == f"media.{ext}"
     assert [call[0] for call in pipeline.calls] == [plan.selected.format_id]
     assert not pipeline.conversions and pipeline.fallbacks == 0
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("fails", [False, True], ids=["remuxed", "exit_status_fallback"])
+async def test_child_mode_opts_into_original_remux(
+    pipeline: Pipeline, tmp_path: Path, fails: bool,
+) -> None:
+    # M6.5c: the child CLI keeps its single-output contract and opts in too.
+    log = tmp_path / "argv.log"
+    binary = fake_ffmpeg_partial_fail(tmp_path) if fails else fake_ffmpeg_record(tmp_path, log)
+    tasks = tracked_helpers(pipeline)
+    media = webm_source(pipeline)
+    result = await pipeline.run(
+        opus_plan(), ffmpeg=FFmpegProcessor(binary=binary), original_remux=pipeline.remux(),
+        child_output=True,
+    )
+    assert [call[0] for call in pipeline.calls] == ["audio", "remux"]
+    assert media.read_bytes() == b"webm-source"
+    if fails:
+        assert result == media and pipeline.fallbacks == 1
+        assert [path.name for path in media.parent.iterdir()] == ["media.webm"]
+    else:
+        assert_fresh(result, "remuxed", "opus")
+        assert pipeline.fallbacks == 0
+        assert recorded(log) == [[
+            "-hide_banner", "-nostats", "-nostdin", "-y", "-i", str(media),
+            "-map", "0:a:0", "-vn", "-sn", "-dn", "-c:a", "copy", "-f", "opus", str(result),
+        ]]
+    assert len(tasks) == 2 and all(task.done() for task in tasks)
 
 
 @pytest.mark.anyio

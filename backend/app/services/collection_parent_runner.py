@@ -202,11 +202,19 @@ async def run_collection_parent(
             return (ParentRunOutcome.EXHAUSTED if await _definite(settle())
                     else ParentRunOutcome.LOST_ELIGIBILITY)
         check_cancelled()
+        # Fresh per-call sink: the child appends only commit-confirmed rows.
+        committed: list[ActivityEvent] = []
         try:
-            result = await run_collection_child(
-                job_id, owner_id, child.id, deps=deps, cancel_event=cancel_event,
-                processes=processes, cancel_gate=cancel_gate,
-            )
+            try:
+                result = await run_collection_child(
+                    job_id, owner_id, child.id, deps=deps, cancel_event=cancel_event,
+                    processes=processes, cancel_gate=cancel_gate,
+                    committed_activities=committed,
+                )
+            finally:
+                # Synchronous: committed child Activity is published even when
+                # this await later raised (caller cancellation/cleanup error).
+                publish_activities(committed)
         except JobError as error:
             if error.code == JobErrorCode.INTERNAL_ERROR:
                 raise

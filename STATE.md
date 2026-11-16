@@ -1,6 +1,6 @@
 # Durum
 
-Devam özeti; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-11-16.
+Devam özeti; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-11-17.
 
 ## Şu an
 
@@ -13,9 +13,9 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-11-16.
 
 ## Sıradaki iş
 
-- M6.5c — sıradaki Opus işi: collection Original remux eşitliği ve kalıcı Activity
-  uyarısı; child completion transaction'ı ve commit sonrası yayınla bağlanmalı.
-- M6.5b tekli remux + dar fallback uygulandı; uyarı katalogla atomik. Collection kapalı.
+- M6.5b/c tekli ve collection remux + dar fallback uygulandı; uyarı katalogla atomik.
+- Sıradaki bounded iş: remux durumunu PRODUCT_SPEC §8/§14 ve ARCHITECTURE §14/M6'da
+  eşitle; sonra metadata/etiket kararlarını netleştir. M6.5 hâlâ açık.
 - Etiketler ürün kararlarından, artwork açık kapak seçiminden sonra; M6.5 açık.
 
 ## Açık kararlar
@@ -25,7 +25,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-11-16.
 - M6.9 MB/CAA yalnız aday zinciri; noncommercial/API koşulları ve kapak telifi ayrı.
   Açık kaynak dağıtım için preview/cache/embed hakları entegrasyon öncesi netleşmeli.
 - Onaylı davranışlar: PRODUCT_SPEC §8–9/§13–16, ARCHITECTURE §14/§30–34/§59.
-  Tekli Original WebM/Opus remux uygulandı; collection, tagging ve artwork planlı.
+  Original WebM/Opus remux tekli/collection uygulandı; tagging ve artwork planlı.
 
 ## Açık bulgular
 
@@ -47,14 +47,15 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-11-16.
 
 ## Son gate
 
-- 2026-11-16 Fedora, M6.5b: prepared/single/collection/adapter/output-profile 361 PASS;
-  gerçek FFmpeg smoke 19 PASS + 4 SKIP (FFmpeg libx264 eksik).
-- Hedefli Ruff/mypy PASS; atlananlar doğrulanmış değil, full gate çalıştırılmadı.
+- 2026-11-17 Fedora, M6.5c: prepared/collection/single/output-profile 857 PASS;
+  hedefli Ruff/mypy PASS; full gate ve yeni gerçek FFmpeg smoke çalıştırılmadı.
+- Önceki gerçek FFmpeg smoke (2026-11-16): 19 PASS + 4 SKIP (libx264 eksik).
 - 2026-10-30 macOS full gate tarihsel; sonraki uzlaştırma kaynak değişikliğiyle bayat.
 
 ## Bilinen riskler
-
 - Accepted: Original remux EXIT_STATUS içindeki disk/izin hatası genel uyarıda kalabilir (PRODUCT_SPEC §14).
+- Accepted: commit anında iptal canlı child uyarısını kaçırabilir; commit edilmiş
+  uyarı DB'de kalır; Activity sorgusu veya uygun cursorla replay'den erişilir.
 - Accepted: private tek yazıcılı staging lstat/FFmpeg açılışı mikro yarışı sürer;
   eski token'lı çıktılar cleanup'a kadar disk kullanır. Mutlak race koruması değil.
 - Accepted: kill sonrası 5 sn reap + en fazla 1 sn waiter drain; D-state garantisi yok,

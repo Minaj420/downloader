@@ -1,23 +1,28 @@
 import asyncio
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import pytest
-from sqlalchemy import select, update
+from sqlalchemy import select, text, update
 
 from app.domain.jobs import JobError, JobErrorCode
+from app.integrations.ffmpeg import FFmpegError, FFmpegFailureCause, FFmpegFailureKind
 from app.models.jobs import ActivityEvent, DownloadJob, JobItem
-from app.models.library import LibraryItem
+from app.models.library import LibraryItem, MediaFile
 from app.repositories import jobs
+from app.services import collection_child_runner as child_runner
 from app.services import collection_parent_runner as runner
 from app.services.collection_child_runner import ChildResult
 from app.services.collection_persistence import (
     CollectionCancelRequestOutcome,
     stage_collection_cancel_request,
+    stage_collection_retry,
 )
+from app.services.job_runner import _REMUX_FALLBACK_SAVED
 from tests.test_collection_cancel import RecordingBus, checkpoint, runtime
-from tests.test_collection_child_runner import Harness
+from tests.test_collection_child_runner import Harness, exit_status, opus_source
 from tests.test_collection_repository import child, parent
 from tests.test_prepared_media import source
 
@@ -790,4 +795,219 @@ async def test_unknown_pipeline_failure_stops_without_recording_or_terminal_publ
             assert (await session.scalars(select(ActivityEvent))).all() == []
         assert not bus.events and not h.processes
     finally:
+        await h.engine.dispose()
+
+
+# --- M6.5c Collection Original WebM/Opus remux warning publication ---------------------
+
+
+async def seed_audio(h: Harness, children: list[JobItem]) -> None:
+    async with h.sessions() as session:
+        await jobs.stage_collection_job(
+            session, parent(collection_mode="audio"), children, owner_id="owner")
+        await session.commit()
+
+
+def per_child(h: Harness, monkeypatch: pytest.MonkeyPatch, kinds: dict[str, str]) -> None:
+    """Configure the serial adapters for each child by its URL suffix."""
+    real_probe = h.adapters.probe_child
+
+    async def probe(url: str) -> dict[str, Any]:
+        kind = kinds[url.rsplit("/", 1)[1]]
+        if kind == "network":
+            raise JobError(JobErrorCode.NETWORK_ERROR, detail="real network failure")
+        if kind == "normal":
+            h.adapters.source, h.adapters.download_ext = source(), "mp4"
+            h.adapters.convert_error = None
+        else:
+            h.adapters.source, h.adapters.download_ext = opus_source(), "webm"
+            h.adapters.convert_error = {
+                "fallback": exit_status(), "remux": None,
+                "guard": FFmpegError(FFmpegFailureKind.FAILED,
+                                     cause=FFmpegFailureCause.OUTPUT_GUARD),
+            }[kind]
+        return await real_probe(url)
+
+    monkeypatch.setattr(h.adapters, "probe_child", probe)
+
+
+def shape(bus: RecordingBus) -> list[tuple[str, str | None]]:
+    return [(e["event"], e["data"]["level"] if e["event"] == "activity.created" else None)
+            for e in bus.events]
+
+
+async def warning_rows(h: Harness) -> list[tuple[str | None, str, dict[str, Any]]]:
+    async with h.sessions() as session:
+        rows = (await session.scalars(select(ActivityEvent).where(
+            ActivityEvent.level == "warning").order_by(ActivityEvent.id))).all()
+    return [(r.job_id, r.message, json.loads(r.details_json or "null")) for r in rows]
+
+
+async def run_with(h: Harness, bus: RecordingBus) -> runner.ParentRunOutcome:
+    return await runner.run_collection_parent(
+        "parent", "owner", deps=h.deps, cancel_event=h.adapters.cancel,
+        processes=h.processes, cancel_gate=h.gate, bus=bus)
+
+
+@pytest.mark.anyio
+async def test_mixed_children_publish_one_fallback_warning_before_its_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    h = Harness(tmp_path)
+    bus = RecordingBus()
+    per_child(h, monkeypatch, {"2": "fallback", "5": "normal", "9": "remux", "12": "guard"})
+    try:
+        await seed_audio(h, [child(2, title="A"), child(5, title="B"), child(9, title="C"),
+                             child(12, title="D")])
+        assert await run_with(h, bus) == runner.ParentRunOutcome.EXHAUSTED
+        assert shape(bus) == [
+            ("activity.created", "warning"), ("job.updated", None),  # child-2 fallback
+            ("job.updated", None),  # child-5 native, no remux
+            ("job.updated", None),  # child-9 remux success
+            ("activity.created", "error"), ("job.updated", None),  # child-12 guard failure
+            ("activity.created", "error"), ("job.failed", None),
+        ]
+        warning = bus.events[0]
+        assert warning["data"]["job_id"] == "parent"
+        assert warning["data"]["event_type"] == "job"
+        assert warning["data"]["message"] == _REMUX_FALLBACK_SAVED
+        assert await warning_rows(h) == [("parent", _REMUX_FALLBACK_SAVED,
+                                          {"child_id": "child-2"})]
+        async with h.sessions() as session:
+            paths = (await session.scalars(select(MediaFile.path)
+                                           .order_by(MediaFile.path))).all()
+            assert paths == ["audio/A.webm", "audio/B.mp4", "audio/C.opus"]
+            record = await session.get(DownloadJob, "parent")
+            assert record and (record.status, record.error_code) == ("failed",
+                                                                     "partial_failure")
+        assert not h.processes
+    finally:
+        await h.engine.dispose()
+
+
+@pytest.mark.anyio
+async def test_retry_keeps_completed_fallback_child_and_its_single_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    h = Harness(tmp_path)
+    kinds = {"2": "fallback", "9": "network"}
+    per_child(h, monkeypatch, kinds)
+    try:
+        await seed_audio(h, [child(2, title="A"), child(9, title="C")])
+        first = RecordingBus()
+        assert await run_with(h, first) == runner.ParentRunOutcome.EXHAUSTED
+        assert await status(h) == "failed"
+        assert [e for e in shape(first) if e[1] == "warning"] == [
+            ("activity.created", "warning")]
+        target = h.storage.library_root / "audio" / "A.webm"
+        published = (target.read_bytes(), target.stat().st_ino)
+
+        async def completed_facts() -> tuple[Any, ...]:
+            async with h.sessions() as session:
+                row = await session.get(JobItem, "child-2")
+                item = await session.get(LibraryItem, "child-2")
+                assert row and item
+                return (row.status, row.final_path, row.completed_at, item.format,
+                        item.created_at)
+
+        before = await completed_facts()
+        async with h.sessions() as session:
+            assert await stage_collection_retry(session, job_id="parent", owner_id="owner")
+            await session.commit()
+        kinds["9"] = "remux"
+        second = RecordingBus()
+        assert await run_with(h, second) == runner.ParentRunOutcome.EXHAUSTED
+        assert await status(h) == "completed"
+        # The completed fallback child is never rerun nor re-announced.
+        assert h.adapters.calls.count("probe") == 2
+        assert all(e[1] != "warning" for e in shape(second))
+        assert await completed_facts() == before
+        assert (target.read_bytes(), target.stat().st_ino) == published
+        assert await warning_rows(h) == [("parent", _REMUX_FALLBACK_SAVED,
+                                          {"child_id": "child-2"})]
+    finally:
+        await h.engine.dispose()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("case", ["cancel_after_commit", "cleanup_error", "commit_failure"])
+async def test_parent_publishes_only_commit_confirmed_child_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str,
+) -> None:
+    h = Harness(tmp_path)
+    bus = RecordingBus()
+    entered, release, closed = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    real_completion = child_runner.stage_child_completion
+    per_child(h, monkeypatch, {"2": "fallback"})
+
+    async def staged(session: Any, *args: Any, **kwargs: Any) -> bool:
+        won = await real_completion(session, *args, **kwargs)
+        if case == "commit_failure":
+            await session.execute(text("INSERT INTO parent_commit_probe VALUES (1, 2)"))
+        elif case == "cancel_after_commit":
+            real_close = session.close
+
+            async def held() -> None:
+                # Runs only after commit returned and the sink was appended.
+                entered.set()
+                await release.wait()
+                await real_close()
+                closed.set()
+            monkeypatch.setattr(session, "close", held)
+        return won
+
+    def cleanup_failure(key: str) -> None:
+        raise OSError("staging cleanup failed")
+
+    monkeypatch.setattr(child_runner, "stage_child_completion", staged)
+    if case == "cleanup_error":
+        monkeypatch.setattr(h.storage, "remove_staging", cleanup_failure)
+    attempt = None
+    try:
+        await seed_audio(h, [child(2, title="A")])
+        async with h.sessions() as session:
+            await session.execute(text(
+                "CREATE TABLE parent_commit_probe (id INTEGER PRIMARY KEY, "
+                "parent_id INTEGER REFERENCES parent_commit_probe(id) "
+                "DEFERRABLE INITIALLY DEFERRED)"))
+            await session.commit()
+        attempt = asyncio.create_task(run_with(h, bus))
+        if case == "cancel_after_commit":
+            await asyncio.wait_for(entered.wait(), 5)
+            for _ in range(2):
+                attempt.cancel()
+                await checkpoint()
+                assert not attempt.done() and not bus.events
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(attempt, 5)
+            await asyncio.wait_for(closed.wait(), 5)
+        else:
+            with pytest.raises(JobError) as caught:
+                await asyncio.wait_for(attempt, 5)
+            assert caught.value.code == (JobErrorCode.INTERNAL_ERROR
+                                         if case == "commit_failure"
+                                         else JobErrorCode.DISK_WRITE_FAILED)
+        async with h.sessions() as session:
+            row = await session.get(JobItem, "child-2")
+            item = await session.get(LibraryItem, "child-2")
+            assert row is not None
+        if case == "commit_failure":
+            assert bus.events == [] and await warning_rows(h) == []
+            assert row.status == "finalizing" and item is None
+        else:
+            # Committed facts only: the warning, no snapshot/settlement.
+            assert shape(bus) == [("activity.created", "warning")]
+            assert row.status == "completed" and item is not None
+            assert await warning_rows(h) == [("parent", _REMUX_FALLBACK_SAVED,
+                                              {"child_id": "child-2"})]
+            async with h.sessions() as session:
+                ids = (await session.scalars(select(ActivityEvent.id).where(
+                    ActivityEvent.level == "warning"))).all()
+            assert [bus.events[0]["id"]] == list(ids)
+        assert not h.processes
+    finally:
+        release.set()
+        if attempt is not None:
+            await asyncio.gather(attempt, return_exceptions=True)
         await h.engine.dispose()

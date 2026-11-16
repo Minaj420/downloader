@@ -89,10 +89,11 @@ async def prepare_media(
     any media I/O and ``before_merge`` still runs once, before the first
     post-processing step. Intermediate files stay in staging for the caller.
 
-    ``original_remux`` applies only without ``output`` and outside child mode,
-    to an audio-only Opus download whose real file is ``.webm``. Only an
-    ``EXIT_STATUS`` failure, after a fresh cancellation check, falls back to
-    the untouched source; every other failure propagates unchanged.
+    ``original_remux`` applies only without ``output`` (single and child
+    callers alike), to an audio-only Opus download whose real file is
+    ``.webm``. Only an ``EXIT_STATUS`` failure, after a fresh cancellation
+    check, falls back to the untouched source; every other failure propagates
+    unchanged. An explicit ``output`` never falls back.
     """
     plan = plan_conversion(output, selected, companion) if output is not None else None
     closed = False
@@ -169,11 +170,7 @@ async def prepare_media(
         else:
             source = await download("media", selected.format_id, 0, 1)
             if output is None or plan is None:
-                if (
-                    original_remux is None
-                    or child_output
-                    or not _remux_eligible(selected, source)
-                ):
+                if original_remux is None or not _remux_eligible(selected, source):
                     return source
                 return await remux(source, original_remux)
             await check_cancelled()
