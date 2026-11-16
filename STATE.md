@@ -1,6 +1,6 @@
 # Durum
 
-Devam özeti; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-11-13.
+Devam özeti; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-11-16.
 
 ## Şu an
 
@@ -13,10 +13,11 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-11-13.
 
 ## Sıradaki iş
 
-- WF-S1 sonrasındaki 3–4 tamamlanan işten sonra STATE satır sayısını yeniden ölç;
-  yeniden şişerse hook o zaman kullanıcıyla değerlendirilecek; şimdi hook yok.
-- M6.5 — Metadata/etiket pipeline bağlantısı: önce Opus görüşüyle küçük kapsama böl;
-  Original Opus remux ve fallback sınırlarını netleştir. Sonra M6.6–M6.10.
+- M6.5a — Opus görüşü alındı; önce FFmpeg hata ayrımı: çıktı güvenlik/depolama
+  kontrolleri normal işleme hatasıyla aynı FAILED türünde; bunlara fallback yasak.
+- Sonra tekli Original audio WebM/Opus → .opus kayıpsız remux + Activity uyarılı
+  fallback; ardından collection eşitliği ve kalıcı uyarı. Uygulayıcı Opus.
+- Etiketler ürün kararlarından, artwork açık kapak seçiminden sonra; M6.5 açık.
 
 ## Açık kararlar
 
