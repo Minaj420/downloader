@@ -499,10 +499,11 @@ FFmpeg should also live behind an integration adapter.
 Responsibilities may include:
 
 - container merging,
-- audio conversion,
-- metadata embedding,
-- artwork embedding,
+- audio conversion and remux,
+- artwork embedding (planned, not implemented; M6.7),
 - other final media processing.
+
+M6.5 text tags are not an FFmpeg responsibility (approved; planned, not implemented): they go through a thin Mutagen integration boundary (MP3 ID3v2.4, M4A MP4 atoms, FLAC / Ogg Vorbis / Opus Vorbis comments; no hand-written format code). FFmpeg stays for conversion/remux, and no second parallel tag engine is opened. Tagging works on a separate candidate copy in staging, which is re-read and verified. Two publish branches: (1) tagging and re-read verification succeed: the verified candidate is published through the normal `StorageService` containment/conflict/catalog path; (2) tagging fails: the failed candidate is never published, and the sound untagged prepared output from before tagging is published through the same normal storage/catalog checks with an Activity warning. Cancellation is re-checked before and after tagging. Worker/cleanup ownership details while a blocking write is in flight are not designed now. A ready explicit MP3/M4A target never reverts to the old pre-conversion source format, and if the explicit target cannot be produced the job/child fails. Cancellation, storage, security and catalog errors are not swallowed. The narrow Original `EXIT_STATUS` remux fallback below is unchanged. WAV, the Original WebM fallback, video and other unsupported containers are outside tagging. Mutagen is GPL-2.0-or-later: no blocker for personal use, a distribution/project-license compatibility note remains open, and this is not legal approval.
 
 Where yt-dlp safely handles a required FFmpeg postprocessor itself, that is acceptable.
 
@@ -1275,10 +1276,11 @@ The path builder must not depend on Plex being present.
 M6 decisions (approved; planned, not implemented; PRODUCT_SPEC §13):
 
 - Artist and album come only from explicit source or user metadata; never from the title, never the channel name as artist, and a playlist name is not automatically an album.
-- Missing artist/album gives a flat audio layout without the missing folders; a missing track name falls back to the source title.
-- `NN` for collections follows the original source playlist order, not a metadata track number, and numbers of unselected items are not compacted. This does not decide the embedded track-number tag.
+- Artist folder: explicit album artist first; otherwise the first name of the structured `artists` list; otherwise the single source text as-is. Never split on `&`, commas or `feat.`. Different explicit album-artist values inside one reliable album group give `Various Artists`; a missing album artist alone is not an inconsistency. Grouping/preparation and turning a multi-name `album_artists` list into a folder value are M6.6 detail decisions; no hypothetical rule is defined here, no Library-wide merging by album name and no later file moving.
+- Missing artist or album keeps the current flat audio layout; the missing `Artist/Album` folders are not created and no placeholder (`Singles`, `Unknown Artist`) folder or tag is added. A missing track name falls back to the source title.
+- Audio `NN`: a generic audio playlist follows the original source order, unselected numbers not compacted. In a reliable album group with a known track number, `1-01 - Title` when multi-disc is known, `01 - Title` when single-disc is known; unknown track numbers are never invented and multi-disc is not assumed when the disc count is unknown. Source order is never an embedded track tag. Video numbering (M6.3) is unchanged.
 - No automatic title cleanup; the user may edit the name manually.
-- The cover selection (§34) may supply `cover.jpg` when an album folder exists.
+- `cover.jpg` is conditional: it appears only when an album-wide cover has been chosen for an existing album folder (§34). It is not chosen automatically when tracks have different thumbnail covers; the album-wide selection detail stays an open M6.7 design follow-up.
 - These rules go through the single centralized builder and `sanitize_media_filename` / `StorageService`; no new path logic elsewhere. Exact layouts for partial metadata are a design follow-up.
 
 ---
@@ -1299,7 +1301,7 @@ NN - Title.ext
 
 Source IDs should remain database metadata rather than default visible filenames.
 
-M6.3 (implemented): collection video files are named `NN - Title.ext` inside `StorageService` from the persisted child `source_order` (at least two digits, never compacted or truncated) and the persisted title; standalone video and audio filenames are unchanged. No automatic title cleanup; the title is the source title; manual name editing and audio numbering remain planned, not implemented.
+M6.3 (implemented): collection video files are named `NN - Title.ext` inside `StorageService` from the persisted child `source_order` (at least two digits, never compacted or truncated) and the persisted title; standalone video and audio filenames are unchanged. No automatic title cleanup; the title is the source title; manual name editing and audio numbering (approved rules in §31) remain planned, not implemented.
 
 ---
 
@@ -1348,9 +1350,9 @@ When metadata is uncertain, the UI may allow editing before starting the downloa
 
 This is especially important for Plex Music destinations.
 
-M6 artwork decision (approved; planned, not implemented; supersedes the earlier medium/low-only rule): every artwork candidate, at any confidence and from any source including a trusted one, is previewed and requires explicit user selection; explicit selection makes it user-confirmed artwork. There is no silent embedding. With no selection the download continues without artwork. A selection is used for embedding in supported audio formats and for `cover.jpg` when an album folder exists; format support is not guaranteed and details come later. A single cover is not applied automatically to all tracks of a playlist with different albums. Selecting a cover does not change other metadata by itself.
+M6.7 source artwork decision (approved; planned, not implemented): by default a track's own thumbnail is embedded as a square crop; the playlist's general image is not used. A missing or broken cover never blocks the download. The user removes or replaces it on the M6.8 selection screen. The earlier rule requiring explicit selection for every source cover is superseded and no longer active. Album-wide `cover.jpg` is not chosen automatically from differing track thumbnails; its selection detail is an open M6.7 design follow-up. A single cover is not applied automatically to all tracks of a playlist with different albums. Format support is not guaranteed. Selecting a cover does not change other metadata by itself.
 
-Alternative cover search (approved; planned, not implemented): triggered only by the user pressing the `Alternative cover search` button, with editable artist/album, an external catalog search, candidates shown with source/release information and, where verifiable, resolution, and a user choice. High pixel size is not proof of the correct release. No silent search, selection or replacement. A failed search or missing cover never blocks the download. This is the last separate M6 sub-task, not started; provider and rights terms must be clarified first, and it is not deferred or completed automatically. MusicBrainz + Cover Art Archive is only the first provider candidate and a single chain, not two independent catalogs; it is not a final provider decision and no integration exists. No new provider framework, plugin system or separate service is planned.
+Alternative cover search (M6.9; approved; planned, not implemented): runs only when the user explicitly asks for it on the M6.8 selection screen, never automatically (the `Alternative cover search` button), with editable artist/album, an external catalog search, candidates shown with source/release information and, where verifiable, resolution; the user still chooses the external candidate. High pixel size is not proof of the correct release. No silent search, selection or replacement. A failed search or missing cover never blocks the download. This is the last separate M6 sub-task, not started; provider and rights terms must be clarified first, and it is not deferred or completed automatically. MusicBrainz + Cover Art Archive is only the first provider candidate and a single chain, not two independent catalogs; it is not a final provider decision and no integration exists; rights and usage questions are handled when M6.9 integration is reached, with no new research now. No new provider framework, plugin system or separate service is planned.
 
 Rights: the application will be distributed as open source; code, data and image licenses are separate, open source does not automatically mean non-commercial, and covers are not bundled with the software package. API access or user selection does not replace copyright permission; external preview/cache/embed rights are not yet verified, and the research is not full legal approval. Official terms: https://musicbrainz.org/doc/MusicBrainz_API , https://musicbrainz.org/doc/About/Data_License , https://musicbrainz.org/doc/Cover_Art_Archive , https://metabrainz.org/supporters/account-type .
 
@@ -2084,11 +2086,11 @@ Approved decisions below are planned, not implemented, except the explicit-conve
   M6.1 source_metadata, M6.2 path planning and M6.3 video numbering stay implemented; M6.4b–d (including the d1–d4 runner/API wiring) are implemented; M6.4e UI (output format selection on New Download) is implemented; the M6.4f real-binary adapter/planner smoke (codec/container verification, packet copy, cancellation) is implemented, but the full milestone closure gates are still pending, so M6.4f/M6.4 closure is not declared; M6 and M6.5+ are not complete.
 - artist/album paths from explicit source/user metadata only; flat audio layout when missing; source title as fallback track name
 - embedded metadata, written on staged files
-- source playlist order numbering for collection audio and playlist video names, not compacted
+- numbering: playlist video names (M6.3, implemented) use source order, not compacted; a generic audio playlist uses source order, and a reliable album group with known track/disc uses `1-01 - Title` (known multi-disc) or `01 - Title` (known single-disc); unknown numbers are never invented (§31; planned, not implemented)
 - no automatic title cleanup; manual metadata/name review and editing
-- artwork preview with explicit user selection for every candidate (no silent embedding, no selection means no artwork), embedding where supported and `cover.jpg` with an album folder
+- sub-task order (planned, none implemented except the Original Opus remux): M6.5 text tags (Mutagen boundary, §14; closure awaits the user's real-use Docker Compose smoke result and full gates) → M6.6 grouping decision and paths → M6.7 source artwork (a track's own thumbnail as square crop by default, missing/broken never blocks; the old rule requiring explicit selection for every source cover is superseded) → M6.8 selection/editing (user removes/replaces cover) → M6.9 external search only when the user explicitly asks on the M6.8 screen; `cover.jpg` only conditionally with an album folder
 - tag/artwork/remux failure fallback (PRODUCT_SPEC §14, ARCHITECTURE §14): under Original, an audio remux failure keeps the safe original with an Activity warning only under the bounded conditions in §14 (Original Opus remux fallback: `FFmpegFailureKind.FAILED` with `FFmpegFailureCause.EXIT_STATUS`, cancellation re-checked, normal storage/catalog checks; approved, implemented in M6.5b/c); when an explicitly selected target was already converted successfully, optional tag/artwork failure keeps that ready target; if the explicitly selected target cannot be produced, the job/child fails and no different original is completed; cancellation and direct security/storage/catalog errors are not swallowed (the narrow internal FFmpeg disk/permission exception under `EXIT_STATUS` in §14 is outside that guarantee)
-- last separate sub-task, not started and gated on provider/rights clarification: user-triggered alternative cover search (MusicBrainz + Cover Art Archive as the first candidate, single chain, not a final choice)
+- last separate sub-task (M6.9), not started; provider/rights questions are handled when integration is reached: user-triggered alternative cover search, only on explicit request on the M6.8 screen, never automatic (MusicBrainz + Cover Art Archive as the first candidate, single chain, not a final choice)
 
 ## Milestone 7 — Plex Destinations
 

@@ -61,6 +61,7 @@ Frontend: `npm run lint`, `npm run typecheck`, `npm test`, `npm run build`, `npm
 
 Only run commands that are actually configured in the repository; report clearly when a command is not configured instead of pretending it passed. For Docker-related changes, verify that the image builds and the application starts successfully when practical.
 - Ürün davranışını değiştiren bir milestone veya alt milestone kapanmadan önce lead, kullanıcıdan gerçek kullanım smoke'u ister: neyin deneneceğini 3–5 maddelik bir listeyle verir; kullanıcı sonucu bildirmeden kapanış yapılmaz.
+- Kullanıcının gerçek kullanım smoke listeleri Docker Compose kurulumu üzerinden hazırlanır; host FFmpeg sonucu container binary doğrulaması sayılmaz.
 
 ## Git
 
