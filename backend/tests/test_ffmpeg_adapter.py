@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import errno
 import os
 import time
 from collections.abc import Awaitable, Callable, Coroutine
@@ -13,6 +14,7 @@ from app.integrations import ffmpeg as ffmpeg_module
 from app.integrations.ffmpeg import (
     ConversionProfile,
     FFmpegError,
+    FFmpegFailureCause,
     FFmpegFailureKind,
     FFmpegProcessor,
     output_extension,
@@ -91,6 +93,7 @@ def test_merge_failure_raises(tmp_path: Path) -> None:
         )
 
     assert exc_info.value.kind is FFmpegFailureKind.FAILED
+    assert exc_info.value.cause is FFmpegFailureCause.EXIT_STATUS
     assert "invalid codec" in (exc_info.value.detail or "")
 
 
@@ -105,6 +108,22 @@ def test_merge_missing_binary(tmp_path: Path) -> None:
         )
 
     assert exc_info.value.kind is FFmpegFailureKind.BINARY_MISSING
+    assert exc_info.value.cause is None
+
+
+def test_ffmpeg_error_positional_signature_is_compatible() -> None:
+    error = FFmpegError(FFmpegFailureKind.FAILED, "boom")
+
+    assert error.kind is FFmpegFailureKind.FAILED
+    assert error.detail == "boom"
+    assert error.cause is None
+    assert str(error) == "failed: boom"
+
+    classified = FFmpegError(
+        FFmpegFailureKind.FAILED, "boom", cause=FFmpegFailureCause.NO_OUTPUT
+    )
+    assert classified.cause is FFmpegFailureCause.NO_OUTPUT
+    assert str(classified) == "failed: boom"
 
 
 def test_cancellation_terminates_child_process(tmp_path: Path) -> None:
@@ -172,6 +191,7 @@ def test_merge_timeout_terminates_process_and_raises(tmp_path: Path) -> None:
         )
 
     assert exc_info.value.kind is FFmpegFailureKind.TIMEOUT
+    assert exc_info.value.cause is None
     assert len(seen) == 1
     assert seen[0].returncode is not None
     assert not output.exists()
@@ -397,6 +417,7 @@ def test_convert_missing_binary(tmp_path: Path) -> None:
         asyncio.run(processor.convert(source, output, "mp3"))
 
     assert exc_info.value.kind is FFmpegFailureKind.BINARY_MISSING
+    assert exc_info.value.cause is None
     assert source.read_text() == "source-media"
 
 
@@ -411,6 +432,7 @@ def test_convert_unstartable_binary_fails(tmp_path: Path) -> None:
         asyncio.run(processor.convert(source, output, "mp3"))
 
     assert exc_info.value.kind is FFmpegFailureKind.FAILED
+    assert exc_info.value.cause is FFmpegFailureCause.SPAWN
     assert "could not be started" in (exc_info.value.detail or "")
 
 
@@ -424,6 +446,7 @@ def test_convert_failure_removes_partial_output_and_keeps_input(tmp_path: Path) 
         asyncio.run(processor.convert(source, output, "opus", on_process_started=seen.append))
 
     assert exc_info.value.kind is FFmpegFailureKind.FAILED
+    assert exc_info.value.cause is FFmpegFailureCause.EXIT_STATUS
     assert "encoder failed" in (exc_info.value.detail or "")
     assert len(seen) == 1
     assert seen[0].returncode == 1
@@ -457,6 +480,7 @@ def test_convert_timeout_removes_partial_output_and_reaps(tmp_path: Path) -> Non
         asyncio.run(processor.convert(source, output, "mp4", on_process_started=seen.append))
 
     assert exc_info.value.kind is FFmpegFailureKind.TIMEOUT
+    assert exc_info.value.cause is None
     assert "0.5s" in (exc_info.value.detail or "")
     assert started.exists()
     assert len(seen) == 1
@@ -643,7 +667,42 @@ def test_convert_without_output_fails_and_removes_file(
         asyncio.run(processor.convert(source, output, "flac"))
 
     assert exc_info.value.kind is FFmpegFailureKind.FAILED
+    assert exc_info.value.cause is FFmpegFailureCause.NO_OUTPUT
     assert exc_info.value.detail == "ffmpeg produced no output"
+    assert not output.exists()
+    assert source.read_text() == "source-media"
+
+
+@pytest.mark.parametrize("code", [errno.EACCES, errno.EIO, errno.ENOTDIR])
+def test_convert_unverifiable_output_after_success_fails_and_removes_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code: int
+) -> None:
+    binary = _write_script(tmp_path, "ffmpeg", MERGE_SCRIPT)
+    processor = FFmpegProcessor(binary=binary)
+    source, output = _convert_paths(tmp_path, "flac")
+    original_stat = Path.stat
+    raised: list[OSError] = []
+
+    def failing_stat(self: Path, *, follow_symlinks: bool = True) -> os.stat_result:
+        if self == output and follow_symlinks:
+            error = OSError(code, os.strerror(code))
+            raised.append(error)
+            raise error
+        return original_stat(self, follow_symlinks=follow_symlinks)
+
+    monkeypatch.setattr(Path, "stat", failing_stat)
+
+    with pytest.raises(FFmpegError) as exc_info:
+        asyncio.run(processor.convert(source, output, "flac"))
+
+    monkeypatch.undo()
+    assert raised, "post-run output stat was not exercised"
+    assert exc_info.value.kind is FFmpegFailureKind.FAILED
+    assert exc_info.value.cause is FFmpegFailureCause.OUTPUT_UNVERIFIABLE
+    assert "could not be checked" in (exc_info.value.detail or "")
+    assert exc_info.value.__cause__ is raised[-1]
+    if code == errno.EACCES:
+        assert isinstance(exc_info.value.__cause__, PermissionError)
     assert not output.exists()
     assert source.read_text() == "source-media"
 
@@ -1007,6 +1066,7 @@ def test_existing_output_is_refused_before_spawn(
         asyncio.run(call(output))
 
     assert exc_info.value.kind is FFmpegFailureKind.FAILED
+    assert exc_info.value.cause is FFmpegFailureCause.OUTPUT_GUARD
     assert "already exists" in (exc_info.value.detail or "")
     intact()
     inputs_intact()
@@ -1032,6 +1092,7 @@ def test_unverifiable_output_fails_closed(
         asyncio.run(call(output))
 
     assert exc_info.value.kind is FFmpegFailureKind.FAILED
+    assert exc_info.value.cause is FFmpegFailureCause.OUTPUT_GUARD
     assert "could not be checked" in (exc_info.value.detail or "")
     monkeypatch.undo()
     assert output.read_text() == "existing"

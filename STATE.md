@@ -13,11 +13,12 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-11-16.
 
 ## Sıradaki iş
 
-- M6.5a — Opus görüşü alındı; önce FFmpeg hata ayrımı: çıktı güvenlik/depolama
-  kontrolleri normal işleme hatasıyla aynı FAILED türünde; bunlara fallback yasak.
-- Sonra tekli Original audio WebM/Opus → .opus kayıpsız remux + Activity uyarılı
-  fallback; ardından collection eşitliği ve kalıcı uyarı. Uygulayıcı Opus.
-- Etiketler ürün kararlarından, artwork açık kapak seçiminden sonra; M6.5 açık.
+- M6.5a hata nedeni ayrımı uygulandı; dış hata kodları aynı, fallback eklenmedi.
+- M6.5b — tekli Original audio WebM/Opus → .opus kayıpsız remux + Activity uyarılı
+  fallback; önce uygun hata sınırını netleştir. Uygulayıcı Opus; M6.5 açık.
+- EXIT_STATUS alt süreç içindeki disk/izin hatasını ayıramaz; fallback izni yok.
+- Ardından collection eşitliği ve kalıcı uyarı; etiketler ürün kararlarından,
+  artwork açık kapak seçiminden sonra.
 
 ## Açık kararlar
 
@@ -48,9 +49,9 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-11-16.
 
 ## Son gate
 
-- 2026-11-13 Fedora, WF-F1: statik kapsam/satır kontrolü ve diff --check PASS; uygulama gate'i yok.
-- Uygulama için son ilgili hedefli kontrol (2026-11-10 Fedora): 237 PASS + 4 SKIP
-  (libx264 yok), jobs/collection_retry 378 PASS; hedefli Ruff/mypy PASS. Atlananlar doğrulanmadı.
+- 2026-11-16 Fedora, M6.5a: adapter/prepared/single/collection conversion 166 PASS;
+  gerçek FFmpeg smoke 19 PASS + 4 SKIP (neden bu çağrıda doğrulanmadı).
+- Hedefli Ruff/mypy PASS; atlananlar doğrulanmış değil, full gate çalıştırılmadı.
 - 2026-10-30 macOS full gate tarihsel; sonraki uzlaştırma kaynak değişikliğiyle bayat.
 
 ## Bilinen riskler

@@ -82,10 +82,43 @@ class FFmpegFailureKind(StrEnum):
     TIMEOUT = "timeout"
 
 
+class FFmpegFailureCause(StrEnum):
+    """Adapter-internal refinement of ``FFmpegFailureKind.FAILED``.
+
+    Purely descriptive: no cause authorises a fallback on its own, and the
+    external ``kind``/job error mapping is unchanged.
+
+    - ``OUTPUT_GUARD``: the output target already exists or could not be
+      checked before spawning; FFmpeg never ran.
+    - ``SPAWN``: the binary exists but could not be started.
+    - ``EXIT_STATUS``: FFmpeg exited non-zero. This does NOT reliably
+      separate media/codec problems from disk-full or permission errors
+      while writing; stderr is deliberately not parsed.
+    - ``NO_OUTPUT``: FFmpeg exited 0 but the output is missing or empty.
+    - ``OUTPUT_UNVERIFIABLE``: FFmpeg exited 0 but the output could not be
+      checked (stat failed with an error other than "not found").
+    """
+
+    OUTPUT_GUARD = "output_guard"
+    SPAWN = "spawn"
+    EXIT_STATUS = "exit_status"
+    NO_OUTPUT = "no_output"
+    OUTPUT_UNVERIFIABLE = "output_unverifiable"
+
+
 class FFmpegError(Exception):
-    def __init__(self, kind: FFmpegFailureKind, detail: str | None = None) -> None:
+    def __init__(
+        self,
+        kind: FFmpegFailureKind,
+        detail: str | None = None,
+        *,
+        cause: FFmpegFailureCause | None = None,
+    ) -> None:
         self.kind = kind
         self.detail = detail
+        # ``None`` means "not classified" (e.g. BINARY_MISSING, TIMEOUT); it
+        # is never a fallback permission.
+        self.cause = cause
         super().__init__(f"{kind.value}: {detail or ''}")
 
 
@@ -200,11 +233,15 @@ class FFmpegProcessor:
             pass
         except OSError as exc:
             raise FFmpegError(
-                FFmpegFailureKind.FAILED, detail=f"ffmpeg output could not be checked: {exc}"
+                FFmpegFailureKind.FAILED,
+                detail=f"ffmpeg output could not be checked: {exc}",
+                cause=FFmpegFailureCause.OUTPUT_GUARD,
             ) from exc
         else:
             raise FFmpegError(
-                FFmpegFailureKind.FAILED, detail=f"ffmpeg output already exists: {output_path}"
+                FFmpegFailureKind.FAILED,
+                detail=f"ffmpeg output already exists: {output_path}",
+                cause=FFmpegFailureCause.OUTPUT_GUARD,
             )
 
         try:
@@ -221,7 +258,9 @@ class FFmpegProcessor:
             ) from exc
         except OSError as exc:
             raise FFmpegError(
-                FFmpegFailureKind.FAILED, detail=f"ffmpeg could not be started: {exc}"
+                FFmpegFailureKind.FAILED,
+                detail=f"ffmpeg could not be started: {exc}",
+                cause=FFmpegFailureCause.SPAWN,
             ) from exc
 
         try:
@@ -249,10 +288,27 @@ class FFmpegProcessor:
         if process.returncode != 0:
             _discard_output(output_path)
             tail = stderr[-_STDERR_TAIL_BYTES:].decode("utf-8", errors="replace")
-            raise FFmpegError(FFmpegFailureKind.FAILED, detail=tail)
-        if require_output and not _has_output(output_path):
-            _discard_output(output_path)
-            raise FFmpegError(FFmpegFailureKind.FAILED, detail="ffmpeg produced no output")
+            # Non-zero exit; may also be disk-full/permission, see the cause docs.
+            raise FFmpegError(
+                FFmpegFailureKind.FAILED, detail=tail, cause=FFmpegFailureCause.EXIT_STATUS
+            )
+        if require_output:
+            try:
+                has_output = _has_output(output_path)
+            except OSError as exc:
+                _discard_output(output_path)
+                raise FFmpegError(
+                    FFmpegFailureKind.FAILED,
+                    detail=f"ffmpeg output could not be checked: {exc}",
+                    cause=FFmpegFailureCause.OUTPUT_UNVERIFIABLE,
+                ) from exc
+            if not has_output:
+                _discard_output(output_path)
+                raise FFmpegError(
+                    FFmpegFailureKind.FAILED,
+                    detail="ffmpeg produced no output",
+                    cause=FFmpegFailureCause.NO_OUTPUT,
+                )
 
 
 async def _terminate(process: asyncio.subprocess.Process) -> None:
@@ -300,7 +356,9 @@ def _consume_outcome(waiter: asyncio.Future[int]) -> None:
 
 
 def _has_output(output_path: Path) -> bool:
+    # Only "not found" means no output; any other OSError propagates so the
+    # caller can report it as unverifiable instead of a plain missing output.
     try:
         return output_path.stat().st_size > 0
-    except OSError:
+    except FileNotFoundError:
         return False
