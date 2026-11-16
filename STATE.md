@@ -13,12 +13,11 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-11-16.
 
 ## Sıradaki iş
 
-- M6.5a hata nedeni ayrımı uygulandı; dış hata kodları aynı, fallback eklenmedi.
-- M6.5b — tekli Original audio WebM/Opus → .opus kayıpsız remux + Activity uyarılı
-  fallback; önce uygun hata sınırını netleştir. Uygulayıcı Opus; M6.5 açık.
-- EXIT_STATUS alt süreç içindeki disk/izin hatasını ayıramaz; fallback izni yok.
-- Ardından collection eşitliği ve kalıcı uyarı; etiketler ürün kararlarından,
-  artwork açık kapak seçiminden sonra.
+- M6.5b — sıradaki Opus işi: tekli Original WebM/Opus → .opus remux; kullanıcı
+  onaylı fallback sınırı PRODUCT_SPEC §14 / ARCHITECTURE §14'te. Runtime yok.
+- Yalnız FAILED + EXIT_STATUS, yeniden iptal kontrolü ve normal storage/katalog
+  kontrolleriyle Activity uyarılı WebM; ardından collection eşitliği ve kalıcı uyarı.
+- Etiketler ürün kararlarından, artwork açık kapak seçiminden sonra; M6.5 açık.
 
 ## Açık kararlar
 
@@ -56,6 +55,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-11-16.
 
 ## Bilinen riskler
 
+- Accepted: Original remux EXIT_STATUS içindeki disk/izin hatası genel uyarıda kalabilir (PRODUCT_SPEC §14).
 - Accepted: private tek yazıcılı staging lstat/FFmpeg açılışı mikro yarışı sürer;
   eski token'lı çıktılar cleanup'a kadar disk kullanır. Mutlak race koruması değil.
 - Accepted: kill sonrası 5 sn reap + en fazla 1 sn waiter drain; D-state garantisi yok,
