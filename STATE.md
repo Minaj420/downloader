@@ -6,8 +6,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-11-13.
 
 - Mod: Normal, lead OpenCode; bekleyen Claude-only GPT review'u yok.
 - M6 — Metadata ve Adlandırma: M6.4a–f dönüşüm kapsamı kapalı; M6 ve M6.5+ açık.
-- Eski ayrışmış yerel main üzerinden geliştirme yok; yedek dal korunmalı.
-  Çıplak push yok; açık taleple yalnız hedefli push (bu dal için origin reconcile/conversion).
+- Uzlaştırma yedek dalı korunur; push yalnız açık kullanıcı talebi ve hedefle.
 - Onaylı sabit profillerin yetkili belgeye aktarımı bekliyor: MP3 V0, M4A AAC 256k,
   Opus 160k, WAV/FLAC 16-bit; MP4 x264 CRF20 medium + AAC 192k. Yeni ürün kararı değil.
 - Onaylı, belgeye aktarılacak: videodan ses çıkarma yok; ses doğrudan ses akışından.
@@ -40,7 +39,6 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-11-13.
 - should-fix: child Skip Existing Activity uyarısı yok; ayrı lifecycle/transaction işi.
 - should-fix: modelsiz implement resume CLI hatasının belgelenmesi ve izleyici partial-line
   testinin deterministikliği açık; restart/model reload ve farklı-rol resume izolasyonu kanıtsız.
-- should-fix: Claude-only başlangıç kapısına açık yönlendirme WF-S1 dışında, değiştirilmedi.
 - should-fix: lead.md eski bootstrap referansı ayrı bakımda değerlendirilmeli.
 - should-fix: geniş git diff/log izinleri --output seçeneğini teknik olarak dışlamıyor;
   yalnız salt-okunur biçimler kullanılır, config bakımı ayrı. gh PR wildcard'ları da repo/hedef/
@@ -49,7 +47,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-11-13.
 
 ## Son gate
 
-- 2026-11-13 Fedora, WF-S1: statik kapsam/satır kontrolü ve diff --check PASS; uygulama gate'i yok.
+- 2026-11-13 Fedora, WF-F1: statik kapsam/satır kontrolü ve diff --check PASS; uygulama gate'i yok.
 - Uygulama için son ilgili hedefli kontrol (2026-11-10 Fedora): 237 PASS + 4 SKIP
   (libx264 yok), jobs/collection_retry 378 PASS; hedefli Ruff/mypy PASS. Atlananlar doğrulanmadı.
 - 2026-10-30 macOS full gate tarihsel; sonraki uzlaştırma kaynak değişikliğiyle bayat.
