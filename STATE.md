@@ -13,10 +13,9 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-11-16.
 
 ## Sıradaki iş
 
-- M6.5b — sıradaki Opus işi: tekli Original WebM/Opus → .opus remux; kullanıcı
-  onaylı fallback sınırı PRODUCT_SPEC §14 / ARCHITECTURE §14'te. Runtime yok.
-- Yalnız FAILED + EXIT_STATUS, yeniden iptal kontrolü ve normal storage/katalog
-  kontrolleriyle Activity uyarılı WebM; ardından collection eşitliği ve kalıcı uyarı.
+- M6.5c — sıradaki Opus işi: collection Original remux eşitliği ve kalıcı Activity
+  uyarısı; child completion transaction'ı ve commit sonrası yayınla bağlanmalı.
+- M6.5b tekli remux + dar fallback uygulandı; uyarı katalogla atomik. Collection kapalı.
 - Etiketler ürün kararlarından, artwork açık kapak seçiminden sonra; M6.5 açık.
 
 ## Açık kararlar
@@ -26,12 +25,12 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-11-16.
 - M6.9 MB/CAA yalnız aday zinciri; noncommercial/API koşulları ve kapak telifi ayrı.
   Açık kaynak dağıtım için preview/cache/embed hakları entegrasyon öncesi netleşmeli.
 - Onaylı davranışlar: PRODUCT_SPEC §8–9/§13–16, ARCHITECTURE §14/§30–34/§59.
-  Original WebM/Opus remux, tagging ve artwork hâlâ planlı; uygulanmış sayılmaz.
+  Tekli Original WebM/Opus remux uygulandı; collection, tagging ve artwork planlı.
 
 ## Açık bulgular
 
-- should-fix: spec durumları bayat (PRODUCT_SPEC §8–9, ARCHITECTURE M6 kapanış paragrafı);
-  sabit profil değerlerinin yetkili belgeye aktarımı ayrı iş; WF-S1 bu belgeleri değiştirmez.
+- should-fix: spec durumları bayat (PRODUCT_SPEC §8–9/§14, ARCHITECTURE §14/M6);
+  remux durumu collection kapanışında; sabit profillerin yetkili belgeye aktarımı ayrı iş.
 - should-fix: collection başarılı convert/caller-cancel testi sleep(0) ile deterministik değil;
   single başarılı convert+iptal ek testi eksik. Üretim hatası bulunmadı.
 - should-fix: child hata/iptal staging temizliği yok; disk kullanımı artabilir.
@@ -48,8 +47,8 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-11-16.
 
 ## Son gate
 
-- 2026-11-16 Fedora, M6.5a: adapter/prepared/single/collection conversion 166 PASS;
-  gerçek FFmpeg smoke 19 PASS + 4 SKIP (neden bu çağrıda doğrulanmadı).
+- 2026-11-16 Fedora, M6.5b: prepared/single/collection/adapter/output-profile 361 PASS;
+  gerçek FFmpeg smoke 19 PASS + 4 SKIP (FFmpeg libx264 eksik).
 - Hedefli Ruff/mypy PASS; atlananlar doğrulanmış değil, full gate çalıştırılmadı.
 - 2026-10-30 macOS full gate tarihsel; sonraki uzlaştırma kaynak değişikliğiyle bayat.
 

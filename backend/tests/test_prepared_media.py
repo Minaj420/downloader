@@ -10,6 +10,7 @@ from app.domain.jobs import CollectionProfile, JobError, JobErrorCode
 from app.integrations.ffmpeg import (
     ConversionProfile,
     FFmpegError,
+    FFmpegFailureCause,
     FFmpegFailureKind,
     FFmpegProcessor,
 )
@@ -18,7 +19,7 @@ from app.main import create_app
 from app.services.analysis_normalizer import normalize_source_formats
 from app.services.collection_profile_resolver import NativeChildPlan, resolve_native_child
 from app.services.job_runner import _JobExecution
-from app.services.prepared_media import merge_container, prepare_media
+from app.services.prepared_media import OriginalRemux, merge_container, prepare_media
 from app.services.storage_service import StorageService
 from tests.fake_binaries import fake_ffmpeg_record
 
@@ -52,6 +53,11 @@ class Pipeline(YtDlpDownloader, FFmpegProcessor):
         self.process_hook: Any = lambda process: None
         self.conversions: list[tuple[Path, bool, bool]] = []
         self.convert_failure = False
+        self.download_ext = "mp4"
+        self.convert_error: BaseException | None = None
+        self.convert_block = False
+        self.converting = asyncio.Event()
+        self.fallbacks = 0
 
     async def check(self) -> None:
         if self.cancel.is_set():
@@ -61,6 +67,17 @@ class Pipeline(YtDlpDownloader, FFmpegProcessor):
         self.calls.append(("status", "", Path()))
         if self.cancel_at == "status":
             self.cancel.set()
+
+    async def before_remux(self) -> None:
+        self.calls.append(("remux", "", Path()))
+        if self.cancel_at == "remux":
+            self.cancel.set()
+
+    def on_fallback(self) -> None:
+        self.fallbacks += 1
+
+    def remux(self) -> OriginalRemux:
+        return OriginalRemux(self.before_remux, self.on_fallback)
 
     def forwarder(self, index: int, count: int) -> Any:
         async def write(value: DownloadProgress) -> None:
@@ -73,7 +90,7 @@ class Pipeline(YtDlpDownloader, FFmpegProcessor):
 
     async def download(self, **kwargs: Any) -> list[str]:
         selector = kwargs["format_selector"]
-        path = Path(kwargs["output_template"].replace("%(ext)s", "mp4"))
+        path = Path(kwargs["output_template"].replace("%(ext)s", self.download_ext))
         self.calls.append((selector, kwargs["url"], path))
         if self.cancel_at == "registration":
             self.cancel.set()
@@ -104,13 +121,23 @@ class Pipeline(YtDlpDownloader, FFmpegProcessor):
         assert input_path.parent == output_path.parent
         self.calls.append(("convert", profile, output_path))
         self.conversions.append((input_path, copy_audio, copy_video))
+        if self.cancel_at == "convert_registration":
+            self.cancel.set()
         on_process_started(cast(asyncio.subprocess.Process, object()))
+        if self.cancel_at == "convert":
+            self.cancel.set()
+        if self.convert_block:
+            self.converting.set()
+            await self.release.wait()
+        if self.convert_error is not None:
+            raise self.convert_error
         if self.convert_failure:
             raise FFmpegError(FFmpegFailureKind.FAILED, "boom")
 
     async def run(
         self, plan: NativeChildPlan, key: str = "a" * 32, *,
         output: ConversionProfile | None = None, ffmpeg: FFmpegProcessor | None = None,
+        original_remux: OriginalRemux | None = None, child_output: bool = False,
     ) -> Path:
         return await prepare_media(
             selected=plan.selected, companion=plan.companion,
@@ -118,7 +145,7 @@ class Pipeline(YtDlpDownloader, FFmpegProcessor):
             storage=self.storage, downloader=self, ffmpeg=ffmpeg or self,
             check_cancelled=self.check, on_process_started=self.process_hook,
             progress_forwarder=self.forwarder, before_merge=self.before_merge,
-            output=output,
+            output=output, original_remux=original_remux, child_output=child_output,
         )
 
 
@@ -486,6 +513,231 @@ async def test_plan_error_happens_before_any_media_io(
     assert caught.value.code == JobErrorCode.INVALID_PROFILE
     assert not pipeline.calls and not checks
     assert not (tmp_path / "staging" / ("a" * 32)).exists()
+
+
+# --- M6.5b Original WebM/Opus remux ------------------------------------------------
+
+
+def opus_plan(raw_audio: str = "opus", kind: str = "audio") -> NativeChildPlan:
+    if kind == "muxed":
+        return resolve_native_child(
+            source(video_codec="vp9", audio_codec=raw_audio), mode="video",
+            profile=CollectionProfile(max_height=360),
+        )
+    return resolve_native_child(source(audio_codec=raw_audio), mode="audio")
+
+
+def exit_status() -> FFmpegError:
+    return FFmpegError(FFmpegFailureKind.FAILED, "stderr", cause=FFmpegFailureCause.EXIT_STATUS)
+
+
+def fake_ffmpeg_partial_fail(directory: Path) -> str:
+    """Writes a partial output, then exits non-zero (an EXIT_STATUS failure)."""
+    script = directory / "ffmpeg"
+    script.write_text(
+        '#!/bin/sh\nout=""\nfor a in "$@"; do out="$a"; done\n'
+        "printf 'partial' > \"$out\"\necho 'Error: mux failed' >&2\nexit 1\n"
+    )
+    script.chmod(0o755)
+    return str(script)
+
+
+def webm_source(pipeline: Pipeline) -> Path:
+    pipeline.download_ext = "webm"
+    path = pipeline.storage.job_staging_dir("a" * 32) / "media.webm"
+    path.write_bytes(b"webm-source")
+    return path
+
+
+@pytest.mark.anyio
+async def test_original_webm_opus_remuxes_losslessly_into_fresh_target(
+    pipeline: Pipeline, tmp_path: Path,
+) -> None:
+    log = tmp_path / "argv.log"
+    processor = FFmpegProcessor(binary=fake_ffmpeg_record(tmp_path, log))
+    tasks = tracked_helpers(pipeline)
+    media = webm_source(pipeline)
+    result = await pipeline.run(opus_plan(), ffmpeg=processor, original_remux=pipeline.remux())
+    assert result.parent == media.parent
+    assert_fresh(result, "remuxed", "opus")
+    assert result.read_text() == "converted-media"
+    assert media.read_bytes() == b"webm-source"
+    assert [call[0] for call in pipeline.calls] == ["audio", "remux"]
+    assert recorded(log) == [[
+        "-hide_banner", "-nostats", "-nostdin", "-y", "-i", str(media),
+        "-map", "0:a:0", "-vn", "-sn", "-dn", "-c:a", "copy", "-f", "opus", str(result),
+    ]]
+    assert pipeline.fallbacks == 0
+    assert len(tasks) == 2 and all(task.done() for task in tasks)
+
+
+@pytest.mark.anyio
+async def test_real_adapter_exit_status_falls_back_once_to_intact_source(
+    pipeline: Pipeline, tmp_path: Path,
+) -> None:
+    processor = FFmpegProcessor(binary=fake_ffmpeg_partial_fail(tmp_path))
+    tasks = tracked_helpers(pipeline)
+    media = webm_source(pipeline)
+    result = await pipeline.run(opus_plan(), ffmpeg=processor, original_remux=pipeline.remux())
+    assert result == media
+    assert media.read_bytes() == b"webm-source"
+    # The adapter discarded the partial remux output; nothing else was touched.
+    assert [path.name for path in media.parent.iterdir()] == ["media.webm"]
+    assert pipeline.fallbacks == 1
+    assert len(tasks) == 2 and all(task.done() for task in tasks)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("error", [
+    FFmpegError(FFmpegFailureKind.BINARY_MISSING),
+    FFmpegError(FFmpegFailureKind.TIMEOUT),
+    FFmpegError(FFmpegFailureKind.TIMEOUT, cause=FFmpegFailureCause.EXIT_STATUS),
+    FFmpegError(FFmpegFailureKind.FAILED, cause=FFmpegFailureCause.OUTPUT_GUARD),
+    FFmpegError(FFmpegFailureKind.FAILED, cause=FFmpegFailureCause.SPAWN),
+    FFmpegError(FFmpegFailureKind.FAILED, cause=FFmpegFailureCause.NO_OUTPUT),
+    FFmpegError(FFmpegFailureKind.FAILED, cause=FFmpegFailureCause.OUTPUT_UNVERIFIABLE),
+    FFmpegError(FFmpegFailureKind.FAILED),
+    OSError(28, "No space left on device"),
+    JobError(JobErrorCode.INTERNAL_ERROR),
+    asyncio.CancelledError(),
+], ids=[
+    "binary_missing", "timeout", "timeout_exit_status", "output_guard", "spawn",
+    "no_output", "output_unverifiable", "unclassified", "oserror", "joberror", "cancelled",
+])
+async def test_ineligible_remux_failure_propagates_without_fallback(
+    pipeline: Pipeline, error: BaseException,
+) -> None:
+    tasks = tracked_helpers(pipeline)
+    pipeline.download_ext = "webm"
+    pipeline.convert_error = error
+    with pytest.raises(type(error)) as caught:
+        await pipeline.run(opus_plan(), original_remux=pipeline.remux())
+    assert caught.value is error
+    assert pipeline.fallbacks == 0
+    assert [call[0] for call in pipeline.calls] == ["audio", "remux", "convert"]
+    assert len(tasks) == 2 and all(task.done() for task in tasks)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("cancel_at, expected", [
+    ("audio", ["audio"]),
+    ("remux", ["audio", "remux"]),
+    # Cancel's SIGTERM surfaces as a non-zero exit: cancellation still wins.
+    ("convert", ["audio", "remux", "convert"]),
+])
+async def test_cancel_around_remux_wins_over_exit_status_fallback(
+    pipeline: Pipeline, cancel_at: str, expected: list[str],
+) -> None:
+    tasks = tracked_helpers(pipeline)
+    pipeline.download_ext = "webm"
+    pipeline.cancel_at = cancel_at
+    pipeline.convert_error = exit_status()
+    with pytest.raises(JobError) as caught:
+        await pipeline.run(opus_plan(), original_remux=pipeline.remux())
+    assert caught.value.code == JobErrorCode.CANCELLED
+    assert [call[0] for call in pipeline.calls] == expected
+    assert pipeline.fallbacks == 0
+    assert tasks and all(task.done() for task in tasks)
+
+
+@pytest.mark.anyio
+async def test_task_cancellation_during_remux_is_not_swallowed(pipeline: Pipeline) -> None:
+    pipeline.download_ext = "webm"
+    pipeline.convert_block = True
+    task = asyncio.create_task(pipeline.run(opus_plan(), original_remux=pipeline.remux()))
+    try:
+        await asyncio.wait_for(pipeline.converting.wait(), 2)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert pipeline.fallbacks == 0
+    finally:
+        pipeline.release.set()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.anyio
+async def test_remux_registration_race_terminates_drains_and_cancels(
+    pipeline: Pipeline, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The actual single runner registration hook, as in the download/merge race.
+    execution = object.__new__(_JobExecution)
+    execution._job_id = "a" * 32
+    execution._cancel_event = pipeline.cancel
+    execution._processes = {}
+    execution._helpers = set()
+    process = cast(asyncio.subprocess.Process, type("Process", (), {"returncode": None})())
+    terminating = asyncio.Event()
+    terminated = []
+
+    async def terminate(value: Any, grace: float) -> None:
+        assert value is process and grace == 5.0
+        terminating.set()
+        await pipeline.release.wait()
+        terminated.append(value)
+
+    monkeypatch.setattr("app.services.job_runner.ensure_process_terminated", terminate)
+    pipeline.process_hook = lambda _: execution._register_process(process)
+    pipeline.download_ext = "webm"
+    pipeline.cancel_at = "convert_registration"
+    pipeline.convert_error = exit_status()
+    task = asyncio.create_task(pipeline.run(opus_plan(), original_remux=pipeline.remux()))
+    try:
+        await asyncio.wait_for(terminating.wait(), 2)
+        assert not task.done()
+        pipeline.release.set()
+        with pytest.raises(JobError) as caught:
+            await task
+        assert caught.value.code == JobErrorCode.CANCELLED
+        assert terminated == [process]
+        assert pipeline.fallbacks == 0
+        assert all(helper.done() for helper in execution._helpers)
+    finally:
+        pipeline.release.set()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("raw_audio, kind, ext, enabled, child", [
+    ("opus", "audio", "webm", False, False),
+    ("opus", "audio", "webm", True, True),
+    ("mp4a.40.2", "audio", "webm", True, False),
+    ("opus", "audio", "m4a", True, False),
+    ("opus", "audio", "mp4", True, False),
+    ("opus", "audio", "WEBM", True, False),
+    ("opus", "muxed", "webm", True, False),
+], ids=["default_off", "child", "aac", "m4a", "mp4", "upper_suffix", "muxed"])
+async def test_ineligible_original_returns_download_without_remux(
+    pipeline: Pipeline, raw_audio: str, kind: str, ext: str, enabled: bool, child: bool,
+) -> None:
+    pipeline.download_ext = ext
+    plan = opus_plan(raw_audio, kind)
+    result = await pipeline.run(
+        plan, original_remux=pipeline.remux() if enabled else None, child_output=child,
+    )
+    assert result.name == f"media.{ext}"
+    assert [call[0] for call in pipeline.calls] == [plan.selected.format_id]
+    assert not pipeline.conversions and pipeline.fallbacks == 0
+
+
+@pytest.mark.anyio
+async def test_remux_hooks_leave_merge_and_explicit_output_unchanged(pipeline: Pipeline) -> None:
+    pipeline.download_ext = "webm"
+    hooks = pipeline.remux()
+    merged = await pipeline.run(
+        resolve_native_child(source(video_codec="vp9", audio_codec="opus"), mode="video"),
+        original_remux=hooks,
+    )
+    assert_fresh(merged, "merged", "mkv")
+    converted = await pipeline.run(opus_plan(), "b" * 32, output="opus", original_remux=hooks)
+    assert_fresh(converted, "converted", "opus")
+    assert pipeline.conversions == [(converted.parent / "media.webm", True, False)]
+    error = pipeline.convert_error = exit_status()
+    with pytest.raises(FFmpegError) as caught:
+        await pipeline.run(opus_plan(), "c" * 32, output="opus", original_remux=hooks)
+    assert caught.value is error
+    assert "remux" not in [call[0] for call in pipeline.calls]
+    assert pipeline.fallbacks == 0
 
 
 @pytest.mark.anyio

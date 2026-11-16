@@ -10,16 +10,45 @@ import asyncio
 import secrets
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from app.domain.analysis import NormalizedFormat
 from app.domain.jobs import JobError, JobErrorCode
-from app.integrations.ffmpeg import ConversionProfile, FFmpegProcessor, output_extension
+from app.integrations.ffmpeg import (
+    ConversionProfile,
+    FFmpegError,
+    FFmpegFailureCause,
+    FFmpegFailureKind,
+    FFmpegProcessor,
+    output_extension,
+)
 from app.integrations.ytdlp import DownloadProgress, YtDlpDownloader
 from app.services.conversion_plan import plan_conversion
 from app.services.storage_service import StorageService
 
 HookTask = asyncio.Task[Any] | None
+
+
+class OriginalRemux(NamedTuple):
+    """Opt-in Original WebM/Opus → ``.opus`` lossless remux (PRODUCT_SPEC §14).
+
+    ``before`` is the caller's status hook, awaited once before FFmpeg runs.
+    ``on_fallback`` is a synchronous recorder called at most once when the
+    remux failed with a non-zero FFmpeg exit and the job was not cancelled;
+    the caller then publishes the returned original WebM with its warning.
+    """
+
+    before: Callable[[], Awaitable[None]]
+    on_fallback: Callable[[], None]
+
+
+def _remux_eligible(selected: NormalizedFormat, source: Path) -> bool:
+    # The downloaded file's real suffix decides, never the analysis ext.
+    return (
+        selected.kind == "audio_only"
+        and selected.audio_codec == "opus"
+        and source.suffix == ".webm"
+    )
 
 
 def _fresh_name(stem: str, extension: str) -> str:
@@ -49,6 +78,7 @@ async def prepare_media(
     before_merge: Callable[[], Awaitable[None]],
     child_output: bool = False,
     output: ConversionProfile | None = None,
+    original_remux: OriginalRemux | None = None,
 ) -> Path:
     """Prepare one selected stream, optionally sequentially download and merge.
 
@@ -58,6 +88,11 @@ async def prepare_media(
     With ``output`` the result is converted last; the plan is validated before
     any media I/O and ``before_merge`` still runs once, before the first
     post-processing step. Intermediate files stay in staging for the caller.
+
+    ``original_remux`` applies only without ``output`` and outside child mode,
+    to an audio-only Opus download whose real file is ``.webm``. Only an
+    ``EXIT_STATUS`` failure, after a fresh cancellation check, falls back to
+    the untouched source; every other failure propagates unchanged.
     """
     plan = plan_conversion(output, selected, companion) if output is not None else None
     closed = False
@@ -95,6 +130,28 @@ async def prepare_media(
             )
         return Path(produced[0])
 
+    async def remux(source: Path, hooks: OriginalRemux) -> Path:
+        await check_cancelled()
+        await hooks.before()
+        # The caller's status/activity hook may yield to a Cancel request.
+        await check_cancelled()
+        remuxed = staging_dir / _fresh_name("remuxed", "opus")
+        try:
+            await ffmpeg.convert(
+                source, remuxed, "opus", copy_audio=True, on_process_started=register,
+            )
+        except FFmpegError as exc:
+            if (
+                exc.kind is not FFmpegFailureKind.FAILED
+                or exc.cause is not FFmpegFailureCause.EXIT_STATUS
+            ):
+                raise
+            # A non-zero exit may be the SIGTERM sent for Cancel: cancellation wins.
+            await check_cancelled()
+            hooks.on_fallback()
+            return source
+        return remuxed
+
     try:
         staging_dir = storage.job_staging_dir(staging_key)
         if selected.kind == "video_only" and companion is not None:
@@ -112,7 +169,13 @@ async def prepare_media(
         else:
             source = await download("media", selected.format_id, 0, 1)
             if output is None or plan is None:
-                return source
+                if (
+                    original_remux is None
+                    or child_output
+                    or not _remux_eligible(selected, source)
+                ):
+                    return source
+                return await remux(source, original_remux)
             await check_cancelled()
             await before_merge()
         await check_cancelled()

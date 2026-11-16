@@ -45,7 +45,7 @@ from app.integrations.ytdlp import (
     YtDlpFailureKind,
 )
 from app.models.analysis import AnalysisSession
-from app.models.jobs import DownloadJob
+from app.models.jobs import ActivityEvent, DownloadJob
 from app.models.library import LibraryItem, MediaFile
 from app.repositories import activity
 from app.repositories import jobs as job_repo
@@ -57,7 +57,7 @@ from app.services.conversion_plan import (
 from app.services.event_bus import EventBus
 from app.services.job_mapping import job_to_dto
 from app.services.library_service import stage_media_catalog_reference
-from app.services.prepared_media import prepare_media
+from app.services.prepared_media import OriginalRemux, prepare_media
 from app.services.storage_service import (
     MediaFileMissingError,
     MediaFileNotRegularError,
@@ -88,6 +88,20 @@ _FFMPEG_KIND_TO_JOB_CODE: dict[FFmpegFailureKind, JobErrorCode] = {
     FFmpegFailureKind.FAILED: JobErrorCode.POST_PROCESSING_FAILED,
     FFmpegFailureKind.TIMEOUT: JobErrorCode.POST_PROCESSING_FAILED,
 }
+
+_REMUX_MESSAGE = "Post-processing (remuxing audio to .opus)"
+# Fixed text only: never raw FFmpeg stderr, paths or details. EXIT_STATUS cannot
+# separate a disk/permission error inside FFmpeg from a media error (§14).
+_REMUX_UNCERTAINTY = (
+    "This may also be caused by a disk or permission problem inside FFmpeg."
+)
+_REMUX_FALLBACK_SAVED = (
+    "Opus packaging failed — saved the original WebM file. " + _REMUX_UNCERTAINTY
+)
+_REMUX_FALLBACK_SKIPPED = (
+    "Opus packaging failed — a file with this name already exists, kept the "
+    "existing copy. " + _REMUX_UNCERTAINTY
+)
 
 _DETAIL_LIMIT = 4_000
 _TERMINATION_GRACE_SECONDS = 5.0
@@ -333,6 +347,17 @@ class _JobExecution:
                 JobStatus.POST_PROCESSING, _post_processing_message(merging, output)
             )
 
+        async def before_remux() -> None:
+            await self._set_status(JobStatus.POST_PROCESSING, _REMUX_MESSAGE)
+
+        # Only recorded here; the warning is written with the completion
+        # transaction so a rolled back or lost completion leaves none.
+        remux_fallback = False
+
+        def record_remux_fallback() -> None:
+            nonlocal remux_fallback
+            remux_fallback = True
+
         media_file = await prepare_media(
             selected=selected,
             companion=companion,
@@ -346,6 +371,7 @@ class _JobExecution:
             progress_forwarder=self._progress_forwarder,
             before_merge=before_merge,
             output=output,
+            original_remux=OriginalRemux(before_remux, record_remux_fallback),
         )
 
         await self._check_cancelled()
@@ -366,7 +392,10 @@ class _JobExecution:
         else:
             await self._activity("Saved to App Library")
 
-        await self._complete(record, normalized, selected, placement, plan)
+        await self._complete(
+            record, normalized, selected, placement, plan,
+            remux_fallback=remux_fallback,
+        )
         self._deps.storage.remove_staging(self._job_id)
 
     def _progress_forwarder(
@@ -443,6 +472,8 @@ class _JobExecution:
         selected: NormalizedFormat,
         placement: PlacementResult,
         plan: ConversionPlan | None = None,
+        *,
+        remux_fallback: bool = False,
     ) -> None:
         """Complete the job and write its Library catalog rows atomically.
 
@@ -457,6 +488,10 @@ class _JobExecution:
         File that committed while this completion waited on the lock
         fails the whole transaction instead of leaving a completed job
         with a dangling reference to a deleted file.
+
+        ``remux_fallback`` adds the Original remux warning Activity inside the
+        same transaction, after the catalog re-verification succeeded; it is
+        published only once the completion has committed.
         """
         item, media_file = build_app_library_catalog(
             record, normalized, selected, placement, plan
@@ -503,7 +538,22 @@ class _JobExecution:
                         f"before catalog commit: {exc!r}"
                     ),
                 ) from exc
+            warning = None
+            if remux_fallback:
+                warning = await activity.add_activity_event(
+                    session,
+                    job_id=self._job_id,
+                    level="warning",
+                    event_type="job",
+                    message=(
+                        _REMUX_FALLBACK_SKIPPED
+                        if placement.skipped_existing
+                        else _REMUX_FALLBACK_SAVED
+                    ),
+                )
             await session.commit()
+        if warning is not None:
+            self._publish_activity(warning)
         await self._publish_job_event("job.completed")
 
     async def _fail(self, error: JobError) -> None:
@@ -580,14 +630,18 @@ class _JobExecution:
                 details=details,
             )
             await session.commit()
-            payload = {
-                "id": event.id,
-                "job_id": event.job_id,
-                "level": event.level,
-                "event_type": event.event_type,
-                "message": event.message,
-                "created_at": event.created_at.isoformat(),
-            }
+        self._publish_activity(event)
+
+    def _publish_activity(self, event: ActivityEvent) -> None:
+        """Publish an already committed Activity row as ``activity.created``."""
+        payload = {
+            "id": event.id,
+            "job_id": event.job_id,
+            "level": event.level,
+            "event_type": event.event_type,
+            "message": event.message,
+            "created_at": event.created_at.isoformat(),
+        }
         self._deps.bus.publish(
             {"event": "activity.created", "id": event.id, "data": payload}
         )

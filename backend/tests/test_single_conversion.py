@@ -20,14 +20,25 @@ from sqlalchemy import select
 
 from app.config import Settings
 from app.domain.analysis import MediaFormatKind, NormalizedAnalysis, NormalizedFormat
-from app.domain.jobs import job_error_code_retryable
-from app.integrations.ffmpeg import ConversionProfile, FFmpegError, FFmpegFailureKind
+from app.domain.jobs import JobError, JobErrorCode, job_error_code_retryable
+from app.integrations.ffmpeg import (
+    ConversionProfile,
+    FFmpegError,
+    FFmpegFailureCause,
+    FFmpegFailureKind,
+)
 from app.models.analysis import AnalysisSession
 from app.models.jobs import ActivityEvent, DownloadJob
 from app.models.library import LibraryItem, MediaFile
 from app.repositories import jobs as job_repo
-from app.services.job_runner import RunnerDeps, run_download_job
-from app.services.storage_service import StorageService
+from app.services import job_runner
+from app.services.job_runner import (
+    _REMUX_FALLBACK_SAVED,
+    _REMUX_FALLBACK_SKIPPED,
+    RunnerDeps,
+    run_download_job,
+)
+from app.services.storage_service import MediaFileMissingError, StorageService
 from tests.conftest import FakeAnalyzer, build_application
 from tests.fake_binaries import fake_ffmpeg_fail, fake_ffmpeg_record, fake_ytdlp_ok
 from tests.test_collection_repository import factory
@@ -70,11 +81,12 @@ class StubMedia:
         self.calls: list[str] = []
         self.conversions: list[tuple[str, str, bool, bool]] = []
         self.merges: list[str] = []
-        self.convert_error: FFmpegError | None = None
+        self.convert_error: BaseException | None = None
         self.in_convert: Callable[[], None] | None = None
+        self.download_ext = "mp4"
 
     async def download(self, **kwargs: Any) -> list[str]:
-        path = Path(kwargs["output_template"].replace("%(ext)s", "mp4"))
+        path = Path(kwargs["output_template"].replace("%(ext)s", self.download_ext))
         self.calls.append(f"download:{kwargs['format_selector']}")
         path.write_bytes(b"source")
         return [str(path)]
@@ -118,11 +130,13 @@ class Facts:
     def __init__(
         self, record: DownloadJob, messages: list[str],
         items: list[LibraryItem], files: list[MediaFile],
+        warnings: list[ActivityEvent],
     ) -> None:
         self.record = record
         self.messages = messages
         self.items = items
         self.files = files
+        self.warnings = warnings
 
 
 class SingleRun:
@@ -185,7 +199,9 @@ class SingleRun:
                 select(ActivityEvent.message).order_by(ActivityEvent.id))).all())
             items = list((await session.scalars(select(LibraryItem))).all())
             files = list((await session.scalars(select(MediaFile))).all())
-        return Facts(record, messages, items, files)
+            warnings = list((await session.scalars(select(ActivityEvent).where(
+                ActivityEvent.level == "warning").order_by(ActivityEvent.id))).all())
+        return Facts(record, messages, items, files, warnings)
 
     def published_files(self) -> list[Path]:
         return sorted(path for path in self.library.rglob("*") if path.is_file())
@@ -355,6 +371,259 @@ async def test_original_merge_keeps_merge_only_message_and_source_codec(
     ]
     [item] = facts.items
     assert (item.codec, item.bitrate) == ("vp9", 2800.0)
+
+
+# --- Original WebM/Opus remux (M6.5b) ----------------------------------------------
+
+REMUX_STATUS = "Post-processing (remuxing audio to .opus)"
+SKIPPED = "A file with this name already exists — kept the existing copy"
+OPUS_AUDIO = [fmt("a", AUDIO, audio="opus", bitrate=160.0)]
+
+
+def exit_status() -> FFmpegError:
+    return FFmpegError(
+        FFmpegFailureKind.FAILED, "raw stderr /private/secret",
+        cause=FFmpegFailureCause.EXIT_STATUS,
+    )
+
+
+def remux_fails(error: BaseException | None) -> Callable[[SingleRun], None]:
+    def prepare(run: SingleRun) -> None:
+        run.media.download_ext = "webm"
+        run.media.convert_error = error
+
+    return prepare
+
+
+def warning_events(run: SingleRun) -> list[str]:
+    return [event["data"]["message"] for event in run.bus.events
+            if event["event"] == "activity.created" and event["data"]["level"] == "warning"]
+
+
+def assert_nothing_published(run: SingleRun, facts: Facts) -> None:
+    assert run.published_files() == []
+    assert (facts.items, facts.files, facts.warnings) == ([], [], [])
+    assert warning_events(run) == []
+    assert "Saved to App Library" not in facts.messages
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("profile", [None, "original"])
+async def test_original_webm_opus_remux_publishes_opus_with_source_catalog(
+    tmp_path: Path, profile: str | None,
+) -> None:
+    sources: list[bytes] = []
+
+    def prepare(run: SingleRun) -> None:
+        remux_fails(None)(run)
+        run.media.in_convert = lambda: sources.append(
+            (run.staging / "job" / "media.webm").read_bytes())
+
+    run, facts = await execute_run(tmp_path, OPUS_AUDIO, "a", profile, prepare=prepare)
+    record = facts.record
+    assert (record.status, record.error_code, record.final_path) == (
+        "completed", None, f"audio/{TITLE}.opus"), record.error_detail
+    assert run.published_files() == [run.library / "audio" / f"{TITLE}.opus"]
+    assert (run.library / "audio" / f"{TITLE}.opus").read_bytes() == b"converted"
+    assert sources == [b"source"]
+    assert run.media.calls == ["download:raw-a", "convert:opus"]
+    [(input_name, output_name, copy_audio, copy_video)] = run.media.conversions
+    assert input_name == "media.webm" and is_fresh(output_name, "remuxed", "opus")
+    assert (copy_audio, copy_video) == (True, False)
+    assert facts.messages == [
+        "Download started", REMUX_STATUS, "Finalizing", "Saved to App Library"]
+    assert facts.warnings == [] and warning_events(run) == []
+    [item] = facts.items
+    [media_file] = facts.files
+    assert (item.media_type, item.format, item.codec, item.bitrate) == (
+        "audio", "opus", "opus", 160.0)
+    assert media_file.path == record.final_path
+    assert not (run.staging / "job").exists()
+    assert [event["event"] for event in run.bus.events][-1] == "job.completed"
+
+
+@pytest.mark.anyio
+async def test_remux_exit_status_publishes_original_webm_with_one_warning(
+    tmp_path: Path,
+) -> None:
+    run, facts = await execute_run(
+        tmp_path, OPUS_AUDIO, "a", None, prepare=remux_fails(exit_status()))
+    record = facts.record
+    assert (record.status, record.error_code, record.final_path) == (
+        "completed", None, f"audio/{TITLE}.webm"), record.error_detail
+    assert run.published_files() == [run.library / "audio" / f"{TITLE}.webm"]
+    assert (run.library / "audio" / f"{TITLE}.webm").read_bytes() == b"source"
+    assert facts.messages == [
+        "Download started", REMUX_STATUS, "Finalizing", "Saved to App Library",
+        _REMUX_FALLBACK_SAVED,
+    ]
+    assert "saved the original WebM" in _REMUX_FALLBACK_SAVED
+    assert "disk or permission problem inside FFmpeg" in _REMUX_FALLBACK_SAVED
+    [warning] = facts.warnings
+    assert (warning.message, warning.details_json) == (_REMUX_FALLBACK_SAVED, None)
+    assert all("stderr" not in message and "/private" not in message
+               for message in facts.messages)
+    [item] = facts.items
+    assert (item.media_type, item.format, item.codec, item.bitrate) == (
+        "audio", "webm", "opus", 160.0)
+    # Published once, after commit, before the completion event.
+    assert warning_events(run) == [_REMUX_FALLBACK_SAVED]
+    names = [event["event"] for event in run.bus.events]
+    assert names[-2:] == ["activity.created", "job.completed"]
+    assert run.bus.events[-2]["id"] == warning.id
+    assert not (run.staging / "job").exists()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("error, code", [
+    (FFmpegError(FFmpegFailureKind.BINARY_MISSING), "ffmpeg_missing"),
+    (FFmpegError(FFmpegFailureKind.TIMEOUT), "post_processing_failed"),
+    (FFmpegError(FFmpegFailureKind.FAILED, cause=FFmpegFailureCause.OUTPUT_GUARD),
+     "post_processing_failed"),
+    (FFmpegError(FFmpegFailureKind.FAILED, cause=FFmpegFailureCause.SPAWN),
+     "post_processing_failed"),
+    (FFmpegError(FFmpegFailureKind.FAILED, cause=FFmpegFailureCause.NO_OUTPUT),
+     "post_processing_failed"),
+    (FFmpegError(FFmpegFailureKind.FAILED, cause=FFmpegFailureCause.OUTPUT_UNVERIFIABLE),
+     "post_processing_failed"),
+    (FFmpegError(FFmpegFailureKind.FAILED), "post_processing_failed"),
+    (OSError(28, "No space left on device"), "disk_write_failed"),
+    (JobError(JobErrorCode.INTERNAL_ERROR), "internal_error"),
+], ids=[
+    "binary_missing", "timeout", "output_guard", "spawn", "no_output",
+    "output_unverifiable", "unclassified", "oserror", "joberror",
+])
+async def test_ineligible_remux_failure_fails_job_without_warning(
+    tmp_path: Path, error: BaseException, code: str,
+) -> None:
+    run, facts = await execute_run(tmp_path, OPUS_AUDIO, "a", None, prepare=remux_fails(error))
+    assert (facts.record.status, facts.record.error_code) == ("failed", code)
+    assert facts.record.final_path is None
+    assert_nothing_published(run, facts)
+    assert [event["event"] for event in run.bus.events][-1] == "job.failed"
+
+
+@pytest.mark.anyio
+async def test_remux_task_cancellation_is_not_swallowed(tmp_path: Path) -> None:
+    run = SingleRun(tmp_path)
+    try:
+        await run.seed(OPUS_AUDIO, "a", None)
+        remux_fails(asyncio.CancelledError())(run)
+        with pytest.raises(asyncio.CancelledError):
+            await run.run()
+        facts = await run.facts()
+    finally:
+        await run.engine.dispose()
+    assert (facts.record.status, facts.record.error_code) == ("failed", "interrupted_by_restart")
+    assert_nothing_published(run, facts)
+
+
+@pytest.mark.anyio
+async def test_cancel_during_remux_exit_status_cancels_without_warning(tmp_path: Path) -> None:
+    def prepare(run: SingleRun) -> None:
+        run.media.download_ext = "webm"
+
+        def cancel_and_terminate() -> None:
+            run.cancel.set()
+            run.media.convert_error = exit_status()
+
+        run.media.in_convert = cancel_and_terminate
+
+    run, facts = await execute_run(tmp_path, OPUS_AUDIO, "a", None, prepare=prepare)
+    assert (facts.record.status, facts.record.error_code) == ("cancelled", "cancelled")
+    assert run.media.calls == ["download:raw-a", "convert:opus"]
+    assert_nothing_published(run, facts)
+    assert facts.messages[-1] == "Cancelled"
+    assert [event["event"] for event in run.bus.events][-1] == "job.cancelled"
+    assert not (run.staging / "job").exists()
+
+
+@pytest.mark.anyio
+async def test_explicit_opus_exit_status_fails_without_remux_fallback(tmp_path: Path) -> None:
+    run, facts = await execute_run(
+        tmp_path, OPUS_AUDIO, "a", "opus", prepare=remux_fails(exit_status()))
+    assert (facts.record.status, facts.record.error_code) == ("failed", "post_processing_failed")
+    assert_converted(run.media, "media.webm", "opus", True, False)
+    assert "Converting to OPUS" in facts.messages and REMUX_STATUS not in facts.messages
+    assert_nothing_published(run, facts)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("failure", ["verification", "commit", "placement", "lost_claim"])
+async def test_remux_fallback_warning_requires_committed_completion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str,
+) -> None:
+    stage_catalog = job_runner.stage_media_catalog_reference
+    stage_update = job_repo.stage_job_update_if_status
+
+    async def missing(*args: Any, **kwargs: Any) -> None:
+        raise MediaFileMissingError("gone")
+
+    async def stage_then_break_commit(session: Any, *args: Any, **kwargs: Any) -> None:
+        await stage_catalog(session, *args, **kwargs)
+
+        async def broken_commit() -> None:
+            raise RuntimeError("commit failed")
+
+        monkeypatch.setattr(session, "commit", broken_commit)
+
+    async def lost(session: Any, job_id: str, statuses: Any, values: dict[str, Any]) -> bool:
+        # Only the completion claim loses the race; earlier transitions are real.
+        if values.get("status") == "completed":
+            return False
+        return await stage_update(session, job_id, statuses, values)
+
+    async def broken_place(*args: Any, **kwargs: Any) -> None:
+        raise OSError(28, "No space left on device")
+
+    def prepare(run: SingleRun) -> None:
+        remux_fails(exit_status())(run)
+        if failure == "placement":
+            monkeypatch.setattr(run.storage, "place_final", broken_place)
+
+    if failure == "verification":
+        monkeypatch.setattr(job_runner, "stage_media_catalog_reference", missing)
+    elif failure == "commit":
+        monkeypatch.setattr(job_runner, "stage_media_catalog_reference", stage_then_break_commit)
+    elif failure == "lost_claim":
+        monkeypatch.setattr(job_repo, "stage_job_update_if_status", lost)
+    run, facts = await execute_run(tmp_path, OPUS_AUDIO, "a", None, prepare=prepare)
+    expected = {
+        "verification": ("failed", "internal_error"),
+        "commit": ("failed", "internal_error"),
+        "placement": ("failed", "disk_write_failed"),
+        "lost_claim": ("finalizing", None),
+    }[failure]
+    assert (facts.record.status, facts.record.error_code) == expected
+    assert (facts.items, facts.files, facts.warnings) == ([], [], [])
+    assert warning_events(run) == []
+    assert _REMUX_FALLBACK_SAVED not in facts.messages
+    assert "job.completed" not in [event["event"] for event in run.bus.events]
+
+
+@pytest.mark.anyio
+async def test_remux_fallback_skip_existing_keeps_file_without_saved_claim(
+    tmp_path: Path,
+) -> None:
+    def prepare(run: SingleRun) -> None:
+        remux_fails(exit_status())(run)
+        (run.library / "audio" / f"{TITLE}.webm").write_bytes(b"existing")
+
+    run, facts = await execute_run(tmp_path, OPUS_AUDIO, "a", None, prepare=prepare)
+    assert (facts.record.status, facts.record.final_path) == (
+        "completed", f"audio/{TITLE}.webm")
+    assert run.published_files() == [run.library / "audio" / f"{TITLE}.webm"]
+    assert (run.library / "audio" / f"{TITLE}.webm").read_bytes() == b"existing"
+    assert facts.messages == [
+        "Download started", REMUX_STATUS, "Finalizing", SKIPPED, _REMUX_FALLBACK_SKIPPED]
+    assert "saved" not in _REMUX_FALLBACK_SKIPPED.lower()
+    assert "kept the existing copy" in _REMUX_FALLBACK_SKIPPED
+    assert "disk or permission problem inside FFmpeg" in _REMUX_FALLBACK_SKIPPED
+    assert [warning.message for warning in facts.warnings] == [SKIPPED, _REMUX_FALLBACK_SKIPPED]
+    assert warning_events(run) == [SKIPPED, _REMUX_FALLBACK_SKIPPED]
+    [item] = facts.items
+    assert (item.format, item.codec, item.bitrate) == ("webm", "opus", 160.0)
+    assert not (run.staging / "job").exists()
 
 
 # --- plan validation before any media I/O -----------------------------------------
