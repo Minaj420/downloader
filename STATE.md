@@ -14,8 +14,8 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-11-17.
 ## Sıradaki iş
 
 - M6.5b/c tekli ve collection remux + dar fallback uygulandı; uyarı katalogla atomik.
-- Sıradaki bounded iş: remux durumunu PRODUCT_SPEC §8/§14 ve ARCHITECTURE §14/M6'da
-  eşitle; sonra metadata/etiket kararlarını netleştir. M6.5 hâlâ açık.
+- Sıradaki bounded iş: metadata/etiket kararlarını Opus görüşüyle seçeneklere ayır;
+  açık ürün tercihlerini kullanıcıya sor, onay olmadan etiket uygulama. M6.5 açık.
 - Etiketler ürün kararlarından, artwork açık kapak seçiminden sonra; M6.5 açık.
 
 ## Açık kararlar
@@ -29,8 +29,8 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-11-17.
 
 ## Açık bulgular
 
-- should-fix: spec durumları bayat (PRODUCT_SPEC §8–9/§14, ARCHITECTURE §14/M6);
-  remux durumu collection kapanışında; sabit profillerin yetkili belgeye aktarımı ayrı iş.
+- should-fix: eski conversion durumları PRODUCT_SPEC §8–9 ve ARCHITECTURE M6
+  kapanış paragrafında bayat; sabit profillerin yetkili belgeye aktarımı ayrı iş.
 - should-fix: collection başarılı convert/caller-cancel testi sleep(0) ile deterministik değil;
   single başarılı convert+iptal ek testi eksik. Üretim hatası bulunmadı.
 - should-fix: child hata/iptal staging temizliği yok; disk kullanımı artabilir.
