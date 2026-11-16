@@ -1,6 +1,6 @@
 # Durum
 
-Devam özeti; iş akışı `docs/WORKFLOW.md`. Son güncelleme: 2026-11-17.
+Devam özeti; iş akışı `docs/WORKFLOW.md`.
 
 ## Şu an
 
