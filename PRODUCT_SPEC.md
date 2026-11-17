@@ -166,6 +166,8 @@ Detected platform: SoundCloud
 [ Use SoundCloud ]
 ```
 
+**Auto Select display and platform icons (approved; planned, not implemented).** After analysis, the dropdown shows the detected platform while the mode stays Auto Select; displaying the backend's detected hint must never silently turn into a manual override (the platform hint sent with a later analysis stays absent unless the user explicitly picks a platform). Platform icons are approved for v0.1 and come from an openly licensed icon set; the actual set and license are **still open** (no candidate chosen; selection/research awaits approval, no dependency is added now). The preview platform badge keeps brand colour/logo with the existing contrast check, and an icon is never the only semantic carrier of the platform (the text label stays).
+
 ---
 
 # 5. Extractor Failure Handling
@@ -245,6 +247,10 @@ Save
         ↓
 Library / Device
 ```
+
+**Single-item Audio / Video choice (approved; planned, not implemented).** For a single item, the top Audio / Video choice works like the collection one: only the source and output options of the selected type are shown.
+
+**New Download state across navigation (observed; suggestion PROPOSED — awaiting user approval, not a requirement).** The analysis, selection and job card are lost on tab navigation or F5. The Queue page (§17) restores access to jobs from the server but does not by itself solve this. Keeping a draft across navigation/F5 is a user suggestion, not an approved implementation; the technical sketch is in ARCHITECTURE §59 (Q2). Approved condition: after a new analysis, the old job card is cleared only once Queue gives access to cancelled-job Retry (the history lives in Queue).
 
 ---
 
@@ -328,6 +334,14 @@ If the source maximum is 1080p:
 
 - 1440p must not appear as a genuine quality option.
 - 2160p must not appear as a genuine quality option.
+
+**Quality ceilings (approved; planned, not implemented; technical clarification of the example above).** The quality list is a set of ceilings, not exact qualities; the exact-quality reading of the list above is superseded:
+
+- Only the standard ceilings 144/240/360/480/720/1080/1440/2160 are offered, labelled `Up to Xp` (user wording "En fazla Xp"; final UI string is an implementation detail). Selection means the best source format whose real height is `<= X`; there is never upscaling.
+- Non-standard heights (for example 608p, 858p, 804p) get no quality row of their own; the actual resolution is shown in the Library.
+- If the source maximum is not a standard height, it is shown under the smallest standard ceiling that covers it (608 → `Up to 720p`, 858 → `Up to 1080p`). This never means an exact 720p/1080p result and never upscaling. No ceiling above that top ceiling is offered, and a lower ceiling appears only when a source format with height `<=` that ceiling exists.
+- `Best Available` may stay the default. If the height is not reliable, only `Best Available` is offered and no imaginary ceiling is shown. If the source maximum exceeds 2160, `Best Available` may be higher while the ceiling list ends at 2160.
+- Collection-level `max_height` ceiling picker (finding 20): the backend already supports it, the UI does not. Offering the same ceiling picker for collections is a **user suggestion, not yet approved**.
 
 Where video and audio streams are separate, the backend may use `yt-dlp` and FFmpeg to produce the final playable media file.
 
@@ -561,6 +575,8 @@ Additional options:
 
 The application must never silently overwrite an existing media file.
 
+**Video naming and collision results (approved; planned, not implemented).** A video file name carries the actual resolution of the produced file: `Title (720p).mp4`. Any other name collision uses `(2)`. When the request is exactly the same as an existing one, the existing file is kept and the job is shown as `Already exists`, not `Completed`. This is a user-visible result decision only: no new database state enum and no new API shape has been chosen yet. Planned supersede notes for deprecated behaviour: showing a differently-qualified request as successfully completed from an existing path (finding 3) is superseded by these rules. Note that distinct logical Library rows sharing one physical file are not data corruption: the current skip-existing test contract is deliberate and stays until a storage/catalog contract task decides otherwise; presenting the wrong quality as a successful result from an existing path is a separate defect.
+
 ---
 
 # 17. Queue
@@ -581,8 +597,17 @@ Required actions where appropriate:
 
 - Cancel
 - Retry
-- Remove
-- Clear Completed
+- ~~Remove~~ and ~~Clear Completed~~ — superseded (approved) by the Clear History decision below; there is no per-job remove.
+
+**Queue page status and decisions.** Observed: the Queue page is still a placeholder. It is a v0.1 required capability, and its prerequisite M6-Q comes before M6.5 tag work (ARCHITECTURE §59, which holds the technical details). All items below are approved decisions, **planned, not implemented**, unless marked otherwise:
+
+- The page lists active, queued and history jobs with Cancel and Retry (parent-only for collections, per-child UI stays out of scope).
+- **Clear History** replaces the old Remove / Clear Completed actions. There is no single history/job deletion. A bulk confirmation screen shows the number of jobs and the space that would be freed. By default completed and failed jobs are selected; cancelled jobs stay. An `include_cancelled` checkbox is OFF by default; when checked, the cancelled jobs' partial staging data is deleted too. Library media files and catalog records are never deleted by this cleanup. Active and queued jobs are never cleanup candidates.
+- **Open, awaiting explicit user approval:** whether FAILED jobs' staging data is deleted by Clear History is undecided; no approval is assumed. The byte estimate versus the actually freed amount and real reporting of cleanup failures also await approval.
+- The clear endpoint does not exist yet; delivery is staged and no API payload is designed here (ARCHITECTURE §59).
+- Current behaviour (observed, not a decision): a cancelled single job cannot be retried and its partial data is removed; a cancelled collection can be retried and resumes. Extending single cancelled Retry with partial-data retention is a **proposal awaiting user approval**; nothing is chosen.
+
+**Progress display (approved; planned, not implemented).** Conversion shows its real progress percentage; when it is unknown the bar is indeterminate. Source transfer at 100% is not conversion at 100%, and no smoothing is promised. Observed, unfixed (finding 7): during conversion the UI showed 100% for minutes while ffmpeg ran at about 1000% CPU.
 
 Example:
 
@@ -762,7 +787,7 @@ Selecting a Library item should reveal additional information such as:
 
 # 21. Library Deletion Model
 
-Two distinct actions are required.
+Two distinct operations are required (their UI is the single Delete modal described at the end of this section).
 
 ## Remove from Library
 
@@ -782,6 +807,13 @@ This action must require explicit confirmation.
 
 The interface must make the difference between these operations obvious.
 
+**Single Delete modal (approved; planned, not implemented).** This replaces the earlier requirement of two separate UI actions, and `Remove from Library` is no longer unconfirmed. One Radarr-style Delete modal is used, with `Also delete files` OFF by default:
+
+- Unchecked: only the catalog record is removed; the physical file stays.
+- Checked: the existing safe selected-copy delete runs. When M7 introduces several copies, the user chooses per copy. There is no arbitrary path, and the shared-reference deletion guard is not removed.
+- The new modal is not implemented now; the existing backend remove/delete primitives may remain separate.
+- Finding 4: the shared-delete error message must state clearly that the catalog references must be removed first; this explains the guard and is not a bypass.
+
 ---
 
 # 22. Main Screens
@@ -794,6 +826,8 @@ Queue
 Library
 Settings
 ```
+
+Placeholder pages (PROPOSED — awaiting user approval): hide placeholder menu entries or show them as "not built yet"; the simplest explanatory badge is suggested. The user direction is open; nothing is decided.
 
 A separate Platforms screen is not required unless later justified.
 
@@ -988,7 +1022,7 @@ The v0.1 release target includes:
 - Plex Videos destination
 - Download to this device
 - optional Keep a Copy in App Library
-- queue
+- queue (a real Queue page with active/queued/history, Cancel/Retry and Clear History; §17, planned in M6-Q)
 - progress
 - cancel
 - retry
@@ -1002,8 +1036,8 @@ The v0.1 release target includes:
 - meaningful video naming
 - media metadata
 - conflict handling
-- Remove from Library
-- Delete File with confirmation
+- Remove from Library (single Delete modal, `Also delete files` OFF by default; §21, approved, planned)
+- Delete File with confirmation (same modal, checkbox ON; §21)
 - persistent application state
 
 ---
@@ -1083,6 +1117,9 @@ Redis/Celery or another distributed job system only if actual scale/reliability 
 
 Do not introduce this infrastructure preemptively.
 
+## Clip downloads and subtitles (post-v0.1 proposal; not v0.1 required)
+Suggestions only, not approved scope and not v0.1 required: clip download through yt-dlp `download_ranges` with a two-handle slider plus time boxes; subtitles as none / embed / sidecar with a language choice.
+
 ## Authorized DRM Licensing / Decryption Integration
 Post-v0.1 research/evaluation item only. Integration with an official, provider-supported DRM licensing/decryption path would be considered only for content the user is validly licensed to access and explicitly permitted to save/download, and only after upfront technical, legal, and provider-compatibility feasibility evaluation. No supported-provider guarantee, provider list, or implementation design is committed here. This must not become DRM circumvention, key extraction, or protection bypass; the existing no-circumvention principle remains.
 
@@ -1127,8 +1164,8 @@ The product is considered functionally ready for v0.1 when a user can:
 15. Inspect its size, date, location, format, and path.
 16. Retry a failed job.
 17. Cancel an active job.
-18. Remove an item from Library without deleting its file.
-19. Explicitly delete a physical file after confirmation.
+18. Remove an item from Library without deleting its file (Delete modal, checkbox OFF; §21).
+19. Explicitly delete a physical file after confirmation (Delete modal, checkbox ON; §21).
 20. Restart the Docker application without losing persistent Library state.
 
 Release gate: this functional readiness is complemented by a one-time v0.1 Release Security Hardening / Audit stage (ARCHITECTURE section 59), run after Milestone 9 and before final v0.1 release acceptance; unresolved validated Critical/Important security findings block the release.

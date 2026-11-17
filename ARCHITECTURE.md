@@ -260,8 +260,11 @@ GET    /api/v1/jobs
 GET    /api/v1/jobs/{job_id}
 POST   /api/v1/jobs/{job_id}/cancel
 POST   /api/v1/jobs/{job_id}/retry
-DELETE /api/v1/jobs/{job_id}
+```
 
+Superseded (approved; PRODUCT_SPEC §17): the former per-job `DELETE /api/v1/jobs/{job_id}` is not part of the plan because there is no individual job/history deletion; it does not exist in code. The bulk Clear History endpoint is not designed yet (§59 M6-Q).
+
+```text
 GET    /api/v1/library
 GET    /api/v1/library/{item_id}
 DELETE /api/v1/library/{item_id}
@@ -820,7 +823,7 @@ For an active yt-dlp/FFmpeg subprocess:
 5. preserve appropriate partial data,
 6. update job state to `cancelled`.
 
-Retrying later may allow yt-dlp to continue from a valid `.part` file when supported.
+Retrying later may allow yt-dlp to continue from a valid `.part` file when supported. This is not a universal promise; current code boundary (observed): a cancelled single job cannot be retried (`JobService._retry_job` accepts only a failed single job with a retryable error code) and the single runner removes its staging on cancel, so no `.part` survives; a cancelled collection can be retried and resumes from retained child `.part` data (smoke PASS). Extending single cancelled Retry with staging retention is a proposal awaiting user approval (§59), not current behaviour.
 
 For a collection, parent Cancel propagates to active child subprocesses and prevents not-started children from being scheduled. Completed children, finalized files, and Library entries remain untouched. Parent Retry includes failed, cancelled, and incomplete children only, preserving completed work. When cancellation races with child failure, terminal precedence is decided by durable persisted state: a Cancel request persisted before the parent's terminalization transaction makes the parent `cancelled`; a failure terminal committed first keeps the parent `failed`, and a later Cancel cannot supersede it. In-memory event timing is never the decision source. This mechanism does not define all-completed or success-versus-Cancel semantics or shutdown policy; the single runner's precedence is unchanged.
 
@@ -1415,6 +1418,8 @@ Deletion uses media/library IDs.
 ---
 
 # 38. Delete Behaviour
+
+UI model (approved; planned, not implemented; PRODUCT_SPEC §21, §31): the two backend primitives below stay separate, but the UI becomes one Radarr-style Delete modal with `Also delete files` OFF by default. Unchecked calls only the catalog remove (file kept); checked runs the existing safe selected-copy delete (per-copy selection once M7 has several copies). Remove is no longer unconfirmed. No arbitrary path is introduced and the shared-reference guard below is unchanged. The shared-delete error message must tell the user to remove the other catalog references first (finding 4); it is not a guard bypass.
 
 ## Remove from Library
 
@@ -2057,6 +2062,8 @@ Recommended order:
 - multiple queued jobs
 - failure states
 
+Historical scope note: M4 covered the backend (jobs API, concurrency, retry, restart handling) only. The Queue frontend plan mapping was skipped, so the Queue page is still a placeholder; this is not frontend-completed work. The gap is assigned to M6-Q below.
+
 ## Milestone 5 — Playlist / Album
 
 Scope: selectable playlist/album items, persisted parent/child jobs, one collection-level mode/profile, source-aware child execution, aggregate progress/counters, and source track ordering. App Library remains the destination for this milestone. M6 naming/metadata/artwork, M7 Plex destinations, and M8 device delivery remain out of scope, as do entire channel/profile bulk downloads, per-item output profiles, per-child Cancel / Retry UI, and existing Library bulk conversion/reprocessing.
@@ -2091,6 +2098,53 @@ Approved decisions below are planned, not implemented, except the explicit-conve
 - sub-task order (planned, none implemented except the Original Opus remux): M6.5 text tags (Mutagen boundary, §14; closure awaits the user's real-use Docker Compose smoke result and full gates) → M6.6 grouping decision and paths → M6.7 source artwork (a track's own thumbnail as square crop by default, missing/broken never blocks; the old rule requiring explicit selection for every source cover is superseded) → M6.8 selection/editing (user removes/replaces cover) → M6.9 external search only when the user explicitly asks on the M6.8 screen; `cover.jpg` only conditionally with an album folder
 - tag/artwork/remux failure fallback (PRODUCT_SPEC §14, ARCHITECTURE §14): under Original, an audio remux failure keeps the safe original with an Activity warning only under the bounded conditions in §14 (Original Opus remux fallback: `FFmpegFailureKind.FAILED` with `FFmpegFailureCause.EXIT_STATUS`, cancellation re-checked, normal storage/catalog checks; approved, implemented in M6.5b/c); when an explicitly selected target was already converted successfully, optional tag/artwork failure keeps that ready target; if the explicitly selected target cannot be produced, the job/child fails and no different original is completed; cancellation and direct security/storage/catalog errors are not swallowed (the narrow internal FFmpeg disk/permission exception under `EXIT_STATUS` in §14 is outside that guarantee)
 - last separate sub-task (M6.9), not started; provider/rights questions are handled when integration is reached: user-triggered alternative cover search, only on explicit request on the M6.8 screen, never automatic (MusicBrainz + Cover Art Archive as the first candidate, single chain, not a final choice)
+
+### M6-Q — Queue frontend prerequisite, readiness and plan (documentation only)
+
+Documentation record only: no runtime implementation, no milestone closure. Labels: **APPROVED** = user decision (planned, not implemented unless stated); **PROPOSED** = awaiting user approval, not started; **OBSERVED** = finding, unfixed.
+
+**APPROVED**
+- M6-Q (Queue frontend per PRODUCT_SPEC §17) is a prerequisite within the already-running M6, to be done before the M6.5 tag implementation; M6.5 tags wait. It does not turn the historical M4 backend scope into frontend-completed work.
+- Queue content, Clear History (completed+failed default selection, cancelled kept unless `include_cancelled`, no single job delete, Library untouched, active/queued never candidates) is recorded in PRODUCT_SPEC §17. The clear endpoint does not exist; delivery is staged and no API payload is fixed. Retry/cleanup races and filesystem ownership are a separate bounded Opus expert step.
+- Decisions recorded in PRODUCT_SPEC and planned, not implemented: single Audio/Video choice (§6), video ceilings and naming/collision rules (§9, §16), real conversion progress (§17), Auto Select display and platform icons (§4; icons approved for v0.1, actual set/license still open), single Delete modal (§21; §38 here). The old job card is cleared on a new analysis only after Queue gives access to cancelled-job Retry (finding 8); Queue restores job access from the backend, draft protection is a separate step.
+- Lifecycle: the M5 orderly-shutdown contract (§19, §21) stays an implemented contract; this record does not say container graceful stop is verified (see finding 18).
+
+**PROPOSED — awaiting approval, not started** (suggested priority: 18 → 19 → 6 → Queue access/control → 3 → Queue cleanup (10) → M6.5; draft restore is a Queue sub-step)
+- Q0 (finding 18): bounded Uvicorn graceful-wait and a compatible Compose stop grace (candidates such as 5 s / 30 s; values need approval and validation) as a separate fix, plus an explicit Compose smoke with SSE open, active single and collection drain, and recovery. Sonnet only if it stays a bounded deployment change; Opus from the start if lifecycle/concurrency is touched.
+- Finding 19: separate bounded, masked extractor diagnostics. Finding 6: JS runtime plus version validation as a separate container task, after diagnosis.
+- Q1: minimal server-backed active/queued/history list with Cancel/Retry, on-demand child/detail Activity, list refresh driven by the existing single global SSE connection (`/api/v1/events`, one shared connection updating the list from every job snapshot) with a REST/poll fallback when needed; no per-job SSE endpoint and no new framework. `list_jobs` returns the newest 50, so older active/queued jobs can be hidden: ensure every non-terminal job is visible and terminal history is bounded with simple load-more/pagination; reduce collection children N+1 loading; on-demand detail API; backward compatibility is checked in the design.
+- Q2: decision on single cancelled Retry (options: keep restricted per the Opus advisor, or extend with staging retention per the user's finding 8/10 wish; nothing selected; Opus expert work), K2 draft restore (PRODUCT_SPEC §6) with the finding-8 condition, then finding 3: wrong quality/identity/naming through a separate storage/catalog contract expert job that never blindly dedups the current logical shared identity.
+- Q3: bulk Clear History as a separate Opus cleanup contract: preview, drain, retry races, path/backend ID handling, symlink/no-follow, DB+filesystem atomicity limits, no arbitrary orphan traversal. Open: failed-staging question, estimate vs actual bytes, real cleanup-failure reporting.
+- Q2 technical sketch for K2 draft restore (PROPOSED, unapproved; user suggestion): reuse the existing `GET /api/v1/analysis/{analysis_id}` and its 410 for expired snapshots; keep only `analysis_id` plus bounded selection/output/mode/platform identifiers in `sessionStorage`; no raw metadata or full source URL in persistent `localStorage`. An expired, foreign or missing snapshot, a double submit after create, or a stale variant clears the draft safely with a message. Tab-to-tab navigation and F5 preservation are suggestions; Queue alone does not fully solve New Download state loss.
+- Technical record for the Queue decisions (observed code boundaries, not decisions): `QueuePage.tsx` is an 8-line placeholder; M4 closed only the backend. Single cancelled Retry is rejected (`JobService._retry_job` accepts a failed single job with a retryable code) and the single runner removes staging on cancel; a collection cancelled parent can be Retried and resumes from retained child staging. Extending single cancelled Retry with staging retention is an option awaiting the user's choice (the Opus advisor suggested keeping single Retry restricted as the simplest; nothing selected).
+- Q3 implementation reporting (PROPOSED): byte estimate vs actually freed amount and real cleanup-failure reporting; the product choice on failed staging stays open in PRODUCT_SPEC §17.
+- M9 scheduling (PROPOSED, awaiting approval): the approved UI behaviours (Library single Delete modal, video ceiling/naming display, conversion progress, platform display/icons) stay approved; only their timing is a candidate. Wrong-quality (3) and naming correctness are not M9 items: they follow Queue as a separate expert job. Only the remaining cosmetic/platform/Library-modal refinement is a candidate for an M9 schedule note. The icon set and license are chosen later after approval/research; no dependency is added now.
+- Closing: complete plan, milestone-close independent review, full gates, and a user Docker Compose smoke of 3–5 items.
+- Process check (K3, suggested): at each closing ask "is any v0.1-required spec item left unplanned?". Not added to AGENTS/WORKFLOW now. The user will run the spec audit; no full audit has been done today.
+- Post-v0.1 suggestions (clip ranges, subtitles) live in PRODUCT_SPEC §33 and are not v0.1.
+
+**OBSERVED — unfixed** (readiness; not decisions)
+
+| Ref | Finding |
+| --- | --- |
+| K1 | Queue page is a placeholder; no job access in the UI |
+| K2 | New Download state is lost on navigation/F5; Queue restores job access but does not fully solve it; single vs collection cancel differs (PRODUCT_SPEC §17) |
+| K3 | No spec audit done; the user will bring the result |
+| 3 | Wrong-quality skip plus duplicate risk (shared-file logical rows are deliberate under skip-existing) |
+| 4 | Shared delete UX: message must explain removing catalog references first |
+| 6 | No Deno: deprecated extraction warning, and a transient `network_error` after 24 s then retry success; link to Deno unproven |
+| 9 | Raw float progress shown; cancelled duplicate with doubled Activity (Cancelled plus a separate entry); separate A/V 50→100 jump |
+| 10 | Cancelled 102 MB and restart 327 MB partials (success/retry cleanup exists) |
+| 11 | After retry, child downloading/converting while parent Analyzing twice |
+| 12 | Audio sequence planned for M6.6; video sequence implemented; not a regression |
+| 18 | See below |
+| 19 | Real extractor detail is in the DB but not in UI/container log, so failures cannot be diagnosed |
+| 20 | No collection resolution UI; 4K AV1 took 5+ minutes, child about 11 cores / 3.2 GB RAM (user measurement) |
+| 7 | Conversion UI at 100% for minutes while ffmpeg used about 1000% CPU (maps to the approved progress decision) |
+
+Finding 18 (observed): with an active job, `stop -t60` hit the 60 s force-kill twice (Shutting down → Waiting for connections, downloads continued even without ffmpeg); idle stop took 0.4 s. Restart recovery is PASS; graceful stop is NOT PASS, and container graceful deployment is not verified. A hypothesis consistent with the code is that an SSE stream waits indefinitely; polling is not established as the cause.
+
+User smoke (17 Nov, Fedora Docker, near f597dd3, container Python 3.12, ffmpeg 7.1.5 libx264, yt-dlp 2026.10.26; user report, lead did not rerun): Original MP3 PASS; MP4 H.264 copy and VP9/AV1 1440/4K60 x264 PASS; playlist selection/order/counters PASS; collection Cancel→Retry `.part` resume PASS; forced `stop -t2` recovery PASS (completed child kept, converting child `interrupted_by_restart`, queued sibling not started, no auto-resume, Retry ready, live counters 1/1/3); root-owned 644 files play on the host; Original 4K AV1 `.mkv` expected; Mix ≥25 analysis PASS, which is not evidence for extraction of all >25 items. Not yet tried: collection remux and explicit-conversion Cancel.
 
 ## Milestone 7 — Plex Destinations
 
