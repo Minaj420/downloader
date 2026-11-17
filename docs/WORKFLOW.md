@@ -286,6 +286,8 @@ backend `.venv/bin/ruff check .`, `.venv/bin/mypy app tests`, `.venv/bin/pytest`
 frontend `npm run lint`, `npm run typecheck`, `npm test`, `npm run build`,
 `npm run check:contrast`. Her biri kendi backend/frontend çalışma dizininde.
 Uygulama gate komutları aynen geçerlidir; yalnız belge işi uygulama gate'i gerektirmez.
+Milestone kapanış checklist'i şu soruyu içerir: “Herhangi bir v0.1-required spec maddesi
+plansız kaldı mı?” Cevap kapanış raporuna yazılır; yeni gate/araç/config değildir.
 
 STATE kısa, tek kaynaklı aktif durumdur: hedef ~60, kapanış üst sınırı 80 fiziksel satır.
 İçerik yalnız: aktif durum/devam noktası, sıradaki bounded iş, gerçekten açık karar/engel,

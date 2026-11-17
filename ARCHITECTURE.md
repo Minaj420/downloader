@@ -262,7 +262,7 @@ POST   /api/v1/jobs/{job_id}/cancel
 POST   /api/v1/jobs/{job_id}/retry
 ```
 
-Superseded (approved; PRODUCT_SPEC §17): the former per-job `DELETE /api/v1/jobs/{job_id}` is not part of the plan because there is no individual job/history deletion; it does not exist in code. The bulk Clear History endpoint is not designed yet (§59 M6-Q).
+Superseded (approved; PRODUCT_SPEC §17): the former per-job `DELETE /api/v1/jobs/{job_id}` is not part of the plan because there is no individual job/history deletion; it does not exist in code. The bulk Clear History endpoint is not designed yet and no bulk backend exists (Q3 starts from scratch; §59 M6-Q). A user-transferred spec audit note asking for `DELETE /jobs` conflicts with this approved bulk-only decision; it awaits explicit user clarification, and no per-job endpoint is approved or implemented.
 
 ```text
 GET    /api/v1/library
@@ -1705,6 +1705,13 @@ Do not allow the browser to arbitrarily configure unrestricted host filesystem p
 
 Docker mount configuration remains an administrator/deployment concern.
 
+**Current status (observed; user-transferred spec audit).** Settings are environment-only today, including max concurrent jobs. There is no `GET`/`PATCH /api/v1/settings` endpoint, no settings model and no `app_settings` table; the Settings page is a placeholder. The section above remains the target direction, not implemented behaviour.
+
+**Future plan (PROPOSED — awaiting user approval; not an accepted decision).** Delivery is staged as S1 then S2; tasks, placement and alternatives are in §59 M6-Q.
+
+- S1 (read-only): `GET /api/v1/settings` showing effective environment values — display paths, max concurrency, Skip Existing conflict default, download defaults — plus configured/unconfigured destination state and a non-mutating writable hint behind `StorageService`. No new probe file, no health guarantee, no arbitrary browser paths, no secrets or general config dump. The writable hint is advisory (for example a root container can report writable while the host owner differs). No `PATCH` and no migration.
+- S2 (persisted): `app_settings` migration and DB-backed `GET`, then validated `PATCH`, then UI defaults only for conflict policies and destinations that are actually implemented. Open design/approval points: DB preference versus environment bootstrap fallback; concurrency lower/upper bounds and the effect of a change on current jobs. Not cancelling active jobs when concurrency is lowered is only a suggestion, not a locked decision. The migration number is not fixed now.
+
 ---
 
 # 48. Suggested Environment Configuration
@@ -2105,22 +2112,35 @@ Documentation record only: no runtime implementation, no milestone closure. Labe
 
 **APPROVED**
 - M6-Q (Queue frontend per PRODUCT_SPEC §17) is a prerequisite within the already-running M6, to be done before the M6.5 tag implementation; M6.5 tags wait. It does not turn the historical M4 backend scope into frontend-completed work.
-- Queue content, Clear History (completed+failed default selection, cancelled kept unless `include_cancelled`, no single job delete, Library untouched, active/queued never candidates) is recorded in PRODUCT_SPEC §17. The clear endpoint does not exist; delivery is staged and no API payload is fixed. Retry/cleanup races and filesystem ownership are a separate bounded Opus expert step.
-- Decisions recorded in PRODUCT_SPEC and planned, not implemented: single Audio/Video choice (§6), video ceilings and naming/collision rules (§9, §16), real conversion progress (§17), Auto Select display and platform icons (§4; icons approved for v0.1, actual set/license still open), single Delete modal (§21; §38 here). The old job card is cleared on a new analysis only after Queue gives access to cancelled-job Retry (finding 8); Queue restores job access from the backend, draft protection is a separate step.
+- Queue content, Clear History (completed+failed default selection, failed staging deleted with them, cancelled kept unless `include_cancelled`, no single job delete, Library untouched, active/queued never candidates) is recorded in PRODUCT_SPEC §17. The clear endpoint does not exist; delivery is staged and no API payload is fixed. Retry/cleanup races and filesystem ownership are a separate bounded Opus expert step.
+- Decisions recorded in PRODUCT_SPEC and planned, not implemented: single Audio/Video choice (§6), video ceilings and naming/collision rules (§9, §16), real conversion progress (§17), Auto Select display and platform icons (§4; icons approved for v0.1, actual set/license still open), single Delete modal (§21; §38 here). The old job card may be cleared on a new analysis only after Queue actually delivers access to cancelled single-job Retry (finding 8); Queue restores job access from the backend.
 - Lifecycle: the M5 orderly-shutdown contract (§19, §21) stays an implemented contract; this record does not say container graceful stop is verified (see finding 18).
+- Approved user decisions of 17 Nov (planned, not implemented; product wording in PRODUCT_SPEC):
+  1. Cancelled single Retry with partial staging retention, continuing from where it stopped; explicit Retry only, no automatic resume. Separate bounded Opus expert task in Q2. Clear History keeps cancelled single jobs by default; with `include_cancelled` their partial staging is deleted (PRODUCT_SPEC §17).
+  2. Clear History also deletes failed jobs' staging; no automatic deletion at the moment of failure (PRODUCT_SPEC §17).
+  3. `sessionStorage` draft restore (K2) is approved but non-blocking: in Q2 where it fits, or after v0.1 if needed. The technical sketch below stays PROPOSED (PRODUCT_SPEC §6).
+  4. Collection standard `Up to Xp` ceiling picker (finding 20; PRODUCT_SPEC §9).
+  5. Smallest covering standard ceiling (608 → 720p), no upscaling, `Best Available` only without a reliable height. Open design point: how to apply this when collection analysis has no height; fixed ceilings or a probe are not approved automatically.
+  6. Work order: 18 closure → 19 masked error detail → 6 Deno → Queue Q1/Q2 → 3 conflict → 10/Q3 cleanup → M6.5. Technical proposals inside these items (for example the 18 timeout values) are not approved by the order.
+  7. Persistent milestone-closure question "is any v0.1-required spec item left unplanned?" — recorded as one closure-checklist rule in `docs/WORKFLOW.md` (Gate and STATE); no new gate, tool or config.
+  8. Placeholder menu entries get a "not built yet" ("Henüz yapılmadı") label (PRODUCT_SPEC §22); no UI change today. Timing PROPOSED: a small bounded UI task alongside Q1.
+- Source of the spec-audit findings below: a user-transferred audit from a separate read-only Opus session on main `f597dd3`; the full report lives in the user's Claude project (`claude/spec-coverage-2026-11-17.md`). It was not read in this workspace and no current full audit is claimed here.
 
-**PROPOSED — awaiting approval, not started** (suggested priority: 18 → 19 → 6 → Queue access/control → 3 → Queue cleanup (10) → M6.5; draft restore is a Queue sub-step)
+**PROPOSED — awaiting approval, not started** (the order in approved decision 6 applies; after plan approval the first task is 18)
 - Q0 (finding 18): bounded Uvicorn graceful-wait and a compatible Compose stop grace (candidates such as 5 s / 30 s; values need approval and validation) as a separate fix, plus an explicit Compose smoke with SSE open, active single and collection drain, and recovery. Sonnet only if it stays a bounded deployment change; Opus from the start if lifecycle/concurrency is touched.
 - Finding 19: separate bounded, masked extractor diagnostics. Finding 6: JS runtime plus version validation as a separate container task, after diagnosis.
-- Q1: minimal server-backed active/queued/history list with Cancel/Retry, on-demand child/detail Activity, list refresh driven by the existing single global SSE connection (`/api/v1/events`, one shared connection updating the list from every job snapshot) with a REST/poll fallback when needed; no per-job SSE endpoint and no new framework. `list_jobs` returns the newest 50, so older active/queued jobs can be hidden: ensure every non-terminal job is visible and terminal history is bounded with simple load-more/pagination; reduce collection children N+1 loading; on-demand detail API; backward compatibility is checked in the design.
-- Q2: decision on single cancelled Retry (options: keep restricted per the Opus advisor, or extend with staging retention per the user's finding 8/10 wish; nothing selected; Opus expert work), K2 draft restore (PRODUCT_SPEC §6) with the finding-8 condition, then finding 3: wrong quality/identity/naming through a separate storage/catalog contract expert job that never blindly dedups the current logical shared identity.
-- Q3: bulk Clear History as a separate Opus cleanup contract: preview, drain, retry races, path/backend ID handling, symlink/no-follow, DB+filesystem atomicity limits, no arbitrary orphan traversal. Open: failed-staging question, estimate vs actual bytes, real cleanup-failure reporting.
-- Q2 technical sketch for K2 draft restore (PROPOSED, unapproved; user suggestion): reuse the existing `GET /api/v1/analysis/{analysis_id}` and its 410 for expired snapshots; keep only `analysis_id` plus bounded selection/output/mode/platform identifiers in `sessionStorage`; no raw metadata or full source URL in persistent `localStorage`. An expired, foreign or missing snapshot, a double submit after create, or a stale variant clears the draft safely with a message. Tab-to-tab navigation and F5 preservation are suggestions; Queue alone does not fully solve New Download state loss.
-- Technical record for the Queue decisions (observed code boundaries, not decisions): `QueuePage.tsx` is an 8-line placeholder; M4 closed only the backend. Single cancelled Retry is rejected (`JobService._retry_job` accepts a failed single job with a retryable code) and the single runner removes staging on cancel; a collection cancelled parent can be Retried and resumes from retained child staging. Extending single cancelled Retry with staging retention is an option awaiting the user's choice (the Opus advisor suggested keeping single Retry restricted as the simplest; nothing selected).
-- Q3 implementation reporting (PROPOSED): byte estimate vs actually freed amount and real cleanup-failure reporting; the product choice on failed staging stays open in PRODUCT_SPEC §17.
+- Q1: minimal server-backed active/queued/history list with Cancel/Retry, on-demand child/detail Activity, list refresh driven by the existing single global SSE connection (`/api/v1/events`, one shared connection updating the list from every job snapshot) with a REST/poll fallback when needed; no per-job SSE endpoint and no new framework. On-demand detail explicitly covers past completed/failed/cancelled jobs: persisted Activity is read through the existing backend, with no new SSE. `list_jobs` returns the newest 50, so older active/queued jobs can be hidden: ensure every non-terminal job is visible and terminal history is bounded with simple load-more/pagination; reduce collection children N+1 loading; on-demand detail API; backward compatibility is checked in the design.
+- Q2: approved cancelled single Retry with staging retention (Opus expert task; decision 1); approved K2 draft restore where it fits (decision 3, non-blocking).
+- Finding 3 (after Q1/Q2): wrong quality/identity/naming through a separate storage/catalog contract expert job that never blindly dedups the current logical shared identity; conflict choice surface stays in M9-C.
+- Q3 (finding 10): bulk Clear History; the backend is built from scratch. Separate Opus expert contract: preview/confirm, drain, retry/cleanup races, staging ownership, path/backend ID handling, symlink/no-follow, DB+filesystem atomicity limits, no arbitrary orphan traversal; failed staging is included (decision 2). Still open: byte estimate vs actually freed amount, real cleanup-failure reporting. No per-job job/history `DELETE` (§7, PRODUCT_SPEC §17); the audit's `DELETE /jobs` request awaits explicit user clarification.
+- Q2 technical sketch for K2 draft restore (PROPOSED, unapproved): reuse the existing `GET /api/v1/analysis/{analysis_id}` and its 410 for expired snapshots; keep only `analysis_id` plus bounded selection/output/mode/platform identifiers in `sessionStorage`; no raw metadata or full source URL in persistent `localStorage`. An expired, foreign or missing snapshot, a double submit after create, or a stale variant clears the draft safely with a message. Queue alone does not fully solve New Download state loss.
+- Technical record for the Queue decisions (observed code boundaries, not decisions): `QueuePage.tsx` is an 8-line placeholder; M4 closed only the backend. Single cancelled Retry is currently rejected (`JobService._retry_job` accepts a failed single job with a retryable code) and the single runner removes staging on cancel; a collection cancelled parent can be Retried and resumes from retained child staging. Approved decision 1 changes the single path in Q2.
+- Settings S1 (read-only; contract in §47): position after M6.5, at the opening of M7, cross-referenced from M9. Rationale: it shows real effective env values and configured/unconfigured destinations right when M7 adds Plex destinations, without delaying the approved order. Alternative: after Q3 and before M6.5 — risk: delays M6.5 tags further. Implementer: Opus, because the API contract matters in this plan (size is not a criterion).
+- Settings S2 (persisted): after M9-C and M7/M8 support (see M9 below); open points in §47.
+- Spec-audit gaps (assignment only): View Activity on the analysis-failure example stays a requirement; removing it from the spec is only a proposal (PRODUCT_SPEC §5). Library detail thumbnail/extractor/membership gap → M9-L, depends on M6.6 grouping. Concurrency is env-only and tied to Settings (S1 display, S2 change). Replace / Keep Both behaviours and choice surface only → M9-C; the approved resolution suffix, `(2)` and `Already exists` correctness stays in the finding 3 expert task (after Q1/Q2, before Q3 and M6.5), which M9-C preserves and aligns with — no joint delivery and no M9 dependency for that pre-M6.5 work; no conflict primitive is implemented today. Plex/Device shown honestly as coming later is fine: planned in M7/M8.
 - M9 scheduling (PROPOSED, awaiting approval): the approved UI behaviours (Library single Delete modal, video ceiling/naming display, conversion progress, platform display/icons) stay approved; only their timing is a candidate. Wrong-quality (3) and naming correctness are not M9 items: they follow Queue as a separate expert job. Only the remaining cosmetic/platform/Library-modal refinement is a candidate for an M9 schedule note. The icon set and license are chosen later after approval/research; no dependency is added now.
-- Closing: complete plan, milestone-close independent review, full gates, and a user Docker Compose smoke of 3–5 items.
-- Process check (K3, suggested): at each closing ask "is any v0.1-required spec item left unplanned?". Not added to AGENTS/WORKFLOW now. The user will run the spec audit; no full audit has been done today.
+- Closing: complete plan, milestone-close independent review, full gates, the closure question (decision 7), and a user Docker Compose smoke of 3–5 items.
+- Separate pending work, not expanded here: transfer of the approved fixed conversion profiles to the authoritative documents.
 - Post-v0.1 suggestions (clip ranges, subtitles) live in PRODUCT_SPEC §33 and are not v0.1.
 
 **OBSERVED — unfixed** (readiness; not decisions)
@@ -2129,7 +2149,9 @@ Documentation record only: no runtime implementation, no milestone closure. Labe
 | --- | --- |
 | K1 | Queue page is a placeholder; no job access in the UI |
 | K2 | New Download state is lost on navigation/F5; Queue restores job access but does not fully solve it; single vs collection cancel differs (PRODUCT_SPEC §17) |
-| K3 | No spec audit done; the user will bring the result |
+| K3 | User-transferred spec audit received (source above; not re-verified in this workspace); findings assigned in PROPOSED; closure question approved (decision 7) |
+| S0 | Settings page is an 8-line placeholder; env-only config, no settings endpoint/model/table; PRODUCT_SPEC §23 scope reduced to one word in M9 (audit) |
+| L1 | Library detail lacks thumbnail, extractor/source and playlist/album membership (audit; PRODUCT_SPEC §20) |
 | 3 | Wrong-quality skip plus duplicate risk (shared-file logical rows are deliberate under skip-existing) |
 | 4 | Shared delete UX: message must explain removing catalog references first |
 | 6 | No Deno: deprecated extraction warning, and a transient `network_error` after 24 s then retry success; link to Deno unproven |
@@ -2164,10 +2186,19 @@ User smoke (17 Nov, Fedora Docker, near f597dd3, container Python 3.12, ffmpeg 7
 
 - responsive mobile UI
 - error messages
-- Settings
+- Settings (PRODUCT_SPEC §23; read-only S1 proposed at M7 opening, §47 and §59 M6-Q)
 - conflict policies
 - end-to-end smoke tests
 - documentation
+
+Proposed M9 sub-tasks (PROPOSED — awaiting user approval, not started; the items above stay):
+
+- M9-C conflict/storage semantics: only the Replace and Keep Both behaviours and their choice surface, as a separate design; Opus (destructive filesystem). The approved resolution suffix, `(2)` and `Already exists` correctness (PRODUCT_SPEC §16) is not M9-C scope: it stays in the finding 3 expert task after Queue Q1/Q2 and before Q3 and M6.5; M9-C preserves and aligns with that contract, with no joint delivery and no M9 dependency for the pre-M6.5 work.
+- M9-S2a: `app_settings` migration plus DB-backed `GET /api/v1/settings` (migration number not fixed now).
+- M9-S2b: validated `PATCH /api/v1/settings` with safe concurrency changes; Opus expert work. DB preference vs env bootstrap fallback and concurrency bounds/effect on current jobs are open (§47).
+- M9-S2c: Settings UI defaults only for conflict policies and destinations that are actually implemented.
+- M9-L: Library detail gap (thumbnail, extractor/source, playlist/album membership; PRODUCT_SPEC §20); depends on M6.6 grouping.
+- S2 runs after M9-C and M7/M8 support; existing responsive/error/e2e/docs polish is kept.
 
 ## v0.1 Release Security Hardening / Audit
 

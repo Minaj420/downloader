@@ -5,7 +5,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 ## Şu an
 
 - Mod: Normal, lead OpenCode; bekleyen Claude-only GPT review'u yok.
-- M6 açık; M6-Q Queue önkoşulu etiket uygulamasından önce. Bugün yalnız kayıt/plan; uygulama onaysız.
+- M6 açık; M6-Q kararları kaydedildi. Güncel plan onayı bekleniyor; hiçbir uygulama başlamadı.
 - Uzlaştırma yedek dalı korunur; push yalnız açık kullanıcı talebi ve hedefle.
 - Onaylı sabit profillerin yetkili belgeye aktarımı bekliyor: MP3 V0, M4A AAC 256k,
   Opus 160k, WAV/FLAC 16-bit; MP4 x264 CRF20 medium + AAC 192k. Yeni ürün kararı değil.
@@ -13,8 +13,8 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 
 ## Sıradaki iş
 
-- Kullanıcı Queue planını onaylayacak; öneri: kapanış18 → teşhis19 → runtime6 → Queue erişim/control.
-- Ardından yanlış çıktı/çakışma3 ve Queue toplu temizlik10; alt adımlar ARCHITECTURE §59 M6-Q'da.
+- Onaylı sıra: kapanış18 → teşhis19 → runtime6 → Q1/Q2 → çakışma3 → temizlik10/Q3 → M6.5.
+- Plan onayından sonra ilk iş18; Q1 geçmiş Activity, Q2 tekli Retry/resume, Q3 bulk backend içerir.
 - M6.5 Mutagen eşleme/adapter ve pipeline bekler; metin → M6.6 grup/yollar → M6.7 kapak sırası korunur.
 - M6.4/5 kapanışı yok; full gate ve değişen davranış için yeni kullanıcı Compose smoke'u gerekir.
 
@@ -23,8 +23,9 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - M6.6 güvenilir albüm grubu/ön hazırlık ve çoklu album_artists klasör değeri; M6.7 cover.jpg seçimi açık.
 - M6.9 yalnız seçim ekranından kullanıcı isterse; MB/CAA aday, hak/API/embed koşulları o işte netleşecek.
 - Mutagen lisansı kişisel kullanıma engel değil; dağıtım uyumu notu sürer. M9 kalite/boyut bekler.
-- Queue: tekli cancelled Retry/retention, failed staging temizliği, K2 taslak kurtarma onay bekler.
-- Koleksiyon çözünürlük seçicisi20 ve K3 kalıcı kapsam sorusu öneri; kullanıcı spec denetimi bekleniyor.
+- Settings önerisi: S1 salt-okunur M6.5 sonrası/M7 açılışı; S2 kalıcı tercihler M9-C sonrası (ARCH §47/59).
+- Açık: audit DELETE/jobs notu ile bulk-only kararı çelişiyor; koleksiyonda bilinmeyen yükseklik tasarımı.
+- Onaylı Retry/retention, failed staging, seçici20 ve K3 yetkili belgelerde; K2 onaylı, bloklamaz/ertelenebilir.
 
 ## Açık bulgular
 
@@ -32,12 +33,13 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
   kapanış paragrafında bayat; sabit profillerin yetkili belgeye aktarımı ayrı iş.
 - should-fix: collection başarılı convert/caller-cancel testi sleep(0) ile deterministik değil;
   single başarılı convert+iptal ek testi eksik. Üretim hatası bulunmadı.
-- Öncelikli: K1 Queue placeholder; K2 New Download analiz/seçim/kart gezinme/F5'te kayboluyor.
+- Audit aktarımı alındı (ARCH §59): Settings placeholder → S1/S2 önerisi; Library detay açığı → M9-L önerisi.
+- Öncelikli: K1 Queue placeholder; K2 New Download gezinme/F5'te kayboluyor; draft restore uygulaması bekler.
 - Öncelikli18: aktif işte stop-t60 iki kez force-kill; indirme sürüyor. SSE beklemesi güçlü hipotez.
 - Öncelikli3/6/10/19: yanlış kalite skip, eksik JS runtime, staging birikimi, görünmeyen hata ayrıntısı.
   Kullanıcı gözlemleri ve diğer UX bulguları ARCHITECTURE §59'da; network_error/deno bağı kanıtsız.
 - Fedora Python 3.14 eski üç backend failure (os.close monkeypatch/pidfd) macOS gate ile doğrulanmadı.
-- should-fix: child Skip Existing Activity uyarısı yok; ayrı lifecycle/transaction işi.
+- should-fix: child Skip Existing Activity uyarısı yok; ayrı lifecycle/transaction işi; analiz View Activity açık.
 - should-fix: modelsiz implement resume CLI hatasının belgelenmesi ve izleyici partial-line
   testinin deterministikliği açık; restart/model reload ve farklı-rol resume izolasyonu kanıtsız.
 - should-fix: lead.md eski bootstrap referansı ayrı bakımda değerlendirilmeli.
@@ -45,8 +47,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
   yalnız salt-okunur biçimler kullanılır, config bakımı ayrı. gh PR wildcard'ları da repo/hedef/
   body-file sınırını sağlamaz; açık repo/base/head ve düz metin body kullanılmalı.
 - Canlı slash yüklenmesi ve tüm ask/deny/yol dışı izin sınırları doğrulanmış değil.
-- Teknik takip: container user, yt-dlp sabitleme/görünürlük, Python 3.12 CI ve ARCHITECTURE bölme;
-  fazların yetkili sırası ARCHITECTURE §59'da, kapanış süresi öncelikli18 kapsamında.
+- Teknik takip: container user, yt-dlp sabitleme/görünürlük, Python 3.12 CI ve ARCHITECTURE bölme (§59).
 
 ## Son gate
 

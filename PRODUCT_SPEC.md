@@ -214,6 +214,8 @@ Raw Python exceptions should not be used as the primary user-facing error messag
 
 Technical details may appear in the Activity panel.
 
+The `[ View Activity ]` action above stays a requirement. Removing it from the analysis-failure example is only a **PROPOSED** spec change from the user-transferred spec audit (ARCHITECTURE §59 M6-Q); nothing is removed until the user approves it. Masked extractor error detail is finding 19 in the approved order.
+
 ---
 
 # 6. New Download Flow
@@ -250,7 +252,7 @@ Library / Device
 
 **Single-item Audio / Video choice (approved; planned, not implemented).** For a single item, the top Audio / Video choice works like the collection one: only the source and output options of the selected type are shown.
 
-**New Download state across navigation (observed; suggestion PROPOSED — awaiting user approval, not a requirement).** The analysis, selection and job card are lost on tab navigation or F5. The Queue page (§17) restores access to jobs from the server but does not by itself solve this. Keeping a draft across navigation/F5 is a user suggestion, not an approved implementation; the technical sketch is in ARCHITECTURE §59 (Q2). Approved condition: after a new analysis, the old job card is cleared only once Queue gives access to cancelled-job Retry (the history lives in Queue).
+**New Download state across navigation (observed; draft restore approved; planned, not implemented).** The analysis, selection and job card are lost on tab navigation or F5. The Queue page (§17) restores access to jobs from the server but does not by itself solve this. Approved (user decision): a `sessionStorage`-based draft restore for New Download. It is not blocking: it is scheduled in Queue Q2 where it fits, or after v0.1 if needed. The technical sketch (only `analysis_id` plus minimal identifiers, safe clear on 410/expired) in ARCHITECTURE §59 (Q2) stays a proposal, not an approved design. Approved condition: after a new analysis, the old job card may be cleared only once Queue actually delivers access to cancelled single-job Retry (§17; the history lives in Queue).
 
 ---
 
@@ -341,7 +343,7 @@ If the source maximum is 1080p:
 - Non-standard heights (for example 608p, 858p, 804p) get no quality row of their own; the actual resolution is shown in the Library.
 - If the source maximum is not a standard height, it is shown under the smallest standard ceiling that covers it (608 → `Up to 720p`, 858 → `Up to 1080p`). This never means an exact 720p/1080p result and never upscaling. No ceiling above that top ceiling is offered, and a lower ceiling appears only when a source format with height `<=` that ceiling exists.
 - `Best Available` may stay the default. If the height is not reliable, only `Best Available` is offered and no imaginary ceiling is shown. If the source maximum exceeds 2160, `Best Available` may be higher while the ceiling list ends at 2160.
-- Collection-level `max_height` ceiling picker (finding 20): the backend already supports it, the UI does not. Offering the same ceiling picker for collections is a **user suggestion, not yet approved**.
+- Collection-level ceiling picker (finding 20; approved, planned, not implemented): collections offer the same standard `Up to Xp` ceiling picker. The backend already supports `max_height`; the UI does not. The smallest covering standard ceiling (608 → `Up to 720p`), no upscaling, and `Best Available` only when no reliable height exists apply as above. **Open design point:** how this applies when collection analysis has no per-item height is undecided; neither fixed ceilings nor a probe is approved automatically.
 
 Where video and audio streams are separate, the backend may use `yt-dlp` and FFmpeg to produce the final playable media file.
 
@@ -577,6 +579,8 @@ The application must never silently overwrite an existing media file.
 
 **Video naming and collision results (approved; planned, not implemented).** A video file name carries the actual resolution of the produced file: `Title (720p).mp4`. Any other name collision uses `(2)`. When the request is exactly the same as an existing one, the existing file is kept and the job is shown as `Already exists`, not `Completed`. This is a user-visible result decision only: no new database state enum and no new API shape has been chosen yet. Planned supersede notes for deprecated behaviour: showing a differently-qualified request as successfully completed from an existing path (finding 3) is superseded by these rules. Note that distinct logical Library rows sharing one physical file are not data corruption: the current skip-existing test contract is deliberate and stays until a storage/catalog contract task decides otherwise; presenting the wrong quality as a successful result from an existing path is a separate defect.
 
+**Replace / Keep Both choice surface (open; user-transferred spec audit).** Where the user chooses Replace or Keep Both (per job, default in Settings, or both) is undecided. The proposed M9-C design task (ARCHITECTURE §59) covers only the Replace / Keep Both behaviours and this choice surface. The correctness of the approved resolution suffix, `(2)` and `Already exists` rules above stays with the finding 3 expert task, after Queue Q1/Q2 and before Q3 and M6.5 in the approved order; M9-C must preserve and align with that contract. There is no joint delivery, and that pre-M6.5 work does not depend on M9. No conflict primitive is implemented by this record.
+
 ---
 
 # 17. Queue
@@ -602,10 +606,12 @@ Required actions where appropriate:
 **Queue page status and decisions.** Observed: the Queue page is still a placeholder. It is a v0.1 required capability, and its prerequisite M6-Q comes before M6.5 tag work (ARCHITECTURE §59, which holds the technical details). All items below are approved decisions, **planned, not implemented**, unless marked otherwise:
 
 - The page lists active, queued and history jobs with Cancel and Retry (parent-only for collections, per-child UI stays out of scope).
-- **Clear History** replaces the old Remove / Clear Completed actions. There is no single history/job deletion. A bulk confirmation screen shows the number of jobs and the space that would be freed. By default completed and failed jobs are selected; cancelled jobs stay. An `include_cancelled` checkbox is OFF by default; when checked, the cancelled jobs' partial staging data is deleted too. Library media files and catalog records are never deleted by this cleanup. Active and queued jobs are never cleanup candidates.
-- **Open, awaiting explicit user approval:** whether FAILED jobs' staging data is deleted by Clear History is undecided; no approval is assumed. The byte estimate versus the actually freed amount and real reporting of cleanup failures also await approval.
-- The clear endpoint does not exist yet; delivery is staged and no API payload is designed here (ARCHITECTURE §59).
-- Current behaviour (observed, not a decision): a cancelled single job cannot be retried and its partial data is removed; a cancelled collection can be retried and resumes. Extending single cancelled Retry with partial-data retention is a **proposal awaiting user approval**; nothing is chosen.
+- **Clear History** replaces the old Remove / Clear Completed actions. There is no single history/job deletion. A bulk confirmation screen shows the number of jobs and the space that would be freed. By default completed and failed jobs are selected; cancelled jobs (single and collection) stay. An `include_cancelled` checkbox is OFF by default; when checked, the cancelled jobs' partial staging data (including a cancelled single job's retained partial staging) is deleted too. Library media files and catalog records are never deleted by this cleanup. Active and queued jobs are never cleanup candidates.
+- **Failed staging (approved):** Clear History also deletes the staging data of the failed jobs it clears. There is no automatic staging deletion at the moment of failure.
+- **Cancelled single Retry (approved):** a cancelled single job keeps its partial staging and can be retried, continuing from where it stopped. Resumption happens only through an explicit user Retry, never automatically. This is a separate bounded Opus expert task in Queue Q2 (ARCHITECTURE §59).
+- **Still open, awaiting explicit user approval:** the byte estimate versus the actually freed amount and real reporting of cleanup failures.
+- The clear endpoint does not exist yet (the bulk backend is built from scratch in Q3); delivery is staged and no API payload is designed here (ARCHITECTURE §59).
+- Current behaviour (observed, not yet changed): a cancelled single job cannot be retried and its partial data is removed; a cancelled collection can be retried and resumes. The approved cancelled single Retry above changes this only when Q2 is implemented.
 
 **Progress display (approved; planned, not implemented).** Conversion shows its real progress percentage; when it is unknown the bar is indeterminate. Source transfer at 100% is not conversion at 100%, and no smoothing is promised. Observed, unfixed (finding 7): during conversion the UI showed 100% for minutes while ffmpeg ran at about 1000% CPU.
 
@@ -783,6 +789,8 @@ Selecting a Library item should reveal additional information such as:
 - physical path,
 - playlist/album membership.
 
+Observed gap (user-transferred spec audit, not re-verified here): the Library detail does not yet show thumbnail/artwork, extractor/source and playlist/album membership. Membership depends on the M6.6 grouping decision; the proposed M9-L task tracks it (ARCHITECTURE §59). The requirement above is unchanged.
+
 ---
 
 # 21. Library Deletion Model
@@ -827,7 +835,7 @@ Library
 Settings
 ```
 
-Placeholder pages (PROPOSED — awaiting user approval): hide placeholder menu entries or show them as "not built yet"; the simplest explanatory badge is suggested. The user direction is open; nothing is decided.
+Placeholder pages (approved; planned, not implemented): menu entries for pages that are still placeholders stay visible with a "not built yet" label (user wording "Henüz yapılmadı"; final UI string is an implementation detail). The UI is not changed by this record; timing is in ARCHITECTURE §59 M6-Q.
 
 A separate Platforms screen is not required unless later justified.
 
@@ -847,6 +855,8 @@ Initial settings may include:
 - default download preferences where appropriate
 
 Advanced settings should remain limited in v0.1.
+
+Current status (observed; user-transferred spec audit): the Settings page is an 8-line placeholder and configuration is environment-only; there is no settings endpoint, model or table. The requirement above is unchanged. The concrete Settings plan (read-only S1, then persisted S2) is a **PROPOSED** plan awaiting user approval (ARCHITECTURE §47, §59); none of it is an accepted decision.
 
 ---
 
