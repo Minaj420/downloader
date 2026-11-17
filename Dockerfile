@@ -39,4 +39,7 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
     CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/v1/health', timeout=3)"]
 
-CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8080"]
+# `exec` makes uvicorn PID 1 so it receives SIGTERM directly. The bounded HTTP
+# graceful wait stops an open SSE stream from blocking lifespan shutdown
+# (queue drain/settlement); it is not a timeout for that settlement.
+CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8080 --timeout-graceful-shutdown 5"]

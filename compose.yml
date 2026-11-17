@@ -4,6 +4,10 @@ services:
     image: downloader:latest
     container_name: downloader
     restart: unless-stopped
+    # Outer stop budget, larger than the 5 s HTTP graceful wait in the image CMD
+    # so queue drain/settlement has room. Not a guarantee: an overrun is
+    # force-killed and startup recovery applies.
+    stop_grace_period: 30s
     ports:
       # Bind address defaults to localhost so the service is not exposed publicly.
       # For Tailscale/homelab access, override DOWNLOADER_BIND_ADDRESS (see README).
