@@ -11,6 +11,7 @@ the job domains can map them to their own user-facing error codes.
 
 import asyncio
 import json
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
@@ -39,11 +40,63 @@ class YtDlpFailureKind(StrEnum):
     EXTRACTOR_FAILED = "extractor_failed"
 
 
+_ANSI_ESCAPE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|[@-Z\\-_])")
+_LINE_BREAK = re.compile(r"\r\n|\r|\n")
+_PROGRESS_REMNANT = re.compile(
+    r"^(?:PROG(?:\s+(?:NA|None|\d+(?:\.\d+)?)){5}|\[download\]\s+\d+(?:\.\d+)?%.*)$"
+)
+_ERROR_TOKEN = "ERROR:"
+_REPEATED_ERROR_BOUNDARY = re.compile(r"\s+(?=ERROR:(?:\s|$))")
+_DETAIL_MAX_CHARS = 500
+
+
+def normalize_failure_detail(detail: str | None) -> str | None:
+    """Make raw yt-dlp stderr a readable single line for the log and the DB.
+
+    Readability only, not masking: strips ANSI escapes, splits on CR/LF/CRLF,
+    drops real progress remnants (``PROG`` numeric lines and ``[download] N%``
+    lines) and joins the remaining lines with one space. Real error lines such
+    as ``[download] Got error: ...`` are kept. Repeated logical messages (a bare
+    ``ERROR:`` token plus its message, or repeated ``ERROR: ...`` fragments) are
+    collapsed to the first occurrence in order; different errors are kept. The
+    result is at most 500 characters, ending in ``…`` only when truncated.
+    Classification never uses this.
+    """
+    if not detail:
+        return detail
+    units: list[str] = []
+    pending_token = False
+    for raw_line in _LINE_BREAK.split(_ANSI_ESCAPE.sub("", detail)):
+        line = raw_line.strip()
+        if not line or _PROGRESS_REMNANT.match(line):
+            continue
+        if line == _ERROR_TOKEN:
+            pending_token = True  # bare token belongs to the next message line
+            continue
+        if pending_token:
+            line = f"{_ERROR_TOKEN} {line}"
+            pending_token = False
+        units.extend(_REPEATED_ERROR_BOUNDARY.split(line))
+    if pending_token:
+        units.append(_ERROR_TOKEN)
+    # Repeated logical messages keep only their first occurrence, in order.
+    # A message with or without its ``ERROR:`` token is the same logical message.
+    unique: dict[str, str] = {}
+    for unit in (u.strip() for u in units):
+        key = unit.removeprefix(_ERROR_TOKEN).strip() or unit
+        if unit and key not in unique:
+            unique[key] = unit
+    text = " ".join(unique.values())
+    if len(text) > _DETAIL_MAX_CHARS:
+        text = text[: _DETAIL_MAX_CHARS - 1] + "…"
+    return text
+
+
 class YtDlpError(Exception):
     def __init__(self, kind: YtDlpFailureKind, detail: str | None = None) -> None:
         self.kind = kind
-        self.detail = detail
-        super().__init__(f"{kind.value}: {detail or ''}")
+        self.detail = normalize_failure_detail(detail)
+        super().__init__(f"{kind.value}: {self.detail or ''}")
 
 
 _KNOWN_FAILURE_SIGNATURES: tuple[tuple[str, YtDlpFailureKind], ...] = (

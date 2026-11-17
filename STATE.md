@@ -14,7 +14,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 ## Sıradaki iş
 
 - Onaylı sıra: kapanış18 → teşhis19 → runtime6 → Q1/Q2 → çakışma3 → temizlik10/Q3 → M6.5.
-- İş19 yalnız container logu uygulandı; GPT review must-fix yok, hedefli kontroller PASS; kullanıcı Compose smoke'u bekler.
+- İş19: koleksiyon/Retry ve tekil CR smoke PASS; Q19a tekrar giderme/500 karakter sınırı için tekil Compose tekrarı bekler.
 - M6.5 Mutagen eşleme/adapter ve pipeline bekler; metin → M6.6 grup/yollar → M6.7 kapak sırası korunur.
 - M6.4/5 kapanışı yok; full gate ve değişen davranış için yeni kullanıcı Compose smoke'u gerekir.
 
@@ -35,9 +35,9 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
   single başarılı convert+iptal ek testi eksik. Üretim hatası bulunmadı.
 - Audit aktarımı alındı (ARCH §59): Settings → S1/M7; Library detay → M9-L; son seçim localStorage v0.1.
 - Öncelikli: K1 Queue placeholder; K2 New Download gezinme/F5'te kayboluyor; draft restore uygulaması bekler.
-- UI hata ayrıntısı+maskeleme M6.5 metin etiketleri yanında ayrı iş önerisi (ARCH §59); rozet/SSE log notları açık.
-- Öncelikli3/6/10/19: yanlış kalite skip, eksik JS runtime, staging birikimi, görünmeyen hata ayrıntısı.
-  Kullanıcı gözlemleri ve diğer UX bulguları ARCHITECTURE §59'da; network_error/deno bağı kanıtsız.
+- M6.5: UI hata ayrıntısı+maskeleme önerisi, failed0%/iç kod/satırlar arası boşluk; rozet/SSE ve N ağ hatasında durma ARCH §59.
+- Öncelikli3/6/10/19 ve kullanıcı smoke/notları ARCH §59; network_error/deno bağı kanıtsız.
+  Analiz25/+25/hepsi200 kararı kayıtlı, uygulanmadı; Private video seçilemez filtresi ayrı küçük iş bekler.
 - Fedora Python 3.14 eski üç backend failure (os.close monkeypatch/pidfd) macOS gate ile doğrulanmadı.
 - should-fix: child Skip Existing Activity uyarısı yok; ayrı lifecycle/transaction işi; analiz View Activity açık.
 - should-fix: modelsiz implement resume CLI hatasının belgelenmesi ve izleyici partial-line
@@ -50,8 +50,8 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - Teknik takip: non-root UID/GID→M7/S1 ayrı Opus işi; yt-dlp sabitleme, Python3.12 CI ve ARCH bölme (§59).
 ## Son gate
 
-- 2026-11-18 Fedora Python3.14, Q19: hedefli pytest6, Ruff/mypy PASS; GPT review must-fix yok.
-  Lead Docker çalıştırmadı, full gate yok; Q19 gerçek container logu kullanıcı smoke'u bekler.
+- 2026-11-18 kullanıcı Compose Q19: koleksiyon log/başarı/Retry ve tekil CR PASS; tekrar/uzunluk son smoke'u bekler.
+  Q19a lead pytest73/Ruff/mypy PASS; GPT review must-fix yok; lead Docker/full gate yapmadı.
 - 2026-11-17 kullanıcı Fedora Compose Q18 PASS: single/collection5.5s, idle0.8s, Exit0/OOMfalse, exec doğrulandı.
 - Single restart→Failed/Retry ~%4'ten devam PASS; bu kullanıcı Cancel→Retry değil, Q2 hâlâ bekler.
 - Mix4 sabit seçim/completed korundu, auto-resume yok, Retry46→48; MKV VP9/Opus200s tam decode kullanıcı PASS.

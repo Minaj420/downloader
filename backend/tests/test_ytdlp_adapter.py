@@ -12,6 +12,8 @@ from app.integrations.ytdlp import (
     YtDlpError,
     YtDlpFailureKind,
     _kill,
+    map_failure,
+    normalize_failure_detail,
     parse_progress_line,
 )
 
@@ -104,6 +106,101 @@ def test_child_download_rejects_wrong_expected_output(tmp_path: Path, output: st
             child_output=True,
         ))
     assert caught.value.kind == YtDlpFailureKind.MALFORMED_OUTPUT
+
+
+SMOKE_ERROR = (
+    "ERROR: [download] Got error: [Errno -3] Temporary failure in name resolution. "
+    "Giving up after 10 retries"
+)
+
+
+class TestFailureDetailNormalization:
+    def test_smoke_example_keeps_error_line(self) -> None:
+        raw = "ERROR: \r" + SMOKE_ERROR.removeprefix("ERROR: ") + "\n"
+        assert normalize_failure_detail(raw) == SMOKE_ERROR
+
+    def test_crlf_and_multiline_become_single_line(self) -> None:
+        detail = normalize_failure_detail("ERROR: first\r\n  second \rthird\n\n")
+        assert detail == "ERROR: first second third"
+
+    def test_progress_removed_error_kept(self) -> None:
+        raw = (
+            "PROG 3 10 NA 1000000 7\r"
+            "[download]  45.3% of ~10.00MiB at 1.00MiB/s ETA 00:09\r"
+            "[download] 100% of 10.00MiB in 00:05\r\n"
+            + SMOKE_ERROR + "\n"
+        )
+        assert normalize_failure_detail(raw) == SMOKE_ERROR
+
+    def test_non_progress_download_lines_are_kept(self) -> None:
+        for line in (
+            "[download] Got error: HTTP Error 403",
+            "ERROR: Unable to download video data: timed out",
+            "[download] Destination: x.mp4",
+        ):
+            assert normalize_failure_detail(line) == line
+
+    def test_repeated_cr_error_fragments_collapse_to_one(self) -> None:
+        body = SMOKE_ERROR.removeprefix("ERROR: ")
+        raw = ("ERROR: \r" + body + "\r") * 40
+        assert normalize_failure_detail(raw) == SMOKE_ERROR
+
+    def test_repeated_joined_error_fragments_collapse(self) -> None:
+        assert normalize_failure_detail(" ".join([SMOKE_ERROR] * 30)) == SMOKE_ERROR
+        assert normalize_failure_detail("\n".join([SMOKE_ERROR] * 5)) == SMOKE_ERROR
+
+    def test_repeated_message_after_single_token_collapses(self) -> None:
+        body = SMOKE_ERROR.removeprefix("ERROR: ")
+        assert normalize_failure_detail(f"ERROR:\r{body}\r{body}\r{body}") == SMOKE_ERROR
+
+    def test_aba_order_keeps_first_seen_and_different_errors(self) -> None:
+        a = "ERROR: [download] Got error: A"
+        b = "ERROR: [download] Got error: B"
+        assert normalize_failure_detail(f"{a}\r{b}\r{a}\r{b}\r{a}") == f"{a} {b}"
+        assert normalize_failure_detail("ERROR:\rmsg A\rERROR:\rmsg B\rERROR:\rmsg A") == (
+            "ERROR: msg A ERROR: msg B"
+        )
+
+    def test_distinct_single_line_messages_preserved(self) -> None:
+        line = "ERROR: first problem; ERROR-like text and second problem"
+        assert normalize_failure_detail(line) == line
+
+    @pytest.mark.parametrize("length", [499, 500, 501])
+    def test_length_cap_boundaries(self, length: int) -> None:
+        text = normalize_failure_detail("x" * length)
+        assert text is not None
+        if length <= 500:
+            assert text == "x" * length
+        else:
+            assert len(text) == 500
+            assert text == "x" * 499 + "…"
+
+    def test_cap_applies_after_dedup(self) -> None:
+        raw = "\r".join([SMOKE_ERROR] * 100)  # raw is far over 500 chars
+        assert len(raw) > 500
+        assert normalize_failure_detail(raw) == SMOKE_ERROR
+
+    def test_ansi_escapes_removed(self) -> None:
+        assert normalize_failure_detail("\x1b[0;31mERROR:\x1b[0m boom") == "ERROR: boom"
+
+    def test_none_and_empty_preserved(self) -> None:
+        assert normalize_failure_detail(None) is None
+        assert normalize_failure_detail("") == ""
+        assert YtDlpError(YtDlpFailureKind.TIMEOUT).detail is None
+        assert YtDlpError(YtDlpFailureKind.TIMEOUT, "").detail == ""
+
+    def test_classification_uses_raw_stderr(self) -> None:
+        # The signature sits in a progress-looking line that normalization drops.
+        raw = "[download]  5.0% of 1MiB unsupported url\nERROR: boom"
+        error = map_failure(raw)
+        assert error.kind is YtDlpFailureKind.UNSUPPORTED_URL
+        assert error.detail == "ERROR: boom"
+
+    def test_map_failure_smoke_is_network_error_single_line(self) -> None:
+        error = map_failure("\r[download]  1.0% of 5MiB\r" + SMOKE_ERROR + "\r\n")
+        assert error.kind is YtDlpFailureKind.NETWORK_ERROR
+        assert error.detail == SMOKE_ERROR
+        assert "\r" not in str(error) and "\n" not in str(error)
 
 
 class TestAnalyzer:

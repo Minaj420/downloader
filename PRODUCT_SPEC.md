@@ -391,6 +391,8 @@ v0.1 has a hard cap of **200 selected items per job**, enforced by the backend a
 
 `Select All` selects only the currently available, analyzed, selectable items, within that cap. It must not silently include unseen, unanalyzed, unavailable, or over-cap items. For large sources the UI must explicitly explain the v0.1 selection limit and the scope of the available selection; it must not imply that the entire source will be downloaded. Analysis retrieval and any pagination strategy remain technical design follow-ups, not requirements established here.
 
+**User decision (planned, not implemented):** the collection analysis shows the first 25 items. Below the list the user can choose `Load 25 more` (+25) or `Show all`, which shows at most 200 items; when the source is longer, a short note says so. While more items load a waiting state is shown, and the user's existing selections are preserved. The 200 selected-item cap above is unchanged. The initial 25 matches the current bounded flat analysis budget (ARCHITECTURE.md §59). No API design exists yet.
+
 Each collection job uses one collection-level Audio / Video mode, source-quality preference and output choice as described in sections 8–9; individual output profiles are not available in v0.1.
 
 The UI should show available metadata before download when possible.
