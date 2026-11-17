@@ -61,7 +61,8 @@ yüklenir; mevcut oturum reload olmuş sayılmaz.
 3. Tek bounded iş tanımı: amaç, okunacaklar, izinli dosyalar, kabul kriterleri,
    yapılmayacaklar, exact hedefli kontrol komutları ve çalışma dizinleri.
    Belgelenmemiş/çelişkili ürün gereksiniminde dur; soru ve en basit seçeneği raporla.
-4. Lead her iş başında **“Uygulayıcı: Sonnet/Opus; gerekçe...”** der. Varsayılan
+4. Lead her iş başında **“Uygulayıcı: Sonnet/Opus; gerekçe...”** der; küçük/büyük
+   sınıfı ve kısa nedeni de tek satırda ekler ("Küçük iş yolu (KARAR)"). Varsayılan
    uygulayıcı aynı ince adapter üzerinden Sonnet'tir: sınırları net olağan muhakeme.
    Zor/belirsiz işler, high-impact migration, transaction/concurrency/ownership,
    destructive filesystem/path güvenliği/veri kaybı veya anlamlı API sözleşmesi/mimari
@@ -72,7 +73,8 @@ yüklenir; mevcut oturum reload olmuş sayılmaz.
    Migration/kalıcı veri, transaction/concurrency/ownership, filesystem mutation,
    silme/veri kaybı, güvenlik/path-containment veya API/data contract varsa Luna durur.
    **Tek yazıcıyı lead yönetir; adapter kilit tutmaz.** Worker STATE yazmaz, git yazmaz.
-5. Lead diff ve testleri okur; GPT reviewer Sonnet ve Opus kodunu bağımsız inceler. Opus kendi
+5. Lead diff ve testleri okur; GPT reviewer Sonnet ve Opus kodunu bağımsız inceler
+   (tek dar istisna: "Küçük iş yolu (KARAR)" saf karar kaydı). Opus kendi
    koduna rutin reviewer değildir. GPT'nin riskli işlerinde (bu altyapı dahil)
    worker sonrası lead `scripts/claude-review.sh '<odak>'` ile Opus review başlatır.
    Danışman ve mevcut review wrapper hep Opus'tur; genel Sonnet review rolü yoktur.
@@ -82,7 +84,8 @@ yüklenir; mevcut oturum reload olmuş sayılmaz.
    **En fazla bir review düzeltme turu**, mümkünse aynı Claude session; lead bu
    politikayı yönetir, adapter tur saymaz. Must-fix sürerse dur.
 7. Lead yalnız hedefli kontrolleri kendi yeniden çalıştırır; worker PASS raporu yetmez.
-8. STATE yalnız gerçek devam durumu değişince güncellenir. Review ve kontrollerden geçen iş
+8. STATE yalnız gerçek devam durumu değişince güncellenir. Review (veya "Küçük iş yolu
+   (KARAR)" saf karar kaydı istisnası) ve kontrollerden geçen iş
    tek otomatik commit olur: görevde gerçekten değişen dosyalar (STATE değiştiyse o da) tek tek
    stage edilir; worker STATE/git yazmaz. Göreve özel açık git yasağına uyulur.
    Komut: `git commit -m <başlık> -m <gövde>`. Başlık `tür(iş-kodu): açıklama`
@@ -100,6 +103,32 @@ yüklenir; mevcut oturum reload olmuş sayılmaz.
 Kota/provider/kimlik hatasında tekrar veya sessiz model fallback yok. İzin reddini
 başka rol/yolla aşma. Kapsam dışı ihtiyaç, beklenmeyen git değişikliği, etkileşimli
 onay ve çözülemeyen must-fix durma nedenidir.
+
+## Küçük iş yolu (KARAR)
+
+Kullanıcı kararıdır; yetkili tek kaynak burasıdır, başka belgeye kopyalanmaz. Rol/izin
+genişlemesi değildir; agent gövdelerindeki kurallar değişmez (gövdeye yalnız bu bölüme dar
+atıf önerilir, düzenleme kullanıcıya aittir ve sync+restart ister).
+
+**Yürürlük:** Bu bölüm kural kaydıdır. Kullanıcı agent gövdesini bu bölüme dar atıfla
+senkronize edip OpenCode'u yeniden başlatmadan review istisnası (madde 3) uygulanmaz.
+Mevcut oturumun zorunlu review talimatları ve bu geçiş işinin implementer + bağımsız
+review akışı değişmez.
+
+1. **Küçük iş:** tek konulu, birkaç dosyalık, mimariye dokunmayan iş. Ayrı Opus KAPSAM
+   görüşü yoktur; tek ajan uygular, hedefli kontrol, tek bağımsız review, commit.
+   Milestone öncesi Opus görüşü ve önemli mimari/uzman-risk yönlendirmesi aynen sürer; ikisi
+   karıştırılmaz. Az dosya tek başına riskli/transaction/path/destructive işi küçük yapmaz
+   (adım 4'teki Opus kriterleri geçerli).
+2. **Duyuru:** her işin başında “Uygulayıcı: ...” satırıyla birlikte tek satır
+   küçük/büyük sınıfı ve kısa neden; mevcut uygulayıcı/model duyurusu korunur.
+3. **Saf karar kaydı:** yalnız kullanıcının zaten verdiği kararı tek yetkili yerde kaydeden
+   belge commit'inde bağımsız review yoktur. Yeni karar/tasarım/kod/test/config değişikliği
+   bu istisnaya girmez. Lead yine diff/kapsam ve gerekli belge kontrollerini yapar; git, tek
+   yazıcı, STATE ve kota/kimlik retry yasağı kuralları aynen sürer. Uygulayıcı bu istisnayı
+   kendi işi için ileri sürmez; normal review kararı lead'indir.
+
+Claude-only bekleyen GPT review sınırı ve mevcut bekleyen backlog bu bölümden etkilenmez.
 
 ## İnce adapter kullanımı
 
@@ -296,6 +325,6 @@ değil yerine yazılır; gate özeti tarih + makine/sınır taşır ve kaynak de
 İş geçmişi commit gövdesindedir; onaylı kalıcı karar yetkili spec/mimaride, kalıcı iletişim
 tercihi AGENTS'te durur; git status, probe listesi, hash eşlemeleri, log/session kimliği ve ham
 çıktı STATE'te yoktur. İş kodu görev/session kimliği değildir; STATE aktif iş için kullanabilir.
-Lead ve bağımsız reviewer her kapanışta STATE'i Read ile satır sayısı ve güncelliği için
-kontrol eder; sığmazsa canlı bulguyu silmek veya dev satıra sıkıştırmak yerine sınıflandırma/karar
-için dur. Yeni journal/backlog/history dosyası ve kalıcı sayaç yoktur. Yalnız lead yazar.
+Lead ve bağımsız reviewer (saf karar kaydı istisnasında yalnız lead) her kapanışta STATE'i
+Read ile satır sayısı ve güncelliği için kontrol eder; sığmazsa canlı bulguyu silmek veya
+dev satıra sıkıştırmak yerine sınıflandırma/karar için dur. Yeni journal/backlog/history dosyası ve kalıcı sayaç yoktur. Yalnız lead yazar.
