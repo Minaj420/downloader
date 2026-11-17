@@ -13,6 +13,7 @@ rows in the same transaction as the completion transition (§37, §51).
 """
 
 import asyncio
+import logging
 import threading
 import time
 from collections.abc import Callable
@@ -70,6 +71,8 @@ from app.services.storage_service import (
     StorageTargetError,
 )
 from app.utils.processes import ensure_process_terminated
+
+logger = logging.getLogger(__name__)
 
 _YT_DLP_KIND_TO_JOB_CODE: dict[YtDlpFailureKind, JobErrorCode] = {
     YtDlpFailureKind.BINARY_MISSING: JobErrorCode.YT_DLP_MISSING,
@@ -300,6 +303,13 @@ class _JobExecution:
         except JobError as exc:
             await self._fail(exc)
         except YtDlpError as exc:
+            # Raw extractor detail goes only to the private container log.
+            logger.error(
+                "yt-dlp job failed: job_id=%s kind=%s detail=%s",
+                self._job_id,
+                exc.kind.value,
+                exc.detail if exc.detail is not None else "<none>",
+            )
             await self._fail(
                 JobError(_YT_DLP_KIND_TO_JOB_CODE[exc.kind], detail=exc.detail)
             )

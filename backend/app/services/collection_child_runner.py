@@ -6,6 +6,7 @@ and mapped failures propagate without choosing durable parent/child precedence.
 """
 
 import asyncio
+import logging
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -44,6 +45,8 @@ from app.services.job_runner import (
 )
 from app.services.prepared_media import OriginalRemux, prepare_media
 from app.services.storage_service import PlacementCancelled, StorageService
+
+logger = logging.getLogger(__name__)
 
 
 class ChildResult(StrEnum):
@@ -344,6 +347,14 @@ class _ChildExecution:
         except _LostClaim:
             return ChildResult.SKIPPED
         except YtDlpError as exc:
+            # Raw extractor detail goes only to the private container log.
+            logger.error(
+                "yt-dlp collection child failed: job_id=%s child_id=%s kind=%s detail=%s",
+                self.job_id,
+                self.child_id,
+                exc.kind.value,
+                exc.detail if exc.detail is not None else "<none>",
+            )
             raise JobError(_YT_DLP_KIND_TO_JOB_CODE[exc.kind], detail=exc.detail) from exc
         except FFmpegError as exc:
             raise JobError(_FFMPEG_KIND_TO_JOB_CODE[exc.kind], detail=exc.detail) from exc
