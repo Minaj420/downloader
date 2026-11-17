@@ -262,7 +262,7 @@ POST   /api/v1/jobs/{job_id}/cancel
 POST   /api/v1/jobs/{job_id}/retry
 ```
 
-Superseded (approved; PRODUCT_SPEC §17): the former per-job `DELETE /api/v1/jobs/{job_id}` is not part of the plan because there is no individual job/history deletion; it does not exist in code. The bulk Clear History endpoint is not designed yet and no bulk backend exists (Q3 starts from scratch; §59 M6-Q). A user-transferred spec audit note asking for `DELETE /jobs` conflicts with this approved bulk-only decision; it awaits explicit user clarification, and no per-job endpoint is approved or implemented.
+Superseded (approved; user-settled; PRODUCT_SPEC §17): there is no per-job `DELETE /api/v1/jobs/{job_id}` and no individual job/history deletion; history is removed only by the bulk Clear History action. The user settled the earlier spec-audit `DELETE /jobs` note in favour of this bulk-only decision; no per-job endpoint will be added and none exists in code. The bulk Clear History endpoint is not designed yet and no bulk backend exists (Q3 starts from scratch; §59 M6-Q).
 
 ```text
 GET    /api/v1/library
@@ -277,6 +277,8 @@ GET    /api/v1/events
 ```
 
 Names may change slightly during implementation, but REST semantics should remain clear.
+
+Settings endpoints status (approved plan; §47, §59): read-only `GET /api/v1/settings` (S1) is approved and planned at the M7 opening, not implemented. `PATCH /api/v1/settings` and any DB-backed settings (S2a/S2b/S2c) are post-v0.1 future backlog (§60); until then settings come from Compose/environment.
 
 ---
 
@@ -670,7 +672,7 @@ The parent tracks:
 - failed items,
 - aggregate progress.
 
-The parent also owns the collection-level Audio / Video mode and output format/profile preference. There is one preference for the job, not per-item profiles in v0.1. The backend resolves it against each child's actual source through the yt-dlp/FFmpeg integration boundaries. `Original / Best Available` chooses the most suitable available/native result, allowing heterogeneous final containers/codecs. Explicit conversion affects only this job's selected children, never existing Library or historical files. Video ceilings such as `Up to 1080p` do not upscale lower-quality sources, and conversion is not quality enhancement. M6 plan (approved; not implemented) supersedes the earlier optional-profile wording: MP3, WAV, M4A, Opus and FLAC audio and MP4 (compatible) video are required new-download outputs (§10, §14, §59 M6); the runtime above still accepts only the native profile.
+The parent also owns the collection-level Audio / Video mode and output format/profile preference. There is one preference for the job, not per-item profiles in v0.1. The backend resolves it against each child's actual source through the yt-dlp/FFmpeg integration boundaries. `Original / Best Available` chooses the most suitable available/native result, allowing heterogeneous final containers/codecs. Explicit conversion affects only this job's selected children, never existing Library or historical files. Video ceilings such as `Up to 1080p` do not upscale lower-quality sources, and conversion is not quality enhancement; a child with no candidate under the ceiling is planned to fall back to its best available result (M5-4A planned supersede note below). M6 plan (approved; not implemented) supersedes the earlier optional-profile wording: MP3, WAV, M4A, Opus and FLAC audio and MP4 (compatible) video are required new-download outputs (§10, §14, §59 M6); the runtime above still accepts only the native profile.
 
 Collection analysis exposes selectable items and their source ordering. Enforce a hard maximum of 200 selected items per job, not 200 total source items. `Select All` is limited to currently available, analyzed, selectable items within the cap; unseen or over-cap items must not be silently included. Large-source UI must explain this v0.1 limit. Entire channel/profile bulk operations are out of scope.
 
@@ -704,6 +706,8 @@ M5-3 create/read technical contract: existing `analysis_id + variant_id` single 
 ---
 
 Historical M5-4A native-resolution foundation (dispatch subsequently implemented): `YtDlpAnalyzer.probe_child` revalidates the persisted backend child URL through the existing HTTP(S) boundary, uses metadata-only `--skip-download --no-playlist` without flat retrieval, and rejects collection-shaped output without recursively probing entries. Timeout and task cancellation kill/reap the subprocess. `normalize_source_formats` retains every usable stream without the UI's resolution/identity collapse; existing public normalization and flat-25 analysis are unchanged. The pure backend-only resolver returns a selected native format plus an optional audio-only companion. Video candidates must be muxed or have an actual companion; rank actual height, width, then FPS, using yt-dlp's worst-to-best source format preference order as the remaining tie-break. Audio follows that extractor preference order rather than comparing bitrate across codecs; numeric bitrate/size is not a fidelity claim. Unknown dimensions rank below known dimensions; with an explicit height ceiling, unknown height is excluded because compliance cannot be established (source `HEIGHTp` / `WIDTHxHEIGHT` labels may establish height). No candidate above the ceiling and no upscale, extraction, conversion, codec matrix, naming, or output-file changes are introduced. Missing/unusable formats and collection-shaped results use existing malformed-output errors; unavailable modes/ceilings use invalid-variant, unsupported preferences use invalid-profile. Scheduling, aggregate policy and collection execution remain a separate bounded task.
+
+Planned supersede (approved user decision; planned, not implemented; PRODUCT_SPEC §9): for collections, the ceiling picker offers the fixed standard set 2160/1440/1080/720/480, and each child resolves to the best candidate with established height `<= X`; when a child has no such candidate, it falls back to that child's best available candidate (the `Original / Best Available` ranking), which may exceed the cap. No upscaling. This will replace the current collection behaviour where an unmet ceiling yields invalid-variant; the current implementation described above is unchanged until a separate bounded task implements it. Collection analysis therefore needs no per-item height or extra probe to offer the picker. The smallest covering standard ceiling (608 → 720p) and `Best Available`-only without a reliable height remain single-item rules (PRODUCT_SPEC §9).
 
 The child CLI also fixes `--playlist-items 1` as a defensive retrieval bound: yt-dlp's `--no-playlist` alone does not suppress a playlist-only URL. Any returned collection is still rejected, never walked by application code. Backend source normalization treats boolean, non-finite, non-positive and fractional dimensions as unknown rather than truncating them into ceiling compliance.
 
@@ -1020,6 +1024,8 @@ created_at
 ```
 
 ## app_settings
+
+Post-v0.1 (future backlog; §47, §60): not part of v0.1 and not implemented. v0.1 settings come from Compose/environment; no `app_settings` migration is planned before v0.1.
 
 Store only application configuration that belongs in the database.
 
@@ -1707,10 +1713,17 @@ Docker mount configuration remains an administrator/deployment concern.
 
 **Current status (observed; user-transferred spec audit).** Settings are environment-only today, including max concurrent jobs. There is no `GET`/`PATCH /api/v1/settings` endpoint, no settings model and no `app_settings` table; the Settings page is a placeholder. The section above remains the target direction, not implemented behaviour.
 
-**Future plan (PROPOSED — awaiting user approval; not an accepted decision).** Delivery is staged as S1 then S2; tasks, placement and alternatives are in §59 M6-Q.
+**Settings plan (APPROVED user decision; planned, not implemented).** v0.1 includes only S1; settings stay Compose/environment-based with fixed defaults until after v0.1. Placement is in §59 M6-Q.
 
-- S1 (read-only): `GET /api/v1/settings` showing effective environment values — display paths, max concurrency, Skip Existing conflict default, download defaults — plus configured/unconfigured destination state and a non-mutating writable hint behind `StorageService`. No new probe file, no health guarantee, no arbitrary browser paths, no secrets or general config dump. The writable hint is advisory (for example a root container can report writable while the host owner differs). No `PATCH` and no migration.
-- S2 (persisted): `app_settings` migration and DB-backed `GET`, then validated `PATCH`, then UI defaults only for conflict policies and destinations that are actually implemented. Open design/approval points: DB preference versus environment bootstrap fallback; concurrency lower/upper bounds and the effect of a change on current jobs. Not cancelling active jobs when concurrency is lowered is only a suggestion, not a locked decision. The migration number is not fixed now.
+- Startup storage write probe (approved behaviour; technical boundary is the plan, no implementation yet): at application startup the backend test-writes and deletes a probe in each configured target root and the staging root. Success is silent; a failure shows a persistent UI banner. The probe runs behind `StorageService` with root containment: the probe name is backend-generated (never browser-supplied), created exclusively and without following symlinks, and only that own probe is removed. Results are kept in memory per startup; there is no migration or persisted probe state. A result describes the current process's permissions at that point in time only, not a guarantee of future writes (for example host ownership/mount changes later).
+- S1 (read-only; approved, to be validated against the M7 target): `GET /api/v1/settings` showing effective environment values — display paths, max concurrency, Skip Existing conflict default, download defaults — plus configured/unconfigured destination state and the stored startup probe result shown read-only. The read `GET` never runs a new probe and mutates nothing. No arbitrary browser paths, no secrets or general config dump, no `PATCH` and no migration.
+- S2a/S2b/S2c (persisted; post-v0.1 future backlog, §60): `app_settings` migration and DB-backed `GET`, validated `PATCH`, and Settings UI defaults. Not v0.1 and not scheduled in M9. Design points (DB preference versus environment bootstrap fallback; concurrency bounds and effect on current jobs) are deferred with it.
+- Optional welcome screen: post-v0.1, not v0.1.
+
+**Browser-local preferences (approved; planned, not implemented; frontend-only, no backend).**
+
+- Remember last selection (v0.1): the frontend stores the user's last choices in browser `localStorage`; there is no backend preference storage, and S2 settings stay post-v0.1. Only choice-shaped identifiers are stored — never raw URLs or full metadata. This is distinct from the `sessionStorage` draft restore, which holds job/analysis IDs (§59 Q2). Technical boundary (proposal; exact fields and versioning are design, not a user-defined preference set): restore only values that are still among the currently available, validated choices; a corrupt or unknown entry falls back to the default; denied/unavailable storage degrades to defaults without error.
+- Theme Light/Dark/System (future; not v0.1-required): may later be added as frontend-only `localStorage`. Observed today: `frontend/src/styles.css` defines `:root` tokens with a `prefers-color-scheme: dark` override (system support exists); the App has no manual selector or persistence. Expected cost is a small bounded frontend task: extend via `data-theme` with simple token mappings (no theme framework), and update `frontend/scripts/check-contrast.mjs`, which currently parses the media-query block.
 
 ---
 
@@ -2120,24 +2133,31 @@ Documentation record only: no runtime implementation, no milestone closure. Labe
   2. Clear History also deletes failed jobs' staging; no automatic deletion at the moment of failure (PRODUCT_SPEC §17).
   3. `sessionStorage` draft restore (K2) is approved but non-blocking: in Q2 where it fits, or after v0.1 if needed. The technical sketch below stays PROPOSED (PRODUCT_SPEC §6).
   4. Collection standard `Up to Xp` ceiling picker (finding 20; PRODUCT_SPEC §9).
-  5. Smallest covering standard ceiling (608 → 720p), no upscaling, `Best Available` only without a reliable height. Open design point: how to apply this when collection analysis has no height; fixed ceilings or a probe are not approved automatically.
+  5. Single item: smallest covering standard ceiling (608 → 720p), no upscaling, `Best Available` only without a reliable height. Collection (user decision, closed): fixed ceilings 2160/1440/1080/720/480; each child takes the best `<= X`, otherwise its best available fallback, which may exceed the cap; no upscaling; no per-item height or probe needed. Planned supersede of the current invalid-variant behaviour (§19 M5-4A note; implementation unchanged).
   6. Work order: 18 closure → 19 masked error detail → 6 Deno → Queue Q1/Q2 → 3 conflict → 10/Q3 cleanup → M6.5. Technical proposals inside these items (for example the 18 timeout values) are not approved by the order.
   7. Persistent milestone-closure question "is any v0.1-required spec item left unplanned?" — recorded as one closure-checklist rule in `docs/WORKFLOW.md` (Gate and STATE); no new gate, tool or config.
   8. Placeholder menu entries get a "not built yet" ("Henüz yapılmadı") label (PRODUCT_SPEC §22); no UI change today. Timing PROPOSED: a small bounded UI task alongside Q1.
+  9. Plan approved (17 Nov, decisions round 2): the order in decision 6 stands and 18 is the current next task. Q1 covers historical Activity; Q3 is bulk-only. The finding 3 naming correctness (resolution suffix, `(2)`, `Already exists`) stays before Q3/M6.5 and does not move to M9.
+  10. Settings: S1 read-only approved, to be validated against the M7 target; S2a/S2b/S2c are post-v0.1 (§47, §60); Compose/environment settings until then.
+  11. No per-job `DELETE /jobs/{id}`; only bulk Clear History (user-settled; §7).
+  12. Startup storage write probe of configured target/staging roots: success silent, failure as a persistent banner; S1 shows the same stored result read-only (§47 technical boundary; no implementation yet).
+  13. Remember last selection in browser `localStorage` is v0.1 (§47); theme selector is optional future work; welcome screen is post-v0.1.
 - Source of the spec-audit findings below: a user-transferred audit from a separate read-only Opus session on main `f597dd3`; the full report lives in the user's Claude project (`claude/spec-coverage-2026-11-17.md`). It was not read in this workspace and no current full audit is claimed here.
 
-**PROPOSED — awaiting approval, not started** (the order in approved decision 6 applies; after plan approval the first task is 18)
+**Plan items** (approved plan per decision 9; not started; 18 is the current next task. Technical values inside items, such as the Q0 timeouts, still need approval where stated)
 - Q0 (finding 18): bounded Uvicorn graceful-wait and a compatible Compose stop grace (candidates such as 5 s / 30 s; values need approval and validation) as a separate fix, plus an explicit Compose smoke with SSE open, active single and collection drain, and recovery. Sonnet only if it stays a bounded deployment change; Opus from the start if lifecycle/concurrency is touched.
 - Finding 19: separate bounded, masked extractor diagnostics. Finding 6: JS runtime plus version validation as a separate container task, after diagnosis.
 - Q1: minimal server-backed active/queued/history list with Cancel/Retry, on-demand child/detail Activity, list refresh driven by the existing single global SSE connection (`/api/v1/events`, one shared connection updating the list from every job snapshot) with a REST/poll fallback when needed; no per-job SSE endpoint and no new framework. On-demand detail explicitly covers past completed/failed/cancelled jobs: persisted Activity is read through the existing backend, with no new SSE. `list_jobs` returns the newest 50, so older active/queued jobs can be hidden: ensure every non-terminal job is visible and terminal history is bounded with simple load-more/pagination; reduce collection children N+1 loading; on-demand detail API; backward compatibility is checked in the design.
 - Q2: approved cancelled single Retry with staging retention (Opus expert task; decision 1); approved K2 draft restore where it fits (decision 3, non-blocking).
 - Finding 3 (after Q1/Q2): wrong quality/identity/naming through a separate storage/catalog contract expert job that never blindly dedups the current logical shared identity; conflict choice surface stays in M9-C.
-- Q3 (finding 10): bulk Clear History; the backend is built from scratch. Separate Opus expert contract: preview/confirm, drain, retry/cleanup races, staging ownership, path/backend ID handling, symlink/no-follow, DB+filesystem atomicity limits, no arbitrary orphan traversal; failed staging is included (decision 2). Still open: byte estimate vs actually freed amount, real cleanup-failure reporting. No per-job job/history `DELETE` (§7, PRODUCT_SPEC §17); the audit's `DELETE /jobs` request awaits explicit user clarification.
+- Q3 (finding 10): bulk Clear History; the backend is built from scratch. Separate Opus expert contract: preview/confirm, drain, retry/cleanup races, staging ownership, path/backend ID handling, symlink/no-follow, DB+filesystem atomicity limits, no arbitrary orphan traversal; failed staging is included (decision 2). Still open: byte estimate vs actually freed amount, real cleanup-failure reporting. No per-job job/history `DELETE` (§7, PRODUCT_SPEC §17); user-settled bulk-only.
 - Q2 technical sketch for K2 draft restore (PROPOSED, unapproved): reuse the existing `GET /api/v1/analysis/{analysis_id}` and its 410 for expired snapshots; keep only `analysis_id` plus bounded selection/output/mode/platform identifiers in `sessionStorage`; no raw metadata or full source URL in persistent `localStorage`. An expired, foreign or missing snapshot, a double submit after create, or a stale variant clears the draft safely with a message. Queue alone does not fully solve New Download state loss.
 - Technical record for the Queue decisions (observed code boundaries, not decisions): `QueuePage.tsx` is an 8-line placeholder; M4 closed only the backend. Single cancelled Retry is currently rejected (`JobService._retry_job` accepts a failed single job with a retryable code) and the single runner removes staging on cancel; a collection cancelled parent can be Retried and resumes from retained child staging. Approved decision 1 changes the single path in Q2.
-- Settings S1 (read-only; contract in §47): position after M6.5, at the opening of M7, cross-referenced from M9. Rationale: it shows real effective env values and configured/unconfigured destinations right when M7 adds Plex destinations, without delaying the approved order. Alternative: after Q3 and before M6.5 — risk: delays M6.5 tags further. Implementer: Opus, because the API contract matters in this plan (size is not a criterion).
-- Settings S2 (persisted): after M9-C and M7/M8 support (see M9 below); open points in §47.
-- Spec-audit gaps (assignment only): View Activity on the analysis-failure example stays a requirement; removing it from the spec is only a proposal (PRODUCT_SPEC §5). Library detail thumbnail/extractor/membership gap → M9-L, depends on M6.6 grouping. Concurrency is env-only and tied to Settings (S1 display, S2 change). Replace / Keep Both behaviours and choice surface only → M9-C; the approved resolution suffix, `(2)` and `Already exists` correctness stays in the finding 3 expert task (after Q1/Q2, before Q3 and M6.5), which M9-C preserves and aligns with — no joint delivery and no M9 dependency for that pre-M6.5 work; no conflict primitive is implemented today. Plex/Device shown honestly as coming later is fine: planned in M7/M8.
+- Settings S1 (read-only; approved; contract in §47): position after M6.5, at the opening of M7, validated against the M7 target. It shows real effective env values, configured/unconfigured destinations and the stored startup probe result right when M7 adds Plex destinations. Implementer: Opus, because the API contract matters (size is not a criterion). The startup storage write probe (§47) must exist for S1 to display its result; its separate task placement is not fixed here.
+- Settings S2a/S2b/S2c: post-v0.1 future backlog (§47, §60); not in M9.
+- Remember last selection (§47; v0.1): proposed as a separate bounded frontend substep near Q2 UI work, independent of the K2 draft restore, whose deferability does not apply to it; it stays v0.1.
+- Theme Light/Dark/System (§47): optional; an M9-T polish slot is only a suggestion without user scheduling approval, otherwise post-v0.1.
+- Spec-audit gaps (assignment only): View Activity on the analysis-failure example stays a requirement; removing it from the spec is only a proposal (PRODUCT_SPEC §5). Library detail thumbnail/extractor/membership gap → M9-L, depends on M6.6 grouping. Concurrency is env-only and tied to Settings (S1 display; changing it through S2 is post-v0.1). Replace / Keep Both behaviours and choice surface only → M9-C; the approved resolution suffix, `(2)` and `Already exists` correctness stays in the finding 3 expert task (after Q1/Q2, before Q3 and M6.5), which M9-C preserves and aligns with — no joint delivery and no M9 dependency for that pre-M6.5 work; no conflict primitive is implemented today. Plex/Device shown honestly as coming later is fine: planned in M7/M8.
 - M9 scheduling (PROPOSED, awaiting approval): the approved UI behaviours (Library single Delete modal, video ceiling/naming display, conversion progress, platform display/icons) stay approved; only their timing is a candidate. Wrong-quality (3) and naming correctness are not M9 items: they follow Queue as a separate expert job. Only the remaining cosmetic/platform/Library-modal refinement is a candidate for an M9 schedule note. The icon set and license are chosen later after approval/research; no dependency is added now.
 - Closing: complete plan, milestone-close independent review, full gates, the closure question (decision 7), and a user Docker Compose smoke of 3–5 items.
 - Separate pending work, not expanded here: transfer of the approved fixed conversion profiles to the authoritative documents.
@@ -2149,7 +2169,7 @@ Documentation record only: no runtime implementation, no milestone closure. Labe
 | --- | --- |
 | K1 | Queue page is a placeholder; no job access in the UI |
 | K2 | New Download state is lost on navigation/F5; Queue restores job access but does not fully solve it; single vs collection cancel differs (PRODUCT_SPEC §17) |
-| K3 | User-transferred spec audit received (source above; not re-verified in this workspace); findings assigned in PROPOSED; closure question approved (decision 7) |
+| K3 | User-transferred spec audit received (source above; not re-verified in this workspace); findings assigned in Plan items; closure question approved (decision 7) |
 | S0 | Settings page is an 8-line placeholder; env-only config, no settings endpoint/model/table; PRODUCT_SPEC §23 scope reduced to one word in M9 (audit) |
 | L1 | Library detail lacks thumbnail, extractor/source and playlist/album membership (audit; PRODUCT_SPEC §20) |
 | 3 | Wrong-quality skip plus duplicate risk (shared-file logical rows are deliberate under skip-existing) |
@@ -2186,7 +2206,7 @@ User smoke (17 Nov, Fedora Docker, near f597dd3, container Python 3.12, ffmpeg 7
 
 - responsive mobile UI
 - error messages
-- Settings (PRODUCT_SPEC §23; read-only S1 proposed at M7 opening, §47 and §59 M6-Q)
+- Settings (PRODUCT_SPEC §23; read-only S1 approved at M7 opening, §47 and §59 M6-Q; persisted S2 is post-v0.1)
 - conflict policies
 - end-to-end smoke tests
 - documentation
@@ -2194,11 +2214,9 @@ User smoke (17 Nov, Fedora Docker, near f597dd3, container Python 3.12, ffmpeg 7
 Proposed M9 sub-tasks (PROPOSED — awaiting user approval, not started; the items above stay):
 
 - M9-C conflict/storage semantics: only the Replace and Keep Both behaviours and their choice surface, as a separate design; Opus (destructive filesystem). The approved resolution suffix, `(2)` and `Already exists` correctness (PRODUCT_SPEC §16) is not M9-C scope: it stays in the finding 3 expert task after Queue Q1/Q2 and before Q3 and M6.5; M9-C preserves and aligns with that contract, with no joint delivery and no M9 dependency for the pre-M6.5 work.
-- M9-S2a: `app_settings` migration plus DB-backed `GET /api/v1/settings` (migration number not fixed now).
-- M9-S2b: validated `PATCH /api/v1/settings` with safe concurrency changes; Opus expert work. DB preference vs env bootstrap fallback and concurrency bounds/effect on current jobs are open (§47).
-- M9-S2c: Settings UI defaults only for conflict policies and destinations that are actually implemented.
 - M9-L: Library detail gap (thumbnail, extractor/source, playlist/album membership; PRODUCT_SPEC §20); depends on M6.6 grouping.
-- S2 runs after M9-C and M7/M8 support; existing responsive/error/e2e/docs polish is kept.
+- M9-T (suggestion only; no user scheduling approval): optional Light/Dark/System theme selector (§47); otherwise post-v0.1.
+- Settings S2a/S2b/S2c are not M9 work; they moved to post-v0.1 future backlog (§47, §60). Existing responsive/error/e2e/docs polish is kept.
 
 ## v0.1 Release Security Hardening / Audit
 
@@ -2271,6 +2289,10 @@ Only introduce Redis/Celery/etc. if that migration becomes necessary.
 ## PWA Share Target
 
 A shared URL can pre-fill the New Download form.
+
+## Persisted Settings (post-v0.1)
+
+Former M9-S2a/S2b/S2c, moved out of v0.1 (§47): S2a `app_settings` migration plus DB-backed `GET /api/v1/settings` (migration number not fixed); S2b validated `PATCH /api/v1/settings` with safe concurrency changes (expert work; DB preference versus environment bootstrap fallback and concurrency bounds/effect on current jobs are design points for then); S2c Settings UI defaults only for conflict policies and destinations that are actually implemented. An optional welcome screen is also post-v0.1.
 
 ## Plex API
 

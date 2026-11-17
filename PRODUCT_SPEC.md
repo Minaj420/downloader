@@ -254,6 +254,8 @@ Library / Device
 
 **New Download state across navigation (observed; draft restore approved; planned, not implemented).** The analysis, selection and job card are lost on tab navigation or F5. The Queue page (§17) restores access to jobs from the server but does not by itself solve this. Approved (user decision): a `sessionStorage`-based draft restore for New Download. It is not blocking: it is scheduled in Queue Q2 where it fits, or after v0.1 if needed. The technical sketch (only `analysis_id` plus minimal identifiers, safe clear on 410/expired) in ARCHITECTURE §59 (Q2) stays a proposal, not an approved design. Approved condition: after a new analysis, the old job card may be cleared only once Queue actually delivers access to cancelled single-job Retry (§17; the history lives in Queue).
 
+**Remember last selection (approved for v0.1; planned, not implemented).** New Download remembers the user's last choices in the browser (`localStorage`); there is no server-side preference storage and Settings defaults stay fixed in v0.1. Only choice identifiers are kept, never raw URLs or full metadata. A remembered choice is applied only when it is still available for the current source; otherwise the default is used. This is separate from the draft restore above, and its v0.1 status does not depend on whether draft restore slips. Technical details in ARCHITECTURE §47.
+
 ---
 
 # 7. URL Analysis
@@ -343,7 +345,8 @@ If the source maximum is 1080p:
 - Non-standard heights (for example 608p, 858p, 804p) get no quality row of their own; the actual resolution is shown in the Library.
 - If the source maximum is not a standard height, it is shown under the smallest standard ceiling that covers it (608 → `Up to 720p`, 858 → `Up to 1080p`). This never means an exact 720p/1080p result and never upscaling. No ceiling above that top ceiling is offered, and a lower ceiling appears only when a source format with height `<=` that ceiling exists.
 - `Best Available` may stay the default. If the height is not reliable, only `Best Available` is offered and no imaginary ceiling is shown. If the source maximum exceeds 2160, `Best Available` may be higher while the ceiling list ends at 2160.
-- Collection-level ceiling picker (finding 20; approved, planned, not implemented): collections offer the same standard `Up to Xp` ceiling picker. The backend already supports `max_height`; the UI does not. The smallest covering standard ceiling (608 → `Up to 720p`), no upscaling, and `Best Available` only when no reliable height exists apply as above. **Open design point:** how this applies when collection analysis has no per-item height is undecided; neither fixed ceilings nor a probe is approved automatically.
+- The smallest-covering-ceiling rule and the `Best Available`-only label without a reliable height apply only to single-item jobs.
+- Collection-level ceiling picker (finding 20; user decision, approved, planned, not implemented): collections offer a fixed ceiling list `Up to 2160p` / `1440p` / `1080p` / `720p` / `480p` (plus `Best Available`), without per-item height or probing. For each selected child the backend picks the best source format with height `<= X`; if the child has none, it falls back to that child's best available result, which may then exceed the chosen ceiling. There is never upscaling. The backend already supports `max_height`; the UI does not. This replaces the current behaviour where a child with no format under the ceiling fails as an invalid variant (ARCHITECTURE §19 planned supersede note); the current implementation is unchanged until implemented.
 
 Where video and audio streams are separate, the backend may use `yt-dlp` and FFmpeg to produce the final playable media file.
 
@@ -606,7 +609,7 @@ Required actions where appropriate:
 **Queue page status and decisions.** Observed: the Queue page is still a placeholder. It is a v0.1 required capability, and its prerequisite M6-Q comes before M6.5 tag work (ARCHITECTURE §59, which holds the technical details). All items below are approved decisions, **planned, not implemented**, unless marked otherwise:
 
 - The page lists active, queued and history jobs with Cancel and Retry (parent-only for collections, per-child UI stays out of scope).
-- **Clear History** replaces the old Remove / Clear Completed actions. There is no single history/job deletion. A bulk confirmation screen shows the number of jobs and the space that would be freed. By default completed and failed jobs are selected; cancelled jobs (single and collection) stay. An `include_cancelled` checkbox is OFF by default; when checked, the cancelled jobs' partial staging data (including a cancelled single job's retained partial staging) is deleted too. Library media files and catalog records are never deleted by this cleanup. Active and queued jobs are never cleanup candidates.
+- **Clear History** replaces the old Remove / Clear Completed actions. There is no single history/job deletion and no per-job delete endpoint (user-settled). A bulk confirmation screen shows the number of jobs and the space that would be freed. By default completed and failed jobs are selected; cancelled jobs (single and collection) stay. An `include_cancelled` checkbox is OFF by default; when checked, the cancelled jobs' partial staging data (including a cancelled single job's retained partial staging) is deleted too. Library media files and catalog records are never deleted by this cleanup. Active and queued jobs are never cleanup candidates.
 - **Failed staging (approved):** Clear History also deletes the staging data of the failed jobs it clears. There is no automatic staging deletion at the moment of failure.
 - **Cancelled single Retry (approved):** a cancelled single job keeps its partial staging and can be retried, continuing from where it stopped. Resumption happens only through an explicit user Retry, never automatically. This is a separate bounded Opus expert task in Queue Q2 (ARCHITECTURE §59).
 - **Still open, awaiting explicit user approval:** the byte estimate versus the actually freed amount and real reporting of cleanup failures.
@@ -856,7 +859,14 @@ Initial settings may include:
 
 Advanced settings should remain limited in v0.1.
 
-Current status (observed; user-transferred spec audit): the Settings page is an 8-line placeholder and configuration is environment-only; there is no settings endpoint, model or table. The requirement above is unchanged. The concrete Settings plan (read-only S1, then persisted S2) is a **PROPOSED** plan awaiting user approval (ARCHITECTURE §47, §59); none of it is an accepted decision.
+Current status (observed; user-transferred spec audit): the Settings page is an 8-line placeholder and configuration is environment-only; there is no settings endpoint, model or table. The list above is the long-term direction; v0.1 scope is narrowed by the approved plan below.
+
+**Settings plan (approved user decision; planned, not implemented; ARCHITECTURE §47, §59):**
+
+- v0.1 delivers a read-only Settings page (S1) at the M7 opening, validated against the M7 target: it shows the effective Compose/environment values, which destinations are configured, and the stored startup write-check result. Viewing Settings never runs a new check and changes nothing.
+- At startup the application test-writes and deletes a small file in each configured target and staging folder. Success is silent; a failure shows a persistent banner. The result reflects permissions at that moment only and does not guarantee future writes.
+- Editable, saved settings (S2) are post-v0.1 (§33). Until then settings are changed through Compose/environment, and in-app defaults are fixed.
+- An optional welcome screen is post-v0.1.
 
 ---
 
@@ -1126,6 +1136,12 @@ Run defined download jobs automatically.
 Redis/Celery or another distributed job system only if actual scale/reliability needs justify it.
 
 Do not introduce this infrastructure preemptively.
+
+## Editable Settings (post-v0.1; approved deferral)
+Saved, in-app editable settings (former M9 S2a/S2b/S2c: database-backed settings, validated changes including concurrency, and Settings UI defaults), plus an optional welcome screen. v0.1 uses Compose/environment configuration with a read-only Settings page (§23).
+
+## Theme selector (optional; not v0.1 required)
+A Light / Dark / System theme choice remembered in the browser may be added later. The app already follows the system light/dark preference; a manual choice is optional polish, scheduled only with user approval, otherwise post-v0.1.
 
 ## Clip downloads and subtitles (post-v0.1 proposal; not v0.1 required)
 Suggestions only, not approved scope and not v0.1 required: clip download through yt-dlp `download_ranges` with a two-handle slider plus time boxes; subtitles as none / embed / sidecar with a language choice.

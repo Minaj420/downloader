@@ -5,7 +5,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 ## Şu an
 
 - Mod: Normal, lead OpenCode; bekleyen Claude-only GPT review'u yok.
-- M6 açık; M6-Q kararları kaydedildi. Güncel plan onayı bekleniyor; hiçbir uygulama başlamadı.
+- M6 açık; güncel plan ve kullanıcı kararları onaylı/kayıtlı. Sıradaki iş18; uygulaması henüz başlamadı.
 - Uzlaştırma yedek dalı korunur; push yalnız açık kullanıcı talebi ve hedefle.
 - Onaylı sabit profillerin yetkili belgeye aktarımı bekliyor: MP3 V0, M4A AAC 256k,
   Opus 160k, WAV/FLAC 16-bit; MP4 x264 CRF20 medium + AAC 192k. Yeni ürün kararı değil.
@@ -14,7 +14,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 ## Sıradaki iş
 
 - Onaylı sıra: kapanış18 → teşhis19 → runtime6 → Q1/Q2 → çakışma3 → temizlik10/Q3 → M6.5.
-- Plan onayından sonra ilk iş18; Q1 geçmiş Activity, Q2 tekli Retry/resume, Q3 bulk backend içerir.
+- İlk iş18; Q1 geçmiş Activity, Q2 tekli Retry/resume, Q3 yalnız toplu temizlik backend'i içerir.
 - M6.5 Mutagen eşleme/adapter ve pipeline bekler; metin → M6.6 grup/yollar → M6.7 kapak sırası korunur.
 - M6.4/5 kapanışı yok; full gate ve değişen davranış için yeni kullanıcı Compose smoke'u gerekir.
 
@@ -23,8 +23,8 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - M6.6 güvenilir albüm grubu/ön hazırlık ve çoklu album_artists klasör değeri; M6.7 cover.jpg seçimi açık.
 - M6.9 yalnız seçim ekranından kullanıcı isterse; MB/CAA aday, hak/API/embed koşulları o işte netleşecek.
 - Mutagen lisansı kişisel kullanıma engel değil; dağıtım uyumu notu sürer. M9 kalite/boyut bekler.
-- Settings önerisi: S1 salt-okunur M6.5 sonrası/M7 açılışı; S2 kalıcı tercihler M9-C sonrası (ARCH §47/59).
-- Açık: audit DELETE/jobs notu ile bulk-only kararı çelişiyor; koleksiyonda bilinmeyen yükseklik tasarımı.
+- S1 M7 hedef doğrulamasıyla onaylı; açılış yaz-sil probu/kalıcı hata bandı planlı; S2 v0.1 sonrası.
+- Koleksiyon sabit tavan + öğe bazlı best fallback onaylı; tekil DELETE yok. Tema yeri M9 opsiyonel öneri.
 - Onaylı Retry/retention, failed staging, seçici20 ve K3 yetkili belgelerde; K2 onaylı, bloklamaz/ertelenebilir.
 
 ## Açık bulgular
@@ -33,7 +33,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
   kapanış paragrafında bayat; sabit profillerin yetkili belgeye aktarımı ayrı iş.
 - should-fix: collection başarılı convert/caller-cancel testi sleep(0) ile deterministik değil;
   single başarılı convert+iptal ek testi eksik. Üretim hatası bulunmadı.
-- Audit aktarımı alındı (ARCH §59): Settings placeholder → S1/S2 önerisi; Library detay açığı → M9-L önerisi.
+- Audit aktarımı alındı (ARCH §59): Settings → S1/M7; Library detay → M9-L; son seçim localStorage v0.1.
 - Öncelikli: K1 Queue placeholder; K2 New Download gezinme/F5'te kayboluyor; draft restore uygulaması bekler.
 - Öncelikli18: aktif işte stop-t60 iki kez force-kill; indirme sürüyor. SSE beklemesi güçlü hipotez.
 - Öncelikli3/6/10/19: yanlış kalite skip, eksik JS runtime, staging birikimi, görünmeyen hata ayrıntısı.
