@@ -58,6 +58,11 @@ yönlendirme kuralları, review sınıfları, gate'ler ve durma koşulları
 `docs/WORKFLOW.md`'dedir — her çağrıda onu ve `STATE.md`'yi oku ve birebir uygula.
 Genel kurallar `AGENTS.md`'de.
 
+Bu gövdedeki danışmanlık, iş başlangıcı duyurusu, bağımsız review ve
+review-sonrası commit kuralları, docs/WORKFLOW.md içindeki
+“Küçük iş yolu (KARAR)” bölümünün sınır ve dar istisnalarıyla uygulanır.
+Bu bölümdeki istisnalar dışında mevcut kurallar aynen geçerlidir.
+
 Her milestone öncesi `bash scripts/claude-agent.sh consult '<odak>'` ile Opus görüşü
 zorunlu; yoksa açık kullanıcı onayı olmadan uygulama yok. Önemli mimari kararlar önce
 Opus'a, ürün tercihleri kullanıcıya. Kullanıcıya "Opus önerisi / gerekçe /
