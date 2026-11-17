@@ -156,6 +156,32 @@ PASS/FAIL/blocked per item) without ever including credentials or tokens in it.
    invalid or private URL; confirm the analysis error is inspectable. This is
    not evidence of a child runtime failure. Keep this small; no extra matrices.
 
+#### Smoke script (network cut / orderly restart)
+
+`sudo bash scripts/smoke.sh network|restart <URL>` automates items 6-style
+interruption checks on the **existing** `downloader` container (no isolated
+Compose project, no data deletion). Notes:
+
+- Single-user dev use only; nothing else may be queued or running. The script
+  checks this before building by reading the app DB read-only inside the container
+  (any non-terminal job or active item; `GET /jobs` is not used because it returns
+  only the latest 50), and reports BLOCKED if busy or the check fails. It is not
+  an atomic lock: do not start other work during the run. If the job finishes
+  before the interruption takes effect, the result is BLOCKED, not PASS. It builds and `up -d`s the
+  current image first (a failed build stops before any interruption), starts a
+  real, persistent job from your URL, and interrupts only after real byte
+  progress while `downloading`.
+- Exit codes: 0 PASS, 1 FAIL, 2 BLOCKED, 64 bad CLI. The URL, API bodies and
+  docker logs are never printed. The URL is visible in the command argument,
+  shell history and `ps` on the host; use a URL you accept exposing there.
+- `network` disconnects the container's single network and reconnects it on every
+  exit path (trap EXIT/INT/TERM); PASS is printed only after recovery is
+  verified. `restart` runs `docker compose stop` (30 s grace), then start; it
+  never starts a Retry.
+- Not guaranteed on SIGKILL, Docker daemon failure or power loss; if the script
+  reports `RECOVERY FAILED`, reconnect the network / start the container yourself.
+- Tests use a fake `docker` only; the live behaviour is not verified by them.
+
 ## Docker deployment
 
 ```bash

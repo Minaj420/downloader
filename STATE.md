@@ -14,12 +14,11 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 ## Sıradaki iş
 
 - Onaylı sıra: kapanış18 → teşhis19 → runtime6 → Q1/Q2 → çakışma3 → temizlik10/Q3 → M6.5.
-- İş19 kapalı; runtime6 bekler. Smoke script planı kullanıcı onayında; uygulaması başlamadı.
+- İş19 kapalı; M6-SMOKE hedefli test/review tamam; canlı Compose doğrulaması runtime6'da bekler.
 - Toplu UI smoke listesi boş. M6.5 Mutagen/adapter/pipeline → M6.6 grup/yollar → M6.7 kapak sırası korunur.
 - M6.4/5 kapanışı yok; full gate ve değişen davranış için yeni kullanıcı Compose smoke'u gerekir.
 
 ## Açık kararlar
-
 - M6.6 güvenilir albüm grubu/ön hazırlık ve çoklu album_artists klasör değeri; M6.7 cover.jpg seçimi açık.
 - M6.9 yalnız seçim ekranından kullanıcı isterse; MB/CAA aday, hak/API/embed koşulları o işte netleşecek.
 - Mutagen lisansı kişisel kullanıma engel değil; dağıtım uyumu notu sürer. M9 kalite/boyut bekler.
@@ -28,7 +27,6 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - Onaylı Retry/retention, failed staging, seçici20 ve K3 yetkili belgelerde; K2 onaylı, bloklamaz/ertelenebilir.
 
 ## Açık bulgular
-
 - should-fix: eski conversion durumları PRODUCT_SPEC §8–9 ve ARCHITECTURE M6
   kapanış paragrafında bayat; sabit profillerin yetkili belgeye aktarımı ayrı iş.
 - should-fix: collection başarılı convert/caller-cancel testi sleep(0) ile deterministik değil;
@@ -49,6 +47,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - Canlı slash yüklenmesi ve tüm ask/deny/yol dışı izin sınırları doğrulanmış değil.
 - Teknik takip: non-root UID/GID→M7/S1 ayrı Opus işi; yt-dlp sabitleme, Python3.12 CI ve ARCH bölme (§59).
 ## Son gate
+- 2026-11-18 Fedora M6-SMOKE: lead pytest47/Ruff/mypy PASS; GPT kod review must-fix yok; gerçek Docker yok.
 - 2026-11-18 kullanıcı Compose Q19: koleksiyon log/başarı/Retry ve tekil CR PASS; son birleşik smoke henüz yapılmadı.
 - Madde6 Compose smoke'una eklendi (bekliyor): tekli ağ kesintisi logu tek satır, tekrarsız, detail en fazla500 karakter.
   Q19a lead pytest73/Ruff/mypy PASS; GPT review must-fix yok; lead Docker/full gate yapmadı.
@@ -59,6 +58,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - 2026-10-30 macOS full gate tarihsel; sonraki uzlaştırma kaynak değişikliğiyle bayat.
 
 ## Bilinen riskler
+- Accepted: smoke idle kontrolü atomik değil; test sırasında başka iş başlatılmaz; canlı kurtarma madde6'da sınanacak.
 - Accepted: Original remux EXIT_STATUS içindeki disk/izin hatası genel uyarıda kalabilir (PRODUCT_SPEC §14).
 - Accepted: commit anında iptal canlı child uyarısını kaçırabilir; commit edilmiş
   uyarı DB'de kalır; Activity sorgusu veya uygun cursorla replay'den erişilir.
