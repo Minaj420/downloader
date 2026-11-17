@@ -5,7 +5,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 ## Şu an
 
 - Mod: Normal, lead OpenCode; bekleyen Claude-only GPT review'u yok.
-- M6 açık; iş18 düzeltmesi yerelde doğrulandı; Docker çalıştırılmadı, kullanıcı Compose smoke'u bekleniyor.
+- M6 açık; Q0/18 kullanıcı Compose smoke PASS ve onayıyla kapandı. M6-Q genel kapanışı yok.
 - Uzlaştırma yedek dalı korunur; push yalnız açık kullanıcı talebi ve hedefle.
 - Onaylı sabit profillerin yetkili belgeye aktarımı bekliyor: MP3 V0, M4A AAC 256k,
   Opus 160k, WAV/FLAC 16-bit; MP4 x264 CRF20 medium + AAC 192k. Yeni ürün kararı değil.
@@ -14,7 +14,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 ## Sıradaki iş
 
 - Onaylı sıra: kapanış18 → teşhis19 → runtime6 → Q1/Q2 → çakışma3 → temizlik10/Q3 → M6.5.
-- İş18 kapanışı Compose smoke sonucuna bağlı; ardından19 hata ayrıntısı. Docker doğrulamasını kullanıcı yapar.
+- Sıradaki bounded iş19 hata ayrıntısı; kesinti etiketi/SSE log sadeleştirme değerlendirmesi de bu işte.
 - M6.5 Mutagen eşleme/adapter ve pipeline bekler; metin → M6.6 grup/yollar → M6.7 kapak sırası korunur.
 - M6.4/5 kapanışı yok; full gate ve değişen davranış için yeni kullanıcı Compose smoke'u gerekir.
 
@@ -35,7 +35,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
   single başarılı convert+iptal ek testi eksik. Üretim hatası bulunmadı.
 - Audit aktarımı alındı (ARCH §59): Settings → S1/M7; Library detay → M9-L; son seçim localStorage v0.1.
 - Öncelikli: K1 Queue placeholder; K2 New Download gezinme/F5'te kayboluyor; draft restore uygulaması bekler.
-- İş18: açık SSE beklemesi yerelde üretildi; HTTP5s/Compose30s ve exec zinciri testli; container henüz PASS değil.
+- Bloklamayan UI notları ARCH §59: yüzde→Q1/Q2; iç hata/kesinti rozeti/log→19; queued etiketi→M6.5.
 - Öncelikli3/6/10/19: yanlış kalite skip, eksik JS runtime, staging birikimi, görünmeyen hata ayrıntısı.
   Kullanıcı gözlemleri ve diğer UX bulguları ARCHITECTURE §59'da; network_error/deno bağı kanıtsız.
 - Fedora Python 3.14 eski üç backend failure (os.close monkeypatch/pidfd) macOS gate ile doğrulanmadı.
@@ -47,14 +47,14 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
   yalnız salt-okunur biçimler kullanılır, config bakımı ayrı. gh PR wildcard'ları da repo/hedef/
   body-file sınırını sağlamaz; açık repo/base/head ve düz metin body kullanılmalı.
 - Canlı slash yüklenmesi ve tüm ask/deny/yol dışı izin sınırları doğrulanmış değil.
-- Teknik takip: container user, yt-dlp sabitleme/görünürlük, Python 3.12 CI ve ARCHITECTURE bölme (§59).
+- Teknik takip: non-root UID/GID→M7/S1 ayrı Opus işi; yt-dlp sabitleme, Python3.12 CI ve ARCH bölme (§59).
 ## Son gate
 
 - 2026-11-17 Fedora Python3.14, Q18: gerçek Uvicorn/SSE+collection shutdown+health54, replay7 PASS;
-  hedefli Ruff/mypy PASS; Docker/build ve full gate çalıştırılmadı; kullanıcı Compose doğrulaması bekliyor.
-- 2026-11-17 kullanıcı Fedora Compose raporu: Original/MP3, MP4 copy/x264, playlist, Cancel/Retry PASS.
-- Güncellenen stop-t2 kurtarma PASS: completed korunur, active interrupted_by_restart, no autoresume;
-  sayaç1/1/3, kart canlı, dosya644root host'ta oynar. Önceki kapanış18 FAIL; yeni smoke bekler, full gate değil.
+  hedefli Ruff/mypy PASS; lead Docker çalıştırmadı, full gate yapılmadı; Q18 smoke kullanıcı raporu.
+- 2026-11-17 kullanıcı Fedora Compose Q18 PASS: single/collection5.5s, idle0.8s, Exit0/OOMfalse, exec doğrulandı.
+- Single restart→Failed/Retry ~%4'ten devam PASS; bu kullanıcı Cancel→Retry değil, Q2 hâlâ bekler.
+- Mix4 sabit seçim/completed korundu, auto-resume yok, Retry46→48; MKV VP9/Opus200s tam decode kullanıcı PASS.
 - Host RPM Fusion FFmpeg smoke 23 PASS/0 SKIP; container libx264 ayrıca görüldü. Sonraki skip'i bildir.
 - 2026-10-30 macOS full gate tarihsel; sonraki uzlaştırma kaynak değişikliğiyle bayat.
 
