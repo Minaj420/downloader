@@ -14,7 +14,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 ## Sıradaki iş
 
 - Onaylı sıra: kapanış18 → teşhis19 → runtime6 → Q1/Q2 → çakışma3 → temizlik10/Q3 → M6.5.
-- İş19: koleksiyon/Retry ve tekil CR smoke PASS; Q19a tekrar giderme/500 karakter sınırı için tekil Compose tekrarı bekler.
+- İş19 kullanıcı kararıyla hedefli test/review temelinde kapandı; sıradaki iş runtime6.
 - M6.5 Mutagen eşleme/adapter ve pipeline bekler; metin → M6.6 grup/yollar → M6.7 kapak sırası korunur.
 - M6.4/5 kapanışı yok; full gate ve değişen davranış için yeni kullanıcı Compose smoke'u gerekir.
 
@@ -49,8 +49,8 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - Canlı slash yüklenmesi ve tüm ask/deny/yol dışı izin sınırları doğrulanmış değil.
 - Teknik takip: non-root UID/GID→M7/S1 ayrı Opus işi; yt-dlp sabitleme, Python3.12 CI ve ARCH bölme (§59).
 ## Son gate
-
-- 2026-11-18 kullanıcı Compose Q19: koleksiyon log/başarı/Retry ve tekil CR PASS; tekrar/uzunluk son smoke'u bekler.
+- 2026-11-18 kullanıcı Compose Q19: koleksiyon log/başarı/Retry ve tekil CR PASS; son birleşik smoke henüz yapılmadı.
+- Madde6 Compose smoke'una eklendi (bekliyor): tekli ağ kesintisi logu tek satır, tekrarsız, detail en fazla500 karakter.
   Q19a lead pytest73/Ruff/mypy PASS; GPT review must-fix yok; lead Docker/full gate yapmadı.
 - 2026-11-17 kullanıcı Fedora Compose Q18 PASS: single/collection5.5s, idle0.8s, Exit0/OOMfalse, exec doğrulandı.
 - Single restart→Failed/Retry ~%4'ten devam PASS; bu kullanıcı Cancel→Retry değil, Q2 hâlâ bekler.
