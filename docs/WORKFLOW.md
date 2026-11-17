@@ -318,6 +318,15 @@ Uygulama gate komutları aynen geçerlidir; yalnız belge işi uygulama gate'i g
 Milestone kapanış checklist'i şu soruyu içerir: “Herhangi bir v0.1-required spec maddesi
 plansız kaldı mı?” Cevap kapanış raporuna yazılır; yeni gate/araç/config değildir.
 
+### Compose smoke zamanlaması (kullanıcı kararı)
+
+Çalışma ortamına dokunan işlerde (Docker/Compose, kapanış/shutdown, sinyal, ağ,
+yt-dlp/FFmpeg çalıştırma veya migration) Compose smoke'u iş kapanmadan hemen istenir.
+Yalnız arayüz değiştiren işlerde smoke'lar biriktirilip toplu istenir; lead her iş
+kapanışında kullanıcıya tam olarak “toplu smoke listesine eklendi” der ve bekleyen
+listeyi STATE.md'de tutar. Milestone/full gate kapanış kuralları aynen sürer.
+Bu saf karar kaydı review istisnasıdır; istisnayı lead yönetir.
+
 STATE kısa, tek kaynaklı aktif durumdur: hedef ~60, kapanış üst sınırı 80 fiziksel satır.
 İçerik yalnız: aktif durum/devam noktası, sıradaki bounded iş, gerçekten açık karar/engel,
 çözülmemiş bulgu ve hâlâ geçerli kısa risk, en son ilgili gate özeti. Eski sonuçlara ekleme
