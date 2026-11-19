@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # Usage: sudo bash scripts/smoke.sh network|restart <URL>   (see README "Smoke script")
 # Exit: 0 PASS, 1 FAIL, 2 BLOCKED, 64 bad CLI. Never prints the URL, API bodies or docker logs.
+# Job: the source-derived best VIDEO ("video-best", video_only|muxed) with output_profile original.
+# Result line ends with: mode=video/original state=<last seen> checks=<passed only> duration=<N>s
 set -u -o pipefail
 export LC_ALL=C.UTF-8
 CT=downloader
-RC=1 MSG="unexpected exit" NET="" MUTATED=0 PHASE=prep
+RC=1 MSG="unexpected exit" NET="" MUTATED=0 PHASE=prep STATE=not-started CHECKS=""
 SLEEP=${SMOKE_SLEEP:-1} PROG_T=${SMOKE_PROGRESS_TIMEOUT:-120} FAIL_T=${SMOKE_FAIL_TIMEOUT:-180}
 [[ $SLEEP =~ ^[0-9]+(\.[0-9]+)?$ && $PROG_T$FAIL_T =~ ^[0-9]+$ ]] || exit 64
 src=${BASH_SOURCE[0]}; [[ $src == */* ]] || src=./$src
@@ -43,10 +45,14 @@ try:
         sys.exit(3 if busy else 0)
     elif op == "start":
         a = call("POST", "/analysis", {"url": sys.stdin.read().strip()})
-        fmts = a.get("formats") or []
-        if a.get("content_type") != "single" or not fmts:
+        if a.get("content_type") != "single":
             sys.exit(4)
-        pick = next((f for f in fmts if f["kind"] == "audio_only"), fmts[0])
+        # Only the source-derived best VIDEO clone; no audio-only or first-variant fallback.
+        pick = next((f for f in a.get("formats") or []
+                     if f.get("variant_id") == "video-best"
+                     and f.get("kind") in ("video_only", "muxed")), None)
+        if pick is None:
+            sys.exit(4)
         job = call("POST", "/jobs", {"analysis_id": a["analysis_id"],
                                      "variant_id": pick["variant_id"], "output_profile": "original"})
         print(job["id"])
@@ -66,6 +72,8 @@ dc() {
   local t=$1; shift
   timeout "$t" docker compose --project-directory "$ROOT" -f "$ROOT/compose.yml" "$@" >/dev/null 2>&1
 }
+ok() { CHECKS=${CHECKS:+$CHECKS,}$1; }  # call only AFTER the check really passed
+summary() { echo "$MODE mode=video/original state=$STATE checks=${CHECKS:-none} duration=${SECONDS}s"; }
 fail() { MSG=$1; RC=1; exit 1; }
 blocked() { MSG=$1; RC=2; exit 2; }
 wait_ready() {
@@ -89,6 +97,8 @@ recover() {  # idempotent; only verified state counts
     [[ $(dk 30 inspect -f '{{.State.Running}}' "$CT") == true ]] || dk 60 start "$CT" >/dev/null
     wait_ready 90 || return 1
   fi
+  if (( MUTATED )) || [[ -n $NET ]]; then ok recovery; fi  # reached only after verification
+  return 0
 }
 cleanup() {
   trap '' INT TERM
@@ -96,8 +106,11 @@ cleanup() {
   if ! recover; then
     RC=1 MSG="RECOVERY FAILED: restore network/container manually"
   fi
-  if (( RC == 0 )); then echo "PASS: $MODE"; else
-    case $RC in 2) echo "BLOCKED: $MSG";; *) echo "FAIL: $MSG [phase=$PHASE]";; esac
+  if (( RC == 0 )); then echo "PASS: $(summary)"; else
+    case $RC in
+      2) echo "BLOCKED: $MSG | $(summary)";;
+      *) echo "FAIL: $MSG [phase=$PHASE] | $(summary)";;
+    esac
   fi
   exit "$RC"
 }
@@ -109,7 +122,12 @@ job_status() {
   local out
   out=$(api status "$1" </dev/null) || return 1
   read -r S B C R <<<"$out"
-  [[ $B =~ ^[0-9]+$ && -n ${S-} ]]
+  [[ $B =~ ^[0-9]+$ && -n ${S-} ]] || return 1
+  case $S in  # fixed allowlist: nothing from the API is echoed verbatim
+    queued|analyzing|downloading|post_processing|finalizing|completed|failed|cancelled) STATE=$S;;
+    *) STATE=unknown;;
+  esac
+  return 0
 }
 wait_terminal() {  # until failed; any other terminal state or timeout is FAIL
   local end=$((SECONDS + FAIL_T))
@@ -168,8 +186,10 @@ check_failure_log() {
 [[ -f $ROOT/compose.yml ]] || blocked "compose.yml not found next to scripts/"
 api ready </dev/null >/dev/null || blocked "API not reachable in the downloader container"
 api idle </dev/null >/dev/null || blocked "not idle (other jobs queued/active) or idle check failed"
+ok idle
 PHASE=build
 dc 1800 build downloader || fail "image build failed (nothing interrupted)"
+ok build
 PHASE=up; MUTATED=1
 dc 300 up -d --no-deps downloader || fail "compose up failed"
 wait_ready 90 || fail "API not ready after up"
@@ -182,28 +202,42 @@ if [[ $MODE == network ]]; then
 fi
 PHASE=job
 JOB=$(printf '%s' "$URL" | api start); rc=$?
-(( rc == 4 )) && blocked "URL is not a single downloadable item"
+(( rc == 4 )) && blocked "no single downloadable VIDEO (video-best) in the analysis; audio-only is not used"
 (( rc == 0 )) && [[ $JOB =~ ^[A-Za-z0-9_-]+$ ]] || fail "could not start job via API"
+STATE=unknown  # job exists, no status observed yet
 wait_progress "$JOB"
+ok progress
 PHASE=intervene
 if [[ $MODE == network ]]; then
   NET=$nets   # recovery intent is recorded before the mutation
   dk 30 network disconnect "$NET" "$CT" >/dev/null || fail "network disconnect failed"
+  ok disconnect
   wait_terminal "$JOB"
-  [[ $C == network_error && $R == true ]] || fail "job error is not retryable network_error"
+  [[ $C == network_error ]] || fail "job error is not retryable network_error"
+  ok net-error
+  [[ $R == true ]] || fail "job error is not retryable network_error"
+  ok retryable
 else
   STOP_TS=$(date +%s)
   dc 90 stop || fail "compose stop failed"   # compose.yml stop_grace_period (30s) applies
   [[ $(dk 30 inspect -f '{{.State.ExitCode}} {{.State.OOMKilled}}' "$CT") == "0 false" ]] \
     || fail "container did not exit cleanly (ExitCode 0, no OOM)"
+  ok exit0; ok no-oom
   logs=$(timeout 30 docker logs --since "$STOP_TS" "$CT" 2>&1) || fail "docker logs failed"
   [[ ${logs,,} == *"shutdown complete"* ]] || fail "no shutdown complete in logs"
+  ok shutdown
   dc 120 start downloader || fail "compose start failed"
   wait_ready 90 || fail "API not ready after start"
   wait_terminal "$JOB"
-  [[ $C == interrupted_by_restart && $R == true ]] || fail "job is not retryable interrupted_by_restart"
+  [[ $C == interrupted_by_restart ]] || fail "job is not retryable interrupted_by_restart"
+  ok restart-error
+  [[ $R == true ]] || fail "job is not retryable interrupted_by_restart"
+  ok retryable
 fi
 PHASE=logs
-[[ $MODE == network ]] && check_failure_log "$JOB"
+if [[ $MODE == network ]]; then  # exactly one failure log line, no continuation/repeat/ANSI, <=500 chars
+  check_failure_log "$JOB"
+  ok log
+fi
 PHASE=recover
 RC=0 MSG=ok

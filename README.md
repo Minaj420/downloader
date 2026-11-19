@@ -171,6 +171,21 @@ Compose project, no data deletion). Notes:
   current image first (a failed build stops before any interruption), starts a
   real, persistent job from your URL, and interrupts only after real byte
   progress while `downloading`.
+- The job is always the source-derived best **video** (`video-best`, kind
+  `video_only` or `muxed`) with `output_profile: original`; video-only keeps the
+  normal companion-merge pipeline. There is no audio-only or first-variant
+  fallback: with no single downloadable video the result is BLOCKED and no job is
+  created. A very short video can still finish before the interruption, which is
+  also BLOCKED.
+- The one result line ends with `mode=video/original state=<last observed job
+  status, or not-started/unknown> checks=<only checks that actually passed>
+  duration=<N>s` (seconds incl. build/recovery). Example PASS: `PASS: restart
+  mode=video/original state=failed checks=idle,build,progress,exit0,no-oom,
+  shutdown,restart-error,retryable,recovery duration=Ns`. A check appears only
+  after it succeeded (`log` = the network failure-log check; `recovery` only
+  after verified recovery), so a partial FAIL/BLOCKED never lists unreached ones.
+  This format is new; earlier runtime6 smoke evidence is not a result of it, and
+  the real video restart smoke is still to be run by the user.
 - Exit codes: 0 PASS, 1 FAIL, 2 BLOCKED, 64 bad CLI. The URL, API bodies and
   docker logs are never printed. The URL is visible in the command argument,
   shell history and `ps` on the host; use a URL you accept exposing there.

@@ -4,6 +4,8 @@ Real Docker is unreachable by construction: PATH holds only a temp dir with the 
 ``docker`` plus a handful of symlinked coreutils, and DOCKER_HOST points nowhere.
 """
 
+import json
+import re
 import shutil
 import signal
 import sqlite3
@@ -45,7 +47,12 @@ exec)
         exit $?
       fi
       [[ $S == busy ]] && exit 3; exit 0;;
-    start) read -r url; put stdin_seen "$url"; [[ $S == multi ]] && exit 4
+    start)
+      if [[ -n ${FAKE_REALSTART-} ]]; then  # run the real embedded start code on fake API replies
+        "$FAKE_PYTHON" "$FAKE_API" "$6"
+        exit $?
+      fi
+      read -r url; put stdin_seen "$url"; [[ $S == multi ]] && exit 4
            echo job1; exit 0;;
     status)
       n=$(( $(get n 0) + 1 )); put n $n
@@ -63,6 +70,7 @@ exec)
       [[ $(get restarted 0) == 1 ]] && { echo "failed 9 interrupted_by_restart true"; exit 0; }
       case $S in
         stuck) echo "downloading 0 - false";;
+        odd) echo "we!rd 0 - false";;
         early) (( n >= 2 )) && echo "completed 500 - false" || echo "downloading 0 - false";;
         postproc) (( n >= 2 )) && echo "post_processing 5 - false" || echo "downloading 0 - false";;
         *) echo "downloading $((n * 100)) - false";;
@@ -118,6 +126,37 @@ exit 1
 """
 
 
+# Runs the REAL embedded Python ("$6" = script's PY) with urllib.request.urlopen replaced by
+# a local fake: /analysis returns analysis.json, /jobs returns a job; every call is logged.
+FAKE_API = r"""
+import io, json, os, sys, urllib.request as u
+D = os.environ["FAKE_DIR"]
+class R(io.BytesIO):
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
+def fake(req, timeout=None):
+    path = req.full_url.split("/api/v1", 1)[1]
+    body = json.loads(req.data) if req.data else None
+    with open(D + "/api_calls", "a") as f:
+        f.write(json.dumps([req.get_method(), path, body]) + "\n")
+    if path == "/analysis":
+        return R(open(D + "/analysis.json", "rb").read())
+    return R(b'{"id": "job1"}')
+u.urlopen = fake
+src = sys.argv[1]
+sys.argv = ["x", "start"]
+exec(compile(src, "smoke_py", "exec"))
+"""
+
+AUDIO = {"variant_id": "audio-opus", "kind": "audio_only"}
+BEST = {"variant_id": "video-best", "kind": "video_only"}
+OTHER = {"variant_id": "video-1080p", "kind": "video_only"}
+
+
+def _analysis(formats: list[dict[str, str]], content_type: str = "single") -> str:
+    return json.dumps({"analysis_id": "a1", "content_type": content_type, "formats": formats})
+
+
 class Sandbox:
     def __init__(self, root: Path) -> None:
         self.dir = root / "state"
@@ -157,6 +196,17 @@ class Sandbox:
     def calls(self) -> list[str]:
         return self.read("calls").splitlines()
 
+    def api_calls(self) -> list[list[object]]:
+        return [json.loads(line) for line in self.read("api_calls").splitlines()]
+
+    def real_start(
+        self, formats: list[dict[str, str]], content_type: str = "single"
+    ) -> dict[str, str]:
+        (self.dir / "analysis.json").write_text(_analysis(formats, content_type))
+        api = self.root / "fake_api.py"
+        api.write_text(FAKE_API)
+        return {"FAKE_REALSTART": "1", "FAKE_PYTHON": sys.executable, "FAKE_API": str(api)}
+
     def assert_quiet(self, out: str) -> None:
         for secret in ("SECRETTOKEN123", "secret.example", "unable to download", "boom"):
             assert secret not in out
@@ -180,6 +230,21 @@ class Sandbox:
 @pytest.fixture
 def box(tmp_path: Path) -> Sandbox:
     return Sandbox(tmp_path)
+
+
+def summary(proc: subprocess.CompletedProcess[str]) -> tuple[str, list[str], int]:
+    """Parse the single result line: (state, checks in order, duration seconds)."""
+    lines = proc.stdout.splitlines()
+    assert len(lines) == 1, proc.stdout
+    m = re.search(r" mode=video/original state=(\S+) checks=(\S+) duration=(\d+)s$", lines[0])
+    assert m, lines[0]
+    return m.group(1), m.group(2).split(","), int(m.group(3))
+
+
+NETWORK_CHECKS = ["idle", "build", "progress", "disconnect", "net-error", "retryable", "log",
+                  "recovery"]
+RESTART_CHECKS = ["idle", "build", "progress", "exit0", "no-oom", "shutdown", "restart-error",
+                  "retryable", "recovery"]
 
 
 def test_bash_syntax() -> None:
@@ -374,3 +439,80 @@ def test_bad_failure_log_is_fail(box: Sandbox, scenario: str) -> None:
     proc = box.run("network", scenario)
     assert proc.returncode == 1 and "PASS" not in proc.stdout
     assert box.read("disconnected") == "0"
+
+
+@pytest.mark.parametrize("mode", ["network", "restart"])
+@pytest.mark.parametrize(
+    "formats",
+    [[AUDIO, OTHER, BEST], [AUDIO, {"variant_id": "video-best", "kind": "muxed"}]],
+)
+def test_real_start_picks_video_best_original(
+    box: Sandbox, mode: str, formats: list[dict[str, str]]
+) -> None:
+    proc = box.run(mode, "ok", **box.real_start(formats))
+    assert proc.returncode == 0, proc.stdout
+    assert [c for c in box.api_calls() if c[0] == "POST"] == [
+        ["POST", "/analysis", {"url": URL}],
+        ["POST", "/jobs", {"analysis_id": "a1", "variant_id": "video-best",
+                           "output_profile": "original"}],
+    ]
+    state, checks, duration = summary(proc)
+    assert state == "failed" and duration >= 0
+    assert checks == (NETWORK_CHECKS if mode == "network" else RESTART_CHECKS)
+    assert proc.stdout.startswith(f"PASS: {mode} mode=video/original ")
+
+
+@pytest.mark.parametrize("mode", ["network", "restart"])
+@pytest.mark.parametrize(
+    ("formats", "content_type"),
+    [([AUDIO], "single"), ([], "single"), ([AUDIO, OTHER], "single"),
+     ([AUDIO, {"variant_id": "video-best", "kind": "audio_only"}], "single"),
+     ([AUDIO, BEST], "playlist")],
+)
+def test_real_start_without_best_video_is_blocked(
+    box: Sandbox, mode: str, formats: list[dict[str, str]], content_type: str
+) -> None:
+    proc = box.run(mode, "ok", **box.real_start(formats, content_type))
+    assert proc.returncode == 2 and "PASS" not in proc.stdout
+    assert "no single downloadable VIDEO" in proc.stdout
+    assert not [c for c in box.api_calls() if c[1] == "/jobs"]  # no job created
+    assert not any(c.startswith("network") or c == "compose stop" for c in box.calls())
+    state, checks, _ = summary(proc)
+    assert state == "not-started" and checks == ["idle", "build", "recovery"]
+
+
+def test_early_blocked_reports_completed_state(box: Sandbox) -> None:
+    proc = box.run("restart", "early")
+    state, checks, _ = summary(proc)
+    assert proc.returncode == 2 and state == "completed"
+    assert checks == ["idle", "build", "recovery"]  # never reached progress
+
+
+def test_unknown_status_is_not_echoed(box: Sandbox) -> None:
+    proc = box.run("network", "odd")
+    assert proc.returncode == 2 and "we!rd" not in proc.stdout
+    assert summary(proc)[0] == "unknown"
+
+
+@pytest.mark.parametrize("scenario", ["multiline", "repeated", "ansi", "nolog"])
+def test_bad_log_has_no_log_check(box: Sandbox, scenario: str) -> None:
+    proc = box.run("network", scenario)
+    state, checks, _ = summary(proc)
+    assert proc.returncode == 1 and state == "failed"
+    assert "log" not in checks and checks[-1] == "recovery"
+    assert checks[:-1] == NETWORK_CHECKS[:-2]
+
+
+def test_recovery_failure_summary_has_no_recovery_check(box: Sandbox) -> None:
+    proc = box.run("network", "connect_fail")
+    _, checks, _ = summary(proc)
+    assert proc.returncode == 1 and "RECOVERY FAILED" in proc.stdout
+    assert "recovery" not in checks and "PASS" not in proc.stdout
+    assert checks == NETWORK_CHECKS[:-1]
+
+
+def test_unclean_exit_keeps_only_passed_checks(box: Sandbox) -> None:
+    proc = box.run("restart", "oom")
+    _, checks, _ = summary(proc)
+    assert proc.returncode == 1
+    assert not {"exit0", "no-oom", "shutdown", "restart-error", "retryable"} & set(checks)

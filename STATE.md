@@ -14,7 +14,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 ## Sıradaki iş
 
 - Onaylı sıra: kapanış18 → teşhis19 → runtime6 → Q1/Q2 → çakışma3 → temizlik10/Q3 → M6.5.
-- İş19/runtime6 kapalı; smoke script video seçimi+sonuç özeti düzeltmesi ve canlı restart tekrarı sırada.
+- İş19/runtime6 kapalı; script video+özet hedefli test/review tamam; canlı restart tekrarı kullanıcıda bekler.
 - Toplu UI smoke listesi boş. M6.5 Mutagen/adapter/pipeline → M6.6 grup/yollar → M6.7 kapak sırası korunur.
 - M6.4/5 kapanışı yok; full gate ve değişen davranış için yeni kullanıcı Compose smoke'u gerekir.
 
@@ -40,17 +40,17 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - should-fix: child Skip Existing Activity uyarısı yok; ayrı lifecycle/transaction işi; analiz View Activity açık.
 - should-fix: modelsiz implement resume CLI hatasının belgelenmesi ve izleyici partial-line
   testinin deterministikliği açık; restart/model reload ve farklı-rol resume izolasyonu kanıtsız.
-- should-fix: lead.md eski bootstrap referansı ayrı bakımda değerlendirilmeli.
+- should-fix: lead.md eski bootstrap referansı; izin-devam dar atfı kullanıcı sync/restart bekler.
 - should-fix: geniş git diff/log izinleri --output seçeneğini teknik olarak dışlamıyor;
   yalnız salt-okunur biçimler kullanılır, config bakımı ayrı. gh PR wildcard'ları da repo/hedef/
   body-file sınırını sağlamaz; açık repo/base/head ve düz metin body kullanılmalı.
 - Canlı slash yüklenmesi ve tüm ask/deny/yol dışı izin sınırları doğrulanmış değil.
 - Teknik takip: non-root UID/GID→M7/S1 ayrı Opus işi; yt-dlp sabitleme, Python3.12 CI ve ARCH bölme (§59).
 ## Son gate
-- 2026-11-19 Fedora runtime6: lead pytest60/Ruff/mypy PASS; GPT kod review must-fix yok; Docker/full gate yok.
+- 2026-11-20 Fedora M6-SMOKE-VIDEO: lead pytest69/Ruff/mypy PASS; GPT kod review must-fix yok; Docker/full gate yok.
 - 2026-11-19 kullanıcı Fedora Compose runtime6 PASS: Deno2.9.8/yt-dlp2026.10.26/EJS0.8.0 algılandı; UI video PASS.
 - Network script/Q19 son tek-satır/tekrarsız/detail≤500 PASS; restart script2kez erken ses bitişiyle BLOCKED.
-  Kullanıcı6 kapanışını onayladı; restart18de elle kanıtlı. Video script düzeltmesi sonrası tekrar bekler.
+  Kullanıcı6 kapanışını onayladı; restart18de elle kanıtlı. Yeni video scriptle restart tekrarı bekler.
 - 2026-11-17 kullanıcı Fedora Compose Q18 PASS: single/collection5.5s, idle0.8s, Exit0/OOMfalse, exec doğrulandı.
 - Single restart→Failed/Retry ~%4'ten devam PASS; bu kullanıcı Cancel→Retry değil, Q2 hâlâ bekler.
 - Mix4 sabit seçim/completed korundu, auto-resume yok, Retry46→48; MKV VP9/Opus200s tam decode kullanıcı PASS.
