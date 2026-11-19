@@ -7,6 +7,9 @@ format mapping stays backend-side in the stored analysis (ARCHITECTURE.md
 """
 
 import asyncio
+import base64
+import json
+import re
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
@@ -45,6 +48,8 @@ from app.utils.datetime import utc_isoformat
 
 APP_LIBRARY_DESTINATION = "app_library"
 SKIP_EXISTING_POLICY = "skip"
+HISTORY_DEFAULT_LIMIT = 50
+HISTORY_MAX_LIMIT = 100
 
 _CANCELLABLE_STATUSES = {JobStatus.QUEUED, *ACTIVE_JOB_STATUSES}
 
@@ -225,6 +230,37 @@ class JobService:
     async def list_jobs(self, actor: Actor) -> list[DownloadJob]:
         async with self._session_factory() as session:
             return await job_repo.list_jobs(session, actor.id)
+
+    async def list_jobs_with_items(
+        self, actor: Actor
+    ) -> list[tuple[DownloadJob, list[JobItem] | None]]:
+        """Legacy newest-50 page; collection children in one batched owner-scoped read."""
+        async with self._session_factory() as session:
+            records = await job_repo.list_jobs(session, actor.id)
+            items = await job_repo.list_job_items_for_jobs(
+                session,
+                [record.id for record in records if record.job_type == "collection"],
+                actor.id,
+            )
+        return [(record, items.get(record.id)) for record in records]
+
+    async def list_active_jobs(self, actor: Actor) -> list[DownloadJob]:
+        async with self._session_factory() as session:
+            return await job_repo.list_active_jobs(session, actor.id)
+
+    async def list_history_jobs(
+        self, actor: Actor, *, limit: int, cursor: str | None = None
+    ) -> tuple[list[DownloadJob], str | None]:
+        """One keyset page; raises ``InvalidJobCursor`` before any read."""
+        before = decode_job_cursor(cursor) if cursor is not None else None
+        async with self._session_factory() as session:
+            records = await job_repo.list_history_jobs(
+                session, actor.id, limit=limit + 1, before=before
+            )
+        if len(records) <= limit:
+            return records, None
+        page = records[:limit]
+        return page, encode_job_cursor(page[-1])
 
     async def list_job_items(self, actor: Actor, job_id: str) -> list[JobItem]:
         async with self._session_factory() as session:
@@ -502,6 +538,57 @@ class JobService:
     async def _get_any(self, job_id: str) -> DownloadJob | None:
         async with self._session_factory() as session:
             return await job_repo.get_job_any_owner(session, job_id)
+
+
+class InvalidJobCursor(ValueError):
+    """A history cursor that this server could not have issued."""
+
+
+_CURSOR_KEYS = {"created_at", "id"}
+_CURSOR_TOKEN = re.compile(r"[A-Za-z0-9_-]+")
+_CURSOR_TIME = re.compile(
+    r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6}\+00:00"
+)
+_CURSOR_ID = re.compile(r"[0-9a-f]{32}")
+
+
+def _b64url(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+
+def encode_job_cursor(record: DownloadJob) -> str:
+    """Opaque keyset cursor for the last returned history row (ARCHITECTURE §59 Q1)."""
+    created_at = record.created_at
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=UTC)
+    payload = {
+        "created_at": created_at.astimezone(UTC).isoformat(timespec="microseconds"),
+        "id": record.id,
+    }
+    return _b64url(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
+
+
+def decode_job_cursor(cursor: str) -> tuple[datetime, str]:
+    """Strict inverse of ``encode_job_cursor``; anything else is ``InvalidJobCursor``."""
+    if not _CURSOR_TOKEN.fullmatch(cursor) or len(cursor) % 4 == 1:
+        raise InvalidJobCursor
+    try:
+        raw = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4))
+        payload = json.loads(raw.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise InvalidJobCursor from exc
+    if _b64url(raw) != cursor or not isinstance(payload, dict) or set(payload) != _CURSOR_KEYS:
+        raise InvalidJobCursor
+    created_at, job_id = payload["created_at"], payload["id"]
+    if not isinstance(created_at, str) or not _CURSOR_TIME.fullmatch(created_at):
+        raise InvalidJobCursor
+    if not isinstance(job_id, str) or not _CURSOR_ID.fullmatch(job_id):
+        raise InvalidJobCursor
+    try:
+        parsed = datetime.fromisoformat(created_at)
+    except ValueError as exc:
+        raise InvalidJobCursor from exc
+    return parsed, job_id
 
 
 def _is_expired(analysis: AnalysisSession) -> bool:

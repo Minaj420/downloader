@@ -1,6 +1,7 @@
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -10,7 +11,13 @@ from app.domain.jobs import CollectionProfile, JobError, OutputProfile
 from app.models.jobs import ActivityEvent, DownloadJob
 from app.repositories import activity
 from app.services.job_mapping import job_to_dto
-from app.services.job_service import APP_LIBRARY_DESTINATION, JobService
+from app.services.job_service import (
+    APP_LIBRARY_DESTINATION,
+    HISTORY_DEFAULT_LIMIT,
+    HISTORY_MAX_LIMIT,
+    InvalidJobCursor,
+    JobService,
+)
 from app.utils.datetime import utc_isoformat
 
 router = APIRouter(tags=["jobs"])
@@ -98,12 +105,47 @@ async def create_job(
     return await _job_response(service, actor, record)
 
 
+def _invalid_query(field: str, value: Any) -> RequestValidationError:
+    # Raised (not returned) so the app-level handler emits the identical 422 body.
+    return RequestValidationError([{
+        "type": "value_error", "loc": ("query", field),
+        "msg": "Invalid job listing query", "input": value,
+    }])
+
+
 @router.get("/jobs")
-async def list_jobs(http_request: Request, actor: Actor = Depends(get_actor)) -> Any:
+async def list_jobs(
+    http_request: Request,
+    actor: Actor = Depends(get_actor),
+    scope: Literal["active", "history"] | None = None,
+    limit: int | None = Query(default=None, ge=1, le=HISTORY_MAX_LIMIT),
+    cursor: str | None = None,
+) -> Any:
     service: JobService = http_request.app.state.job_service
-    records = await service.list_jobs(actor)
+    if scope != "history":
+        if limit is not None:
+            raise _invalid_query("limit", limit)
+        if cursor is not None:
+            raise _invalid_query("cursor", cursor)
+    if scope is None:
+        # Legacy contract: newest 50, collection items included, no next_cursor.
+        pairs = await service.list_jobs_with_items(actor)
+        return {
+            "jobs": [job_to_dto(record, items).model_dump(mode="json") for record, items in pairs]
+        }
+    if scope == "active":
+        records = await service.list_active_jobs(actor)
+        next_cursor = None
+    else:
+        try:
+            records, next_cursor = await service.list_history_jobs(
+                actor, limit=HISTORY_DEFAULT_LIMIT if limit is None else limit, cursor=cursor
+            )
+        except InvalidJobCursor:
+            raise _invalid_query("cursor", cursor) from None
     return {
-        "jobs": [await _job_response(service, actor, record) for record in records]
+        "jobs": [job_to_dto(record).model_dump(mode="json") for record in records],
+        "next_cursor": next_cursor,
     }
 
 

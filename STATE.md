@@ -13,7 +13,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 
 ## Sıradaki iş
 - Onaylı sıra: kapanış18 → teşhis19 → runtime6 → Q1/Q2 → çakışma3 → temizlik10/Q3 → M6.5.
-- Q1 sözleşmesi ARCH §59'da tasarım olarak kayıtlı; sıradaki iş Q1-be scoped liste/sayfalama (Opus).
+- Q1-be uygulandı; sıradaki iş Q1-fe-api scoped istemci/tipler/testler; Queue UI henüz placeholder.
 - should-fix: Q1 kayıtlı sınırdaki Load more ifadesi bayat eski satırı yenilemez; reset/reload yeniler.
 - Toplu UI smoke listesi boş. M6.5 Mutagen/adapter/pipeline → M6.6 grup/yollar → M6.7 kapak sırası korunur.
 - M6.4/5 kapanışı yok; full gate ve değişen davranış için yeni kullanıcı Compose smoke'u gerekir.
@@ -47,7 +47,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - Canlı slash yüklenmesi ve tüm ask/deny/yol dışı izin sınırları doğrulanmış değil.
 - Teknik takip: non-root UID/GID→M7/S1 ayrı Opus işi; yt-dlp sabitleme, Python3.12 CI ve ARCH bölme (§59).
 ## Son gate
-- 2026-11-20 Fedora M6-SMOKE-VIDEO: lead pytest69/Ruff/mypy PASS; GPT kod review must-fix yok; Docker/full gate yok.
+- 2026-11-20 Fedora Python3.14 Q1-be: lead pytest203/Ruff/mypy PASS; GPT must-fix yok; Docker/full gate yok.
 - 2026-11-19 kullanıcı Fedora Compose runtime6 PASS: Deno2.9.8/yt-dlp2026.10.26/EJS0.8.0 algılandı; UI video PASS.
 - Network script/Q19 son tek-satır/tekrarsız/detail≤500 PASS; eski audio restart BLOCKED sonucu aşıldı.
 - 2026-11-20 kullanıcı Compose video/Original restart PASS20s: failed, Exit0/OOMyok, shutdown, retryable, recovery.

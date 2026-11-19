@@ -2,11 +2,12 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any, cast
 
-from sqlalchemy import CursorResult, case, func, inspect, select, update
+from sqlalchemy import CursorResult, and_, case, func, inspect, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.jobs import (
     ACTIVE_JOB_STATUSES,
+    TERMINAL_JOB_STATUSES,
     JobErrorCode,
     JobStatus,
     job_error_code_retryable,
@@ -117,6 +118,24 @@ async def list_job_items(
     return list(result.scalars().all())
 
 
+async def list_job_items_for_jobs(
+    session: AsyncSession, job_ids: Sequence[str], owner_id: str
+) -> dict[str, list[JobItem]]:
+    """Batched ``list_job_items`` for one page: one owner-scoped read, same order."""
+    grouped: dict[str, list[JobItem]] = {job_id: [] for job_id in job_ids}
+    if not grouped:
+        return grouped
+    result = await session.execute(
+        select(JobItem)
+        .join(DownloadJob, JobItem.job_id == DownloadJob.id)
+        .where(DownloadJob.id.in_(grouped), DownloadJob.owner_id == owner_id)
+        .order_by(JobItem.job_id.asc(), JobItem.source_order.asc())
+    )
+    for item in result.scalars().all():
+        grouped[item.job_id].append(item)
+    return grouped
+
+
 async def get_job_any_owner(session: AsyncSession, job_id: str) -> DownloadJob | None:
     record = await session.get(DownloadJob, job_id)
     if record is not None:
@@ -205,6 +224,55 @@ async def list_jobs(
         .where(DownloadJob.owner_id == owner_id)
         .order_by(DownloadJob.created_at.desc())
         .limit(limit)
+    )
+    records = list(result.scalars().all())
+    await _preload_collection_retry_children(session, records)
+    return records
+
+
+_SCOPE_ACTIVE_STATUSES = [JobStatus.QUEUED.value, *(s.value for s in ACTIVE_JOB_STATUSES)]
+_SCOPE_HISTORY_STATUSES = [s.value for s in TERMINAL_JOB_STATUSES]
+
+
+async def list_active_jobs(session: AsyncSession, owner_id: str) -> list[DownloadJob]:
+    """Every owned queued/active job, oldest first with id tie-break; no limit."""
+    result = await session.execute(
+        select(DownloadJob)
+        .where(
+            DownloadJob.owner_id == owner_id,
+            DownloadJob.status.in_(_SCOPE_ACTIVE_STATUSES),
+        )
+        .order_by(DownloadJob.created_at.asc(), DownloadJob.id.asc())
+    )
+    records = list(result.scalars().all())
+    await _preload_collection_retry_children(session, records)
+    return records
+
+
+async def list_history_jobs(
+    session: AsyncSession,
+    owner_id: str,
+    *,
+    limit: int,
+    before: tuple[datetime, str] | None = None,
+) -> list[DownloadJob]:
+    """Owned terminal jobs, newest first with id tie-break, keyset after ``before``.
+
+    ``before`` is an aware UTC ``(created_at, id)``; rows are stored as UTC,
+    so the bound is compared as naive UTC at microsecond precision.
+    """
+    query = select(DownloadJob).where(
+        DownloadJob.owner_id == owner_id,
+        DownloadJob.status.in_(_SCOPE_HISTORY_STATUSES),
+    )
+    if before is not None:
+        created_at = before[0].astimezone(UTC).replace(tzinfo=None)
+        query = query.where(or_(
+            DownloadJob.created_at < created_at,
+            and_(DownloadJob.created_at == created_at, DownloadJob.id < before[1]),
+        ))
+    result = await session.execute(
+        query.order_by(DownloadJob.created_at.desc(), DownloadJob.id.desc()).limit(limit)
     )
     records = list(result.scalars().all())
     await _preload_collection_retry_children(session, records)
