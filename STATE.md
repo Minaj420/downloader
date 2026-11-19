@@ -12,9 +12,9 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - Onaylı, belgeye aktarılacak: videodan ses çıkarma yok; ses doğrudan ses akışından.
 
 ## Sıradaki iş
-
 - Onaylı sıra: kapanış18 → teşhis19 → runtime6 → Q1/Q2 → çakışma3 → temizlik10/Q3 → M6.5.
-- İş19/runtime6 ve smoke script işi kapalı; sıradaki iş Queue Q1/Q2, uygulaması başlamadı.
+- Q1 sözleşmesi ARCH §59'da tasarım olarak kayıtlı; sıradaki iş Q1-be scoped liste/sayfalama (Opus).
+- should-fix: Q1 kayıtlı sınırdaki Load more ifadesi bayat eski satırı yenilemez; reset/reload yeniler.
 - Toplu UI smoke listesi boş. M6.5 Mutagen/adapter/pipeline → M6.6 grup/yollar → M6.7 kapak sırası korunur.
 - M6.4/5 kapanışı yok; full gate ve değişen davranış için yeni kullanıcı Compose smoke'u gerekir.
 
