@@ -14,7 +14,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 ## Sıradaki iş
 
 - Onaylı sıra: kapanış18 → teşhis19 → runtime6 → Q1/Q2 → çakışma3 → temizlik10/Q3 → M6.5.
-- İş19/runtime6 kapalı; script video+özet hedefli test/review tamam; canlı restart tekrarı kullanıcıda bekler.
+- İş19/runtime6 ve smoke script işi kapalı; sıradaki iş Queue Q1/Q2, uygulaması başlamadı.
 - Toplu UI smoke listesi boş. M6.5 Mutagen/adapter/pipeline → M6.6 grup/yollar → M6.7 kapak sırası korunur.
 - M6.4/5 kapanışı yok; full gate ve değişen davranış için yeni kullanıcı Compose smoke'u gerekir.
 
@@ -49,8 +49,8 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 ## Son gate
 - 2026-11-20 Fedora M6-SMOKE-VIDEO: lead pytest69/Ruff/mypy PASS; GPT kod review must-fix yok; Docker/full gate yok.
 - 2026-11-19 kullanıcı Fedora Compose runtime6 PASS: Deno2.9.8/yt-dlp2026.10.26/EJS0.8.0 algılandı; UI video PASS.
-- Network script/Q19 son tek-satır/tekrarsız/detail≤500 PASS; restart script2kez erken ses bitişiyle BLOCKED.
-  Kullanıcı6 kapanışını onayladı; restart18de elle kanıtlı. Yeni video scriptle restart tekrarı bekler.
+- Network script/Q19 son tek-satır/tekrarsız/detail≤500 PASS; eski audio restart BLOCKED sonucu aşıldı.
+- 2026-11-20 kullanıcı Compose video/Original restart PASS20s: failed, Exit0/OOMyok, shutdown, retryable, recovery.
 - 2026-11-17 kullanıcı Fedora Compose Q18 PASS: single/collection5.5s, idle0.8s, Exit0/OOMfalse, exec doğrulandı.
 - Single restart→Failed/Retry ~%4'ten devam PASS; bu kullanıcı Cancel→Retry değil, Q2 hâlâ bekler.
 - Mix4 sabit seçim/completed korundu, auto-resume yok, Retry46→48; MKV VP9/Opus200s tam decode kullanıcı PASS.
@@ -58,7 +58,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - 2026-10-30 macOS full gate tarihsel; sonraki uzlaştırma kaynak değişikliğiyle bayat.
 
 ## Bilinen riskler
-- Accepted: smoke idle kontrolü atomik değil; testte başka iş başlatılmaz; ağ kurtarma PASS, script restart bekler.
+- Accepted: smoke idle kontrolü atomik değil; testte başka iş başlatılmaz; kullanıcı ağ/restart kurtarma PASS.
 - Accepted: Original remux EXIT_STATUS içindeki disk/izin hatası genel uyarıda kalabilir (PRODUCT_SPEC §14).
 - Accepted: commit anında iptal canlı child uyarısını kaçırabilir; commit edilmiş
   uyarı DB'de kalır; Activity sorgusu veya uygun cursorla replay'den erişilir.
