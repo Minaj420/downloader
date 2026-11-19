@@ -104,6 +104,14 @@ Kota/provider/kimlik hatasında tekrar veya sessiz model fallback yok. İzin red
 başka rol/yolla aşma. Kapsam dışı ihtiyaç, beklenmeyen git değişikliği, etkileşimli
 onay ve çözülemeyen must-fix durma nedenidir.
 
+## İzin reddi sonrası devam (KARAR)
+
+Uygulayıcı izin reddinden sonra izinli araçla devam ettiyse, lead diff’i ve testleri kendisi doğrulayarak devam edebilir; durmak yalnız reddedilen işlem asıl amaç için zorunluysa gerekir.
+
+Bu, genel izin genişlemesi veya reddedilmiş zorunlu işlemi dolanma izni değildir; adapter permission denial raporu başarısız kalır, onu successful sayma.
+
+**Yürürlük:** Mevcut lead gövdesinin koşulsuz izin-hatası durma ifadesiyle çelişki varsa kullanıcı dar atıfla senkronize edip OpenCode yeniden başlatana kadar gövde değişmiş sayılmaz; kota/provider/kimlik retry ve model-family kuralları değişmez.
+
 ## Küçük iş yolu (KARAR)
 
 Kullanıcı kararıdır; yetkili tek kaynak burasıdır, başka belgeye kopyalanmaz. Rol/izin
