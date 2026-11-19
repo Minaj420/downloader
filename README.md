@@ -193,7 +193,49 @@ docker compose up --build
 - Persistent data is stored under `./data/` (`state/`, `staging/`, `library/`).
 - The container runs `alembic upgrade head` on startup, then serves the API and the built frontend on port 8080.
 - The image includes the `yt-dlp` and `ffmpeg` binaries used by the download pipeline.
+- The image also needs a JS runtime for YouTube extraction: a pinned official Deno binary
+  (`denoland/deno:bin-2.9.8`, Deno >= 2.3.0 is auto-detected by yt-dlp) and the
+  `yt-dlp-ejs` companion, installed through `yt-dlp[default]`. The build fails if
+  `deno --version`, `yt-dlp --version` or the `yt-dlp-ejs` package metadata is missing.
+  No remote components are downloaded. Sources:
+  <https://github.com/yt-dlp/yt-dlp/wiki/EJS> and
+  <https://github.com/denoland/deno_docker>.
 - Optional Plex mounts and destinations are shown as commented examples in `compose.yml`.
+
+#### Container runtime check (user, real Docker)
+
+User-reported Fedora Compose runtime6 smoke (19 Nov): build and version/package
+checks PASS; `yt-dlp -v` reported JS runtimes `deno-2.9.8` and
+`yt_dlp_ejs-0.8.0`; one normal UI single-video download PASS. The lead/worker
+did not run Docker; this evidence is the user's report. A host `yt-dlp`/`deno`
+is not proof for the container. The commands below document the checks used:
+
+```bash
+sudo docker compose build
+sudo docker compose up -d
+sudo docker exec downloader deno --version
+sudo docker exec downloader yt-dlp --version
+sudo docker exec downloader python -c "import importlib.metadata as m; print(m.version('yt-dlp-ejs'))"
+```
+
+Then, in the app, analyze and download one single YouTube URL you are allowed to
+download, and check that the analysis and the download complete and the file is
+complete. These are separate pieces of evidence: the build-time `deno` / `yt-dlp`
+version checks and the `yt-dlp-ejs` metadata check, the container version commands
+above, and a real YouTube analysis plus download finishing in the app. Not seeing a
+warning is not proof that Deno or EJS was detected or used: the adapter runs yt-dlp
+with `--no-warnings` for analysis and download, and successful-run stderr is not
+written to the container log. No causal link between the earlier transient
+`network_error` and the missing Deno is claimed. User-reported `smoke.sh network`
+PASS includes Q19 one-line, no-repeat, detail <= 500 characters. Both
+`smoke.sh restart` attempts were BLOCKED: the script prefers audio-only, and the
+.opus download (7–29 MB) completed before the script could intervene at 100 Mbit/s. The first network attempt
+was BLOCKED before the later PASS. Runtime6 is accepted CLOSED/PASS by the user:
+lifecycle was unchanged and restart recovery was manually evidenced in finding
+18; the script restart check itself did not PASS and is deferred until the later
+video-selection fix. This does not close M6-Q or M6 and is not a full gate. The
+existing smoke script stays separate dev-only use on the existing container; the
+manual isolated checklist rule above is unchanged.
 
 ### Network binding
 

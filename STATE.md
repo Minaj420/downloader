@@ -5,7 +5,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 ## Şu an
 
 - Mod: Normal, lead OpenCode; bekleyen Claude-only GPT review'u yok.
-- M6 açık; Q0/18 kullanıcı Compose smoke PASS ve onayıyla kapandı. M6-Q genel kapanışı yok.
+- M6 açık; Q0/18 ve runtime6 kullanıcı Compose smoke/onayıyla kapandı. M6-Q genel kapanışı yok.
 - Uzlaştırma yedek dalı korunur; push yalnız açık kullanıcı talebi ve hedefle.
 - Onaylı sabit profillerin yetkili belgeye aktarımı bekliyor: MP3 V0, M4A AAC 256k,
   Opus 160k, WAV/FLAC 16-bit; MP4 x264 CRF20 medium + AAC 192k. Yeni ürün kararı değil.
@@ -14,7 +14,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 ## Sıradaki iş
 
 - Onaylı sıra: kapanış18 → teşhis19 → runtime6 → Q1/Q2 → çakışma3 → temizlik10/Q3 → M6.5.
-- İş19 kapalı; M6-SMOKE hedefli test/review tamam; canlı Compose doğrulaması runtime6'da bekler.
+- İş19/runtime6 kapalı; smoke script video seçimi+sonuç özeti düzeltmesi ve canlı restart tekrarı sırada.
 - Toplu UI smoke listesi boş. M6.5 Mutagen/adapter/pipeline → M6.6 grup/yollar → M6.7 kapak sırası korunur.
 - M6.4/5 kapanışı yok; full gate ve değişen davranış için yeni kullanıcı Compose smoke'u gerekir.
 
@@ -35,7 +35,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - Öncelikli: K1 Queue placeholder; K2 New Download gezinme/F5'te kayboluyor; draft restore uygulaması bekler.
 - M6.5: UI hata ayrıntısı+maskeleme önerisi, failed0%/iç kod/satırlar arası boşluk; rozet/SSE ve N ağ hatasında durma ARCH §59.
 - Öncelikli3/6/10/19 ve kullanıcı smoke/notları ARCH §59; network_error/deno bağı kanıtsız.
-  Analiz25/+25/hepsi200 kararı kayıtlı, uygulanmadı; Private video seçilemez filtresi ayrı küçük iş bekler.
+  Analiz25/+25/hepsi200 yerleşimi Q1/Q2 yanında onaylı, uygulanmadı; Private video filtresi ayrı iş bekler.
 - Fedora Python 3.14 eski üç backend failure (os.close monkeypatch/pidfd) macOS gate ile doğrulanmadı.
 - should-fix: child Skip Existing Activity uyarısı yok; ayrı lifecycle/transaction işi; analiz View Activity açık.
 - should-fix: modelsiz implement resume CLI hatasının belgelenmesi ve izleyici partial-line
@@ -47,10 +47,10 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - Canlı slash yüklenmesi ve tüm ask/deny/yol dışı izin sınırları doğrulanmış değil.
 - Teknik takip: non-root UID/GID→M7/S1 ayrı Opus işi; yt-dlp sabitleme, Python3.12 CI ve ARCH bölme (§59).
 ## Son gate
-- 2026-11-18 Fedora M6-SMOKE: lead pytest47/Ruff/mypy PASS; GPT kod review must-fix yok; gerçek Docker yok.
-- 2026-11-18 kullanıcı Compose Q19: koleksiyon log/başarı/Retry ve tekil CR PASS; son birleşik smoke henüz yapılmadı.
-- Madde6 Compose smoke'una eklendi (bekliyor): tekli ağ kesintisi logu tek satır, tekrarsız, detail en fazla500 karakter.
-  Q19a lead pytest73/Ruff/mypy PASS; GPT review must-fix yok; lead Docker/full gate yapmadı.
+- 2026-11-19 Fedora runtime6: lead pytest60/Ruff/mypy PASS; GPT kod review must-fix yok; Docker/full gate yok.
+- 2026-11-19 kullanıcı Fedora Compose runtime6 PASS: Deno2.9.8/yt-dlp2026.10.26/EJS0.8.0 algılandı; UI video PASS.
+- Network script/Q19 son tek-satır/tekrarsız/detail≤500 PASS; restart script2kez erken ses bitişiyle BLOCKED.
+  Kullanıcı6 kapanışını onayladı; restart18de elle kanıtlı. Video script düzeltmesi sonrası tekrar bekler.
 - 2026-11-17 kullanıcı Fedora Compose Q18 PASS: single/collection5.5s, idle0.8s, Exit0/OOMfalse, exec doğrulandı.
 - Single restart→Failed/Retry ~%4'ten devam PASS; bu kullanıcı Cancel→Retry değil, Q2 hâlâ bekler.
 - Mix4 sabit seçim/completed korundu, auto-resume yok, Retry46→48; MKV VP9/Opus200s tam decode kullanıcı PASS.
@@ -58,7 +58,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - 2026-10-30 macOS full gate tarihsel; sonraki uzlaştırma kaynak değişikliğiyle bayat.
 
 ## Bilinen riskler
-- Accepted: smoke idle kontrolü atomik değil; test sırasında başka iş başlatılmaz; canlı kurtarma madde6'da sınanacak.
+- Accepted: smoke idle kontrolü atomik değil; testte başka iş başlatılmaz; ağ kurtarma PASS, script restart bekler.
 - Accepted: Original remux EXIT_STATUS içindeki disk/izin hatası genel uyarıda kalabilir (PRODUCT_SPEC §14).
 - Accepted: commit anında iptal canlı child uyarısını kaçırabilir; commit edilmiş
   uyarı DB'de kalır; Activity sorgusu veya uygun cursorla replay'den erişilir.

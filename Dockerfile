@@ -25,7 +25,18 @@ COPY backend/pyproject.toml backend/alembic.ini ./
 COPY backend/app ./app
 COPY backend/migrations ./migrations
 
-RUN pip install --no-cache-dir . && pip install --no-cache-dir yt-dlp
+# yt-dlp's YouTube extraction needs a JS runtime (Deno >= 2.3.0, auto-detected)
+# plus the yt-dlp-ejs companion, which the `default` extra installs. Deno comes
+# from the official multi-arch binary image, pinned. See
+# https://github.com/yt-dlp/yt-dlp/wiki/EJS
+COPY --from=denoland/deno:bin-2.9.8 /deno /usr/local/bin/deno
+
+RUN pip install --no-cache-dir . && pip install --no-cache-dir "yt-dlp[default]"
+
+# Fail the build early if a runtime piece is missing.
+RUN deno --version \
+    && yt-dlp --version \
+    && python -c "import importlib.metadata as m; print('yt-dlp-ejs', m.version('yt-dlp-ejs'))"
 
 COPY --from=frontend-build /build/dist ./frontend_dist
 
