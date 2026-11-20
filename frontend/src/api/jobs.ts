@@ -155,6 +155,30 @@ export function useCreateJob() {
   });
 }
 
+/** Scoped listing envelope; `next_cursor` is always null for `scope=active`. */
+export interface ScopedJobList {
+  jobs: Job[];
+  next_cursor: string | null;
+}
+
+export async function listActiveJobs(): Promise<ScopedJobList> {
+  return apiGet<ScopedJobList>("/api/v1/jobs?scope=active");
+}
+
+/** The cursor is server-issued and opaque: it is passed through unchanged. */
+export async function listHistoryJobs(
+  options: { cursor?: string | null; limit?: number } = {},
+): Promise<ScopedJobList> {
+  const params = new URLSearchParams({ scope: "history" });
+  if (options.limit !== undefined) {
+    params.set("limit", String(options.limit));
+  }
+  if (options.cursor !== null && options.cursor !== undefined) {
+    params.set("cursor", options.cursor);
+  }
+  return apiGet<ScopedJobList>(`/api/v1/jobs?${params.toString()}`);
+}
+
 export async function getJob(jobId: string): Promise<Job> {
   return apiGet<Job>(`/api/v1/jobs/${jobId}`);
 }
