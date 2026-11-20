@@ -10,14 +10,15 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - Onaylı sabit profillerin yetkili belgeye aktarımı bekliyor: MP3 V0, M4A AAC 256k,
   Opus 160k, WAV/FLAC 16-bit; MP4 x264 CRF20 medium + AAC 192k. Yeni ürün kararı değil.
 - Onaylı, belgeye aktarılacak: videodan ses çıkarma yok; ses doğrudan ses akışından.
-
 ## Sıradaki iş
 - Onaylı sıra: kapanış18 → teşhis19 → runtime6 → Q1/Q2 → çakışma3 → temizlik10/Q3 → M6.5.
-- Q1-be ve Q1-fe-api uygulandı; sıradaki iş Q1-fe-page; Queue UI henüz placeholder.
+- Q1-be/fe-api/fe-page uygulandı; bağımsız review temiz. Sıradaki Q2: cancelled single Retry/staging Opus işi.
 - should-fix: Q1 kayıtlı sınırdaki Load more ifadesi bayat eski satırı yenilemez; reset/reload yeniler.
-- Toplu UI smoke listesi boş. M6.5 Mutagen/adapter/pipeline → M6.6 grup/yollar → M6.7 kapak sırası korunur.
+- Bekleyen toplu UI Compose smoke: Queue'da active/history; gezinme/F5 sonrası sunucudan iş erişimi.
+- Smoke: uygun Cancel/Retry ve çift tık/pending; cancelled single Retry henüz yok (Q2).
+- Smoke: geçmiş iş detay/Activity, collection öğeleri; Load more ve yeniden bağlantıda güncellik.
+- M6.5 Mutagen/adapter/pipeline → M6.6 grup/yollar → M6.7 kapak sırası korunur.
 - M6.4/5 kapanışı yok; full gate ve değişen davranış için yeni kullanıcı Compose smoke'u gerekir.
-
 ## Açık kararlar
 - M6.6 güvenilir albüm grubu/ön hazırlık ve çoklu album_artists klasör değeri; M6.7 cover.jpg seçimi açık.
 - M6.9 yalnız seçim ekranından kullanıcı isterse; MB/CAA aday, hak/API/embed koşulları o işte netleşecek.
@@ -25,14 +26,13 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - S1 M7 hedef doğrulamasıyla onaylı; açılış yaz-sil probu/kalıcı hata bandı planlı; S2 v0.1 sonrası.
 - Koleksiyon sabit tavan + öğe bazlı best fallback onaylı; tekil DELETE yok. Tema yeri M9 opsiyonel öneri.
 - Onaylı Retry/retention, failed staging, seçici20 ve K3 yetkili belgelerde; K2 onaylı, bloklamaz/ertelenebilir.
-
 ## Açık bulgular
 - should-fix: eski conversion durumları PRODUCT_SPEC §8–9 ve ARCHITECTURE M6
   kapanış paragrafında bayat; sabit profillerin yetkili belgeye aktarımı ayrı iş.
 - should-fix: collection başarılı convert/caller-cancel testi sleep(0) ile deterministik değil;
   single başarılı convert+iptal ek testi eksik. Üretim hatası bulunmadı.
 - Audit aktarımı alındı (ARCH §59): Settings → S1/M7; Library detay → M9-L; son seçim localStorage v0.1.
-- Öncelikli: K1 Queue placeholder; K2 New Download gezinme/F5'te kayboluyor; draft restore uygulaması bekler.
+- K2 New Download gezinme/F5 draft kaybı sürer; restore tasarımı/uygulaması ayrı iş bekler.
 - M6.5: UI hata ayrıntısı+maskeleme önerisi, failed0%/iç kod/satırlar arası boşluk; rozet/SSE ve N ağ hatasında durma ARCH §59.
 - Öncelikli3/6/10/19 ve kullanıcı smoke/notları ARCH §59; network_error/deno bağı kanıtsız.
   Analiz25/+25/hepsi200 yerleşimi Q1/Q2 yanında onaylı, uygulanmadı; Private video filtresi ayrı iş bekler.
@@ -47,7 +47,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - Canlı slash yüklenmesi ve tüm ask/deny/yol dışı izin sınırları doğrulanmış değil.
 - Teknik takip: non-root UID/GID→M7/S1 ayrı Opus işi; yt-dlp sabitleme, Python3.12 CI ve ARCH bölme (§59).
 ## Son gate
-- 2026-11-20 macOS Q1-fe-api: lead test10/typecheck/lint PASS; Docker/full gate yok.
+- 2026-11-20 macOS Q1-fe-page: lead149 test/typecheck/lint ve kontrast20 PASS; GPT review temiz; Docker/full gate yok.
 - 2026-11-19 kullanıcı Fedora Compose runtime6 PASS: Deno2.9.8/yt-dlp2026.10.26/EJS0.8.0 algılandı; UI video PASS.
 - Network script/Q19 son tek-satır/tekrarsız/detail≤500 PASS; eski audio restart BLOCKED sonucu aşıldı.
 - 2026-11-20 kullanıcı Compose video/Original restart PASS20s: failed, Exit0/OOMyok, shutdown, retryable, recovery.

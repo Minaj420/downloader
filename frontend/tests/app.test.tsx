@@ -2,7 +2,16 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "../src/app/App";
 
+class FakeEventSource {
+  onopen: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  addEventListener() {}
+  close() {}
+}
+
 function stubHealthOk() {
+  // The Queue page subscribes to the single global SSE stream on mount.
+  vi.stubGlobal("EventSource", FakeEventSource);
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL) => {
@@ -14,6 +23,12 @@ function stubHealthOk() {
           JSON.stringify({ items: [], limit: 50, offset: 0, has_more: false }),
           { status: 200, headers: { "content-type": "application/json" } },
         );
+      }
+      if (url === "/api/v1/jobs?scope=active" || url === "/api/v1/jobs?scope=history") {
+        return new Response(JSON.stringify({ jobs: [], next_cursor: null }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
       }
       return new Response(JSON.stringify({ status: "ok", database: "ok" }), {
         status: 200,
