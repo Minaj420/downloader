@@ -12,8 +12,8 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - Onaylı, belgeye aktarılacak: videodan ses çıkarma yok; ses doğrudan ses akışından.
 ## Sıradaki iş
 - Onaylı sıra: kapanış18 → teşhis19 → runtime6 → Q1/Q2 → çakışma3 → temizlik10/Q3 → M6.5.
-- Q1-be/fe-api/fe-page uygulandı; bağımsız review temiz. Sıradaki Q2: cancelled single Retry/staging Opus işi.
-- should-fix: Q1 kayıtlı sınırdaki Load more ifadesi bayat eski satırı yenilemez; reset/reload yeniler.
+- Q1-be/fe-api/fe-page uygulandı; review temiz. ARCH-A kısmi belge düzeltmesi review'dan geçti; ayıklama bekliyor.
+- ARCH-A: Load more belge bulgusu kapandı; §59 dışı bayat teslim kaydı (ARCH:267) kapsam onayı bekler; §59 M4 placeholder notu da açık.
 - Bekleyen toplu UI Compose smoke: Queue'da active/history; gezinme/F5 sonrası sunucudan iş erişimi.
 - Smoke: uygun Cancel/Retry ve çift tık/pending; cancelled single Retry henüz yok (Q2).
 - Smoke: geçmiş iş detay/Activity, collection öğeleri; Load more ve yeniden bağlantıda güncellik.
@@ -45,7 +45,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
   yalnız salt-okunur biçimler kullanılır, config bakımı ayrı. gh PR wildcard'ları da repo/hedef/
   body-file sınırını sağlamaz; açık repo/base/head ve düz metin body kullanılmalı.
 - Canlı slash yüklenmesi ve tüm ask/deny/yol dışı izin sınırları doğrulanmış değil.
-- Teknik takip: non-root UID/GID→M7/S1 ayrı Opus işi; yt-dlp sabitleme, Python3.12 CI ve ARCH bölme (§59).
+- Teknik takip: non-root UID/GID→M7/S1 ayrı Opus işi; yt-dlp sabitleme, Python3.12 CI; ARCH §59 ayıklaması onaylı, B yok.
 ## Son gate
 - 2026-11-20 macOS Q1-fe-page: lead149 test/typecheck/lint ve kontrast20 PASS; GPT review temiz; Docker/full gate yok.
 - 2026-11-19 kullanıcı Fedora Compose runtime6 PASS: Deno2.9.8/yt-dlp2026.10.26/EJS0.8.0 algılandı; UI video PASS.

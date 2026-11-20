@@ -345,3 +345,4 @@ tercihi AGENTS'te durur; git status, probe listesi, hash eşlemeleri, log/sessio
 Lead ve bağımsız reviewer (saf karar kaydı istisnasında yalnız lead) her kapanışta STATE'i
 Read ile satır sayısı ve güncelliği için kontrol eder; sığmazsa canlı bulguyu silmek veya
 dev satıra sıkıştırmak yerine sınıflandırma/karar için dur. Yeni journal/backlog/history dosyası ve kalıcı sayaç yoktur. Yalnız lead yazar.
+Yeni smoke/kapanış anlatıları ARCHITECTURE.md'ye yazılmaz; aktif durum STATE.md'de, iş geçmişi mevcut kısa commit gövdesinde kalır.
