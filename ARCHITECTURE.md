@@ -264,7 +264,7 @@ POST   /api/v1/jobs/{job_id}/retry
 
 Superseded (approved; user-settled; PRODUCT_SPEC §17): there is no per-job `DELETE /api/v1/jobs/{job_id}` and no individual job/history deletion; history is removed only by the bulk Clear History action. The user settled the earlier spec-audit `DELETE /jobs` note in favour of this bulk-only decision; no per-job endpoint will be added and none exists in code. The bulk Clear History endpoint is not designed yet and no bulk backend exists (Q3 starts from scratch; §59 M6-Q).
 
-`GET /api/v1/jobs` scoped listing (`scope=active|history`, cursor) is implemented in the backend (Q1-be); the frontend client and Queue UI are not started. The contract lives only in §59 M6-Q (Q1 technical contract).
+`GET /api/v1/jobs` scoped listing (`scope=active|history`, cursor) is implemented in the backend and the frontend client/Queue page (Q1; current status: STATE.md). The contract lives only in §59 M6-Q (Q1 technical contract).
 
 ```text
 GET    /api/v1/library
@@ -2084,7 +2084,7 @@ Recommended order:
 - multiple queued jobs
 - failure states
 
-Historical scope note: M4 covered the backend (jobs API, concurrency, retry, restart handling) only. The Queue frontend plan mapping was skipped, so the Queue page is still a placeholder; this is not frontend-completed work. The gap is assigned to M6-Q below.
+Historical scope note: M4 covered the backend (jobs API, concurrency, retry, restart handling) only. The Queue frontend plan mapping was skipped, so the Queue page stayed a placeholder after M4; this is not frontend-completed work. The Queue page was delivered later in M6-Q Q1 (current status: STATE.md). The gap is assigned to M6-Q below.
 
 ## Milestone 5 — Playlist / Album
 
@@ -2123,7 +2123,11 @@ Approved decisions below are planned, not implemented, except the explicit-conve
 
 ### M6-Q — Queue frontend prerequisite, readiness and plan (documentation only)
 
-Plan and delivery status record. Runtime implementation so far: the Q0 deployment-file fix, Q19 container-log-only change and runtime 6 (status under Plan items). Q0/finding 18 and runtime 6 are CLOSED/PASS by user-reported smoke; Q19 targeted network smoke is PASS. Lead/worker did not run Docker; evidence is the user's report. M6-Q and the general M6 milestone are NOT closed. The Q1 technical contract is documented under Plan items; its backend and frontend (Q1-be, Q1-fe-api, Q1-fe-page) are implemented (commit 7fed194), while Q2/Q3 and the other tasks are not started; the user Compose UI smoke is pending and neither M6-Q nor M6 is closed. Labels: **APPROVED** = user decision (planned, not implemented unless stated); **PROPOSED** = awaiting user approval, not started; **OBSERVED** = finding, unfixed.
+Plan and decision record; current delivery/smoke status lives in STATE.md, task history in commit bodies.
+Delivered so far: Q0 deployment fix (closed), Q19 log/detail changes, runtime 6 Deno/yt-dlp (closed), Q1 backend and frontend.
+Q2/Q3 and the other tasks are open; M6-Q and the general M6 milestone are NOT closed.
+Smoke evidence is user-reported; lead/worker did not run Docker.
+Labels: **APPROVED** = user decision (planned, not implemented unless stated); **PROPOSED** = awaiting user approval, not started; **OBSERVED** = finding, unfixed.
 
 **APPROVED**
 - M6-Q (Queue frontend per PRODUCT_SPEC §17) is a prerequisite within the already-running M6, to be done before the M6.5 tag implementation; M6.5 tags wait. It does not turn the historical M4 backend scope into frontend-completed work.
@@ -2139,51 +2143,77 @@ Plan and delivery status record. Runtime implementation so far: the Q0 deploymen
   6. Work order: 18 closure → 19 masked error detail → 6 Deno → Queue Q1/Q2 → 3 conflict → 10/Q3 cleanup → M6.5. Technical proposals inside these items (for example the 18 timeout values) are not approved by the order.
   7. Persistent milestone-closure question "is any v0.1-required spec item left unplanned?" — recorded as one closure-checklist rule in `docs/WORKFLOW.md` (Gate and STATE); no new gate, tool or config.
   8. Placeholder menu entries get a "not built yet" ("Henüz yapılmadı") label (PRODUCT_SPEC §22); no UI change today. Timing PROPOSED: a small bounded UI task alongside Q1.
-  9. Plan approved (17 Nov, decisions round 2): the order in decision 6 stands and 18 is the current next task. Q1 covers historical Activity; Q3 is bulk-only. The finding 3 naming correctness (resolution suffix, `(2)`, `Already exists`) stays before Q3/M6.5 and does not move to M9.
+  9. Plan approved (17 Nov, decisions round 2): the order in decision 6 stands (at that approval 18 was the next task; current continuation: STATE.md). Q1 covers historical Activity; Q3 is bulk-only. The finding 3 naming correctness (resolution suffix, `(2)`, `Already exists`) stays before Q3/M6.5 and does not move to M9.
   10. Settings: S1 read-only approved, to be validated against the M7 target; S2a/S2b/S2c are post-v0.1 (§47, §60); Compose/environment settings until then.
   11. No per-job `DELETE /jobs/{id}`; only bulk Clear History (user-settled; §7).
   12. Startup storage write probe of configured target/staging roots: success silent, failure as a persistent banner; S1 shows the same stored result read-only (§47 technical boundary; no implementation yet).
   13. Remember last selection in browser `localStorage` is v0.1 (§47); theme selector is optional future work; welcome screen is post-v0.1.
 - Source of the spec-audit findings below: a user-transferred audit from a separate read-only Opus session on main `f597dd3`; the full report lives in the user's Claude project (`claude/spec-coverage-2026-11-17.md`). It was not read in this workspace and no current full audit is claimed here.
 
-**Plan items** (approved plan per decision 9. Q0/18, runtime 6 and the Q19 targeted network smoke are CLOSED/PASS by user report; `scripts/smoke.sh restart` was BLOCKED twice as described below. General M6-Q and M6 are not closed; of the Q1 contract below the Q1 backend and frontend (Q1-be, Q1-fe-api, Q1-fe-page; commit 7fed194) are implemented, Q2/Q3 and the other items are not started and the user Compose UI smoke is pending; the approved order is retained. Technical values inside the remaining items still need approval where stated)
+**Plan items** (approved plan per decision 9; current status: STATE.md; the approved order is retained; general M6-Q and M6 are not closed; technical values inside the remaining items still need approval where stated)
 - Q0 (finding 18): bounded Uvicorn graceful-wait and a compatible Compose stop grace (applied values 5 s / 30 s per the user-approved approach; they bound waits only and are no settlement guarantee) as a separate fix, plus an explicit Compose smoke with SSE open, active single and collection drain, and recovery. Sonnet only if it stays a bounded deployment change; Opus from the start if lifecycle/concurrency is touched.
-  Status (17 Nov): deployment fix implemented; the subtask is CLOSED/PASS by the user Compose smoke (user report below, not a lead/worker Docker or ffmpeg rerun). Image CMD keeps `alembic upgrade head && exec uvicorn` (no ENTRYPOINT/init) and adds `--timeout-graceful-shutdown 5`; Compose `stop_grace_period: 30s`. App lifecycle unchanged: the 5 s bounds only the HTTP wait, not `queue_manager.stop()` drain → settlement → `engine.dispose()`; 30 s is an outer budget, not a guarantee (overrun is force-killed and startup recovery applies). Evidence: `backend/tests/test_graceful_shutdown.py`, local Fedora Python 3.14 / uvicorn 0.54 subprocess with an open SSE stream (with the flag, SIGTERM exits after the timeout log and `Application shutdown complete`; without it the process stays alive until the client disconnects) plus Dockerfile/Compose config checks. No Docker was run by lead/worker. Prior local 54+7 Ruff/mypy PASS records remain valid but are not a full gate; this closure is documentation only with no new tests, and it is not a M6-Q or M6 milestone closure.
+  Implemented and closed as a subtask by the user Compose smoke (not a lead/worker Docker rerun; details: STATE.md/commit history).
+  Image CMD keeps `alembic upgrade head && exec uvicorn` (no ENTRYPOINT/init) and adds `--timeout-graceful-shutdown 5`; Compose `stop_grace_period: 30s`.
+  App lifecycle unchanged: the 5 s bounds only the HTTP wait, not `queue_manager.stop()` drain → settlement → `engine.dispose()`;
+  30 s is an outer budget, not a guarantee (overrun is force-killed and startup recovery applies).
+  Regression evidence: `backend/tests/test_graceful_shutdown.py` (open SSE stream) plus Dockerfile/Compose config checks; not a M6-Q or M6 closure.
 - Finding 19 (scope narrowed by user decision, M6-Q19): for now only the container log. When a single job or a collection child fails with a `YtDlpError`, the runner writes the raw `YtDlpError.detail` through the existing Python logging (stderr/container log) with a fixed format string and parameters: single `job_id`; collection parent `job_id` and child item id; the failure `kind` is always present, so a `None` detail still logs `detail=<none>` with a meaningful kind.
     Catch points: `backend/app/services/job_runner.py` and `backend/app/services/collection_child_runner.py` only; no traceback; error classification, DB, lifecycle, API, schema, UI and Activity payloads are unchanged.
     Keeping the raw extractor message in the private container log is the user's request; no masking infrastructure is added.
     Evidence: `backend/tests/test_ytdlp_failure_logging.py` (caplog through the real single and child runner catch flows, plus success paths with no failure log).
     PROPOSAL only, not approved implementation: a UI error detail with masking as a separate task next to the M6.5 text labels.
     Still open and untouched: a separate Interrupted badge and the SSE log simplification.
-    Finding 6 (runtime 6, implemented; CLOSED/PASS by user-reported Compose smoke, see below; no M6-Q/M6 closure): the `Dockerfile` runtime stage copies the pinned official Deno binary (`COPY --from=denoland/deno:bin-2.9.8 /deno /usr/local/bin/deno`), installs `"yt-dlp[default]"` (brings `yt-dlp-ejs`) and fails the build unless `deno --version`, `yt-dlp --version` and `importlib.metadata` for `yt-dlp-ejs` succeed.
+    Finding 6 (runtime 6, implemented; closed by user Compose smoke; no M6-Q/M6 closure): the `Dockerfile` runtime stage copies the pinned official Deno binary (`COPY --from=denoland/deno:bin-2.9.8 /deno /usr/local/bin/deno`), installs `"yt-dlp[default]"` (brings `yt-dlp-ejs`) and fails the build unless `deno --version`, `yt-dlp --version` and `importlib.metadata` for `yt-dlp-ejs` succeed.
     No remote components, installer script, Node runtime layer or app CLI/config change; python3.12 base, ffmpeg apt, the graceful CMD and Compose 30 s budget are unchanged; general yt-dlp pinning is a separate follow-up.
     Evidence: `backend/tests/test_container_runtime.py` (Dockerfile text only).
-    User-reported Fedora Compose smoke (19 Nov; lead/worker ran no Docker): build PASS with Deno 2.9.8, yt-dlp 2026.10.26 and yt-dlp-ejs 0.8.0; `yt-dlp -v` showed `deno-2.9.8` and `yt_dlp_ejs-0.8.0`; one UI single-video download PASS; `scripts/smoke.sh network` PASS (first attempt BLOCKED, later PASS) including Q19 one line, no repeats, detail <= 500.
-    `scripts/smoke.sh restart` was BLOCKED in two attempts (the audio_only preference picks a 7-29 MB .opus that finishes early at 100 Mbit/s); it is NOT a PASS and awaits a separate video-selection fix.
-    The user accepted runtime 6 as CLOSED/PASS because the Deno change did not touch lifecycle and restart recovery was already manually evidenced in finding 18. Not a full gate; M6-Q and M6 stay open.
-- Q19a (bounded small task; user Compose smoke finding): the single-job log line showed `detail=ERROR: CR[download] Got error: [Errno -3] Temporary failure in name resolution. Giving up after 10 retries` with the carriage returns letting the terminal overwrite the line.
+    Smoke results (user Compose runs) are summarized in STATE.md; this is not a full gate and M6-Q and M6 stay open.
+- Q19a (bounded small task; user Compose smoke finding): single-job log details carried carriage returns that let the terminal overwrite the line, plus repeated fragments and overlong text.
     Implemented at the central integration boundary `backend/app/integrations/ytdlp.py`: a pure helper `normalize_failure_detail` runs inside `YtDlpError`, so the detail is a readable single line before it reaches the container log, the new DB `error_detail` write and the child `JobError` detail.
     It strips ANSI escapes, splits CR/LF/CRLF and joins the remaining lines with one space, and drops only real progress remnants (numeric `PROG` lines and `[download] N%` progress lines). The actual error line (`[download] Got error`, `Unable to download`, ...) is never treated as progress. `None` stays `None` and an empty string stays empty.
     Classification still runs on the raw stderr in `map_failure`; no retry, lifecycle, subprocess, storage, API, schema or UI change, and old DB rows are not migrated. This cleanup is readability only, NOT masking of raw content; the meaningful error stays and no masking infrastructure is added.
     Evidence: `backend/tests/test_ytdlp_adapter.py` (`TestFailureDetailNormalization`) and `backend/tests/test_ytdlp_failure_logging.py` (single DB `error_detail`, child `JobError` detail and log are single-line).
-    User Compose smoke report for Q19 (collection log, normal success, Retry) is PASS.
-    The single-log CR readability was a must-fix.
-    Update (18 Nov, user smoke with an uncommitted build): the single-job CR readability is PASS, but the same pending job still showed the identical fragment error repeated dozens of times and an overly long detail.
-    A second Q19a cleanup in the same helper therefore collapses repeated logical messages to the first occurrence in first-seen order (a bare `ERROR:` token plus its message line, and repeated `ERROR: [download] ...` fragments already joined on one line, are handled; a message with or without its `ERROR:` token counts as the same message; different errors, including A/B/A sequences, are kept)
+    The same helper also collapses repeated logical messages to the first occurrence in first-seen order (a bare `ERROR:` token plus its message line, and repeated `ERROR: [download] ...` fragments already joined on one line, are handled; a message with or without its `ERROR:` token counts as the same message; different errors, including A/B/A sequences, are kept)
     and caps the detail after normalize/dedup at 500 Unicode characters including the ellipsis, appending `…` only when truncated.
     `None`/empty behaviour and classification on the raw stderr are unchanged, the same `YtDlpError.detail` feeds the log and the new DB write, and old DB rows are not migrated; no API, schema, UI, retry or lifecycle change.
     Evidence adds repeated-fragment, A/B/A, distinct-message, 499/500/501 boundary and single/child DB+log dedup/cap tests in the same two test files.
-    After this remaining repeat/length fix only a single-job network-interruption smoke is awaited; Q19 was later closed by the user's targeted test-review decision, and that last network smoke is now PASS in the runtime 6 user Compose run (one line, no repeats, detail <= 500 via `scripts/smoke.sh network`; lead ran no Docker). The `restart` script check is BLOCKED, not PASS (see Finding 6).
-- Q19 smoke notes (observed; recommendations only, no behaviour change requested): when the network dropped, 22 of 24 collection items failed immediately and Retry then resolved them. Stopping after N consecutive network errors is only a PROPOSAL; no behaviour change is wanted. A failed item showed 0% while its partial remained and Retry resumed at 28%. The unnecessary vertical spacing between failed item rows is a separate M6.5 presentation note, and the internal `network_error` code shown as text remains its own separate visual-text issue (M6.5 note).
-- Collection analysis decision (USER DECISION; planned, NOT implemented; PRODUCT_SPEC §10): show the first 25 items; under the list offer `Load 25 more` (+25) and `Show all` up to at most 200, with a short note when the source is longer; a waiting state while loading and existing selections preserved; the 200 selected-item cap is unchanged. The technical value 25 is consistent with the current bounded flat analysis budget (`COLLECTION_ANALYSIS_WINDOW_LIMIT`, `--playlist-items 1-25`). No API is designed or implemented. The `Load 25 more` / `Show all` (<=200) buttons are PLANNED, NOT IMPLEMENTED (no button, API or UI exists). Placement (user-approved): next to Q1/Q2, after runtime 6, as a larger Opus contract task; the approved order does not change and no new product decision is made.
+    Q19 is closed by the user; the network smoke result is in STATE.md.
+- Q19 smoke notes (observed; recommendations only, no behaviour change requested): when the network dropped, most collection items failed immediately and Retry then resolved them. Stopping after N consecutive network errors is only a PROPOSAL; no behaviour change is wanted. A failed item showed 0% while its partial remained and Retry resumed from the partial. The unnecessary vertical spacing between failed item rows is a separate M6.5 presentation note, and the internal `network_error` code shown as text remains its own separate visual-text issue (M6.5 note).
+- Collection analysis decision (USER DECISION; planned, NOT implemented; PRODUCT_SPEC §10): show the first 25 items; under the list offer `Load 25 more` (+25) and `Show all` up to at most 200, with a short note when the source is longer;
+  a waiting state while loading and existing selections preserved; the 200 selected-item cap is unchanged.
+  The technical value 25 is consistent with the current bounded flat analysis budget (`COLLECTION_ANALYSIS_WINDOW_LIMIT`, `--playlist-items 1-25`).
+  No API is designed or implemented. The `Load 25 more` / `Show all` (<=200) buttons are PLANNED, NOT IMPLEMENTED (no button, API or UI exists).
+  Placement (user-approved): next to Q1/Q2, after runtime 6, as a larger Opus contract task; the approved order does not change and no new product decision is made.
 - Private video selectable/default/selected-count bug: waits for a separate small fix; not implemented now.
-- Q1: minimal server-backed active/queued/history list with Cancel/Retry, on-demand child/detail Activity, list refresh driven by the existing single global SSE connection (`/api/v1/events`, one shared connection updating the list from every job snapshot) with a REST/poll fallback when needed; no per-job SSE endpoint and no new framework. On-demand detail explicitly covers past completed/failed/cancelled jobs: persisted Activity is read through the existing backend, with no new SSE. `list_jobs` returns the newest 50, so older active/queued jobs can be hidden: ensure every non-terminal job is visible and terminal history is bounded with simple load-more/pagination; reduce collection children N+1 loading; on-demand detail API; backward compatibility is checked in the design.
-- **Q1 technical contract** (DESIGN, documented 20 Nov). Status: backend Q1-be implemented (`api/v1/jobs.py` scope/limit/cursor, `repositories/jobs.py` batched children and scoped reads, `services/job_service.py` cursor codec; evidence `backend/tests/test_job_listing.py`); frontend client and Queue UI (Q1-fe-api, Q1-fe-page) implemented (commit 7fed194); Q2/Q3 open, user Compose UI smoke pending, no M6-Q/M6 closure. USER DECISION recorded here as authoritative: Queue history order is `created_at` newest → oldest. No migration, new SSE route/event, provider/framework or new detail/Activity endpoint.
-  - Legacy `GET /api/v1/jobs` (no `scope`): unchanged response — `{"jobs": [...]}`, owner's newest 50 by `created_at DESC`, collection `items` included, no `next_cursor` key; only the per-collection `list_job_items` loop in `api/v1/jobs.py` becomes one batched owner-scoped child query for the page (same `source_order` order and identical JSON; existing equality tests stay as guards).
-  - `scope=active`: every owned job with status in `queued`, `analyzing`, `downloading`, `post_processing`, `finalizing`, ordered `created_at ASC, id ASC`, no limit (bounded by the real queue; accepted under the homelab threat model). `scope=history`: owned `completed`, `failed`, `cancelled` only, ordered `created_at DESC, id DESC`, `limit` default 50, `1..100` (fetch `limit + 1` to decide `next_cursor`). A row with an unknown status is in neither scope.
+- Q1: minimal server-backed active/queued/history list with Cancel/Retry, on-demand child/detail Activity, list refresh driven by the existing single global SSE connection (`/api/v1/events`, one shared connection updating the list from every job snapshot) with a REST/poll fallback when needed;
+  no per-job SSE endpoint and no new framework.
+  On-demand detail explicitly covers past completed/failed/cancelled jobs: persisted Activity is read through the existing backend, with no new SSE.
+  `list_jobs` returns the newest 50, so older active/queued jobs can be hidden:
+  ensure every non-terminal job is visible and terminal history is bounded with simple load-more/pagination;
+  reduce collection children N+1 loading; on-demand detail API; backward compatibility is checked in the design.
+- **Q1 technical contract** (DESIGN, documented 20 Nov).
+  Status: Q1-be, Q1-fe-api and Q1-fe-page implemented (current status: STATE.md); Q2/Q3 open; no M6-Q/M6 closure.
+  Code: `api/v1/jobs.py` scope/limit/cursor, `repositories/jobs.py` batched children and scoped reads, `services/job_service.py` cursor codec; evidence `backend/tests/test_job_listing.py`.
+  USER DECISION recorded here as authoritative: Queue history order is `created_at` newest → oldest.
+  No migration, new SSE route/event, provider/framework or new detail/Activity endpoint.
+  - Legacy `GET /api/v1/jobs` (no `scope`): unchanged response — `{"jobs": [...]}`, owner's newest 50 by `created_at DESC`, collection `items` included, no `next_cursor` key;
+    only the per-collection `list_job_items` loop in `api/v1/jobs.py` becomes one batched owner-scoped child query for the page
+    (same `source_order` order and identical JSON; existing equality tests stay as guards).
+  - `scope=active`: every owned job with status in `queued`, `analyzing`, `downloading`, `post_processing`, `finalizing`, ordered `created_at ASC, id ASC`, no limit (bounded by the real queue; accepted under the homelab threat model).
+    `scope=history`: owned `completed`, `failed`, `cancelled` only, ordered `created_at DESC, id DESC`,
+    `limit` default 50, `1..100` (fetch `limit + 1` to decide `next_cursor`).
+    A row with an unknown status is in neither scope.
   - Scoped envelope: `{"jobs": [...], "next_cursor": string | null}` (`active` is always `null`). Scoped jobs use the existing `JobDto` with collection `items: null`; `error.retryable` stays correct from the existing batched `_collection_retry_children` preload (single jobs from the persisted code).
-  - Cursor: server-issued, opaque to clients — URL-safe base64 (no padding) of JSON `{"created_at": <UTC ISO-8601 with exactly 6 microsecond digits and +00:00>, "id": <32-char lowercase hex>}` from the last returned row; next page predicate `created_at < c OR (created_at = c AND id < i)` with `id` as tie-break, compared as UTC at microsecond precision (rows are written with UTC `now`; naive SQLite values are UTC). Clients never build cursors from DTO timestamps.
-  - Validation → existing 422 handler shape `{"error": {"code": "invalid_request", "message": "The request payload is invalid.", "retryable": false, "analysis_id": null}}`: `scope` not `active`/`history` (including empty); `limit` non-integer or outside `1..100`; `limit` or `cursor` without `scope=history`; cursor that is undecodable, not that JSON object (missing/extra keys), naive/unparseable time, or bad id (raised as `RequestValidationError` so the body is identical). Other unknown query parameters stay ignored (FastAPI default). Detail stays `GET /jobs/{id}` (items included), Activity stays `GET /jobs/{id}/activity`; both remain owner-scoped 404.
+  - Cursor: server-issued, opaque to clients — URL-safe base64 (no padding) of JSON `{"created_at": <UTC ISO-8601 with exactly 6 microsecond digits and +00:00>, "id": <32-char lowercase hex>}` from the last returned row;
+    next page predicate `created_at < c OR (created_at = c AND id < i)` with `id` as tie-break,
+    compared as UTC at microsecond precision (rows are written with UTC `now`; naive SQLite values are UTC).
+    Clients never build cursors from DTO timestamps.
+  - Validation → existing 422 handler shape `{"error": {"code": "invalid_request", "message": "The request payload is invalid.", "retryable": false, "analysis_id": null}}`:
+    `scope` not `active`/`history` (including empty); `limit` non-integer or outside `1..100`;
+    `limit` or `cursor` without `scope=history`;
+    cursor that is undecodable, not that JSON object (missing/extra keys), naive/unparseable time, or bad id
+    (raised as `RequestValidationError` so the body is identical).
+    Other unknown query parameters stay ignored (FastAPI default).
+    Detail stays `GET /jobs/{id}` (items included), Activity stays `GET /jobs/{id}/activity`; both remain owner-scoped 404.
   - Frontend live-update rules (Queue page; existing single global `subscribeToJobUpdates` / `/api/v1/events`; `onOpen`/`onError`, `snapshotTime` and the 2000 ms polling pattern are the ones verified in `NewDownloadPage.tsx`):
     (1) A job snapshot for a known ID is applied newest-wins by `snapshotTime(updated_at)`;
       equal time keeps current except same-status REST `items` enrichment;
@@ -2259,7 +2289,10 @@ Plan and delivery status record. Runtime implementation so far: the Q0 deploymen
     past-job Activity via REST;
     Cancel/Retry without auto-repeat;
     existing Queue heading/nav test kept.
-  - Bounded order: **Q1-be** (`api/v1/jobs.py`, `repositories/jobs.py`, service if needed, backend tests; Opus — API contract) → **Q1-fe-api** (`frontend/src/api/jobs.ts` scoped client/types + tests) → **Q1-fe-page** (`QueuePage.tsx` and page-local helpers/tests; reusing/extracting `snapshotTime` must not change `NewDownloadPage` behaviour). Out of scope: Q2 cancelled single Retry/staging, K2 draft restore, Q3 Clear History, analysis 25/+25/Show all, placeholder label (decision 8), integer collection percent, per-child Cancel/Retry, SSE owner scoping, and any new product decision.
+  - Bounded order: **Q1-be** (`api/v1/jobs.py`, `repositories/jobs.py`, service if needed, backend tests; Opus — API contract)
+    → **Q1-fe-api** (`frontend/src/api/jobs.ts` scoped client/types + tests)
+    → **Q1-fe-page** (`QueuePage.tsx` and page-local helpers/tests; reusing/extracting `snapshotTime` must not change `NewDownloadPage` behaviour).
+    Out of scope: Q2 cancelled single Retry/staging, K2 draft restore, Q3 Clear History, analysis 25/+25/Show all, placeholder label (decision 8), integer collection percent, per-child Cancel/Retry, SSE owner scoping, and any new product decision.
 - Q2: approved cancelled single Retry with staging retention (Opus expert task; decision 1); approved K2 draft restore where it fits (decision 3, non-blocking).
 - Finding 3 (after Q1/Q2): wrong quality/identity/naming through a separate storage/catalog contract expert job that never blindly dedups the current logical shared identity; conflict choice surface stays in M9-C.
 - Q3 (finding 10): bulk Clear History; the backend is built from scratch. Separate Opus expert contract: preview/confirm, drain, retry/cleanup races, staging ownership, path/backend ID handling, symlink/no-follow, DB+filesystem atomicity limits, no arbitrary orphan traversal; failed staging is included (decision 2). Still open: byte estimate vs actually freed amount, real cleanup-failure reporting. No per-job job/history `DELETE` (§7, PRODUCT_SPEC §17); user-settled bulk-only.
@@ -2279,7 +2312,7 @@ Plan and delivery status record. Runtime implementation so far: the Q0 deploymen
 
 | Ref | Finding |
 | --- | --- |
-| K1 | Queue page was a placeholder with no job access; implemented in Q1-fe-page (7fed194); user Compose UI smoke pending |
+| K1 | Queue page was a placeholder with no job access; implemented in Q1-fe-page (current status: STATE.md) |
 | K2 | New Download state is lost on navigation/F5; Queue restores job access but does not fully solve it; single vs collection cancel differs (PRODUCT_SPEC §17) |
 | K3 | User-transferred spec audit received (source above; not re-verified in this workspace); findings assigned in Plan items; closure question approved (decision 7) |
 | S0 | Settings page is an 8-line placeholder; env-only config, no settings endpoint/model/table; PRODUCT_SPEC §23 scope reduced to one word in M9 (audit) |
@@ -2292,13 +2325,22 @@ Plan and delivery status record. Runtime implementation so far: the Q0 deploymen
 | 11 | After retry, child downloading/converting while parent Analyzing twice |
 | 12 | Audio sequence planned for M6.6; video sequence implemented; not a regression |
 | 18 | See below |
-| 19 | Real extractor detail is in the DB but not in UI/container log, so failures cannot be diagnosed |
+| 19 | Real extractor detail is in the DB. The container-log gap is fixed (Q19, see Plan items); the UI error detail is still missing and stays an open follow-up (masking proposal next to the M6.5 text labels) |
 | 20 | No collection resolution UI; 4K AV1 took 5+ minutes, child about 11 cores / 3.2 GB RAM (user measurement) |
 | 7 | Conversion UI at 100% for minutes while ffmpeg used about 1000% CPU (maps to the approved progress decision) |
 
-Finding 18 (observed): with an active job, `stop -t60` hit the 60 s force-kill twice (Shutting down → Waiting for connections, downloads continued even without ffmpeg); idle stop took 0.4 s. Restart recovery is PASS; graceful stop is NOT PASS, and container graceful deployment is not verified. A hypothesis consistent with the code is that an SSE stream waits indefinitely; polling is not established as the cause. Update: the open-SSE unbounded wait was reproduced locally and bounded by the Q0 fix (see Q0 status). The earlier `stop -t60` failures are historical and SUPERSEDED, not unresolved, by the user Compose smoke below. Finding 18 is CLOSED/PASS as a subtask; this is user-reported evidence, and the existing real-open SSE local regression evidence is sufficient with it.
+Finding 18 (observed; closed as a subtask by the user Compose smoke, results in STATE.md):
+graceful stop with an open SSE stream waited unbounded; this was reproduced locally and bounded by the Q0 fix.
+The earlier force-kill observations are historical and SUPERSEDED by that smoke.
 
-Finding 18 close (17 Nov, user report; lead/worker did not rerun Docker or ffmpeg; Python 3.12 is the earlier user setup and was not re-proven by this smoke): `top` shows a single uvicorn process, `timeout 5` and no `sh`. Single active job plus open tab: `stop` took 5.5 s, Exit 0, OOMKilled false, timeout log plus `Application shutdown complete`; restart marks the job Failed ("application restarted"), Retry is available and partial resume went about 4 → 4. Collection (YouTube Mix, 4 children): 5.5 s, Exit 0, OOMKilled false, shutdown complete; completed children kept, the interrupted child `interrupted_by_restart`, the queued sibling did not auto-start. Retry used the persisted first-analysis items (dynamic Mix did not change them) and did not re-download completed children; a second interruption at 46 gave Retry at 48; final MKV VP9 1080p Opus 200 s passed a user ffmpeg full decode without errors. Idle tab: open 0.8 s, closed 0.8 s. Single-job restart recovery with Retry and partial resume is demonstrated; it is NOT a single-job user Cancel retry (the cancelled path still rejects and removes staging, pending the Q2 expert task), and resume is source-supported, not a universal promise. The `NewDownloadPage` subscription guard is `jobId == null`, not `jobActive`, so a tracked terminal job can stay subscribed; the idle 0.8 s with no tracked job is consistent with no SSE, but duration alone does not prove an actual browser connection, and no forced 5 s is expected.
+Finding 18 close (user report; lead/worker did not rerun Docker or ffmpeg; Python 3.12 is the earlier user setup and was not re-proven by that smoke):
+- Restart recovery with Retry and partial resume is demonstrated for a single job and a collection:
+  completed children are kept, the interrupted child ends `interrupted_by_restart`, a queued sibling does not auto-start (no auto-resume),
+  and Retry uses the persisted first-analysis items without re-downloading completed children.
+- It is NOT a single-job user Cancel retry (the cancelled path still rejects and removes staging, pending the Q2 expert task);
+  resume is source-supported, not a universal promise.
+- The `NewDownloadPage` subscription guard is `jobId == null`, not `jobActive`, so a tracked terminal job can stay subscribed;
+  an idle shutdown duration alone does not prove an actual browser connection, and no forced 5 s is expected.
 
 Non-blocking findings recorded at 18 close (open; no implementation, no fix claimed):
 1. `CollectionProgress` shows the raw long float percent; show an integer. Small bounded fix planned in Q1/Q2 collection progress UI (updates finding 9).
@@ -2310,7 +2352,10 @@ Non-blocking findings recorded at 18 close (open; no implementation, no fix clai
 
 Coverage closure question: full v0.1 coverage was not re-audited; previously recorded audit gaps remain assigned, no new scope is claimed, and this bounded record leaves no newly orphaned gap.
 
-User smoke (17 Nov, Fedora Docker, near f597dd3, container Python 3.12, ffmpeg 7.1.5 libx264, yt-dlp 2026.10.26; user report, lead did not rerun): Original MP3 PASS; MP4 H.264 copy and VP9/AV1 1440/4K60 x264 PASS; playlist selection/order/counters PASS; collection Cancel→Retry `.part` resume PASS; forced `stop -t2` recovery PASS (completed child kept, converting child `interrupted_by_restart`, queued sibling not started, no auto-resume, Retry ready, live counters 1/1/3); root-owned 644 files play on the host; Original 4K AV1 `.mkv` expected; Mix ≥25 analysis PASS, which is not evidence for extraction of all >25 items. Not yet tried: collection remux and explicit-conversion Cancel. The later 17 Nov Compose smoke for finding 18 (graceful stop) is recorded under Finding 18 and supersedes the earlier pending/not-container-PASS lifecycle wording.
+User smoke limits (user reports; lead did not rerun; passed results are in STATE.md/commit history):
+- Original 4K AV1 output is `.mkv` as expected.
+- A Mix ≥25 analysis pass is not evidence for extraction of all >25 items.
+- Not yet tried: collection remux and explicit-conversion Cancel.
 
 ## Milestone 7 — Plex Destinations
 
