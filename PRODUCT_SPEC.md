@@ -7,6 +7,20 @@
 
 ---
 
+**v0.1 / v0.2 scope split (approved user decision; authoritative where older text below conflicts; deferred items are NOT implemented).** The v0.1 order is the active plan in ARCHITECTURE §59 (plan items 1–10): Q2, finding 3 naming/collision plus collection ceilings, Q3 Clear History, M6.5 text tags, M6.5 presentation/basic error texts/platform icons, last-selection memory, M7 opening (write check + S1), Plex Music/Videos with Library extra copy and safe delete, one focused security round, final fresh gate and Compose acceptance. Deferred to **v0.2** (section where each is specified):
+
+- M6.6 album grouping, Various Artists and album/disc audio numbering (§13, §14)
+- M6.7 source artwork embedding (§14), M6.8 metadata selection/editing (§13, §14), M6.9 external cover search (§14)
+- M8 Download to this device (§11, §31, §35 item 12)
+- M9-C Replace / Keep Both choice surface (§16)
+- mobile polish beyond basic usability (§34; basic phone usability stays v0.1, §31)
+- M9-L Library detail extras: thumbnail, extractor/source, membership (§20)
+- Light/Dark/System theme selector (§33)
+- K2 `sessionStorage` draft restore (§6)
+- analysis `Load 25 more` / `Show all` (§10); v0.1 keeps the first 25 items and the 200 selected-item cap
+
+---
+
 # 1. Product Goal
 
 Downloader is a self-hosted web application that provides a clean graphical interface around `yt-dlp` and `FFmpeg`.
@@ -166,7 +180,7 @@ Detected platform: SoundCloud
 [ Use SoundCloud ]
 ```
 
-**Auto Select display and platform icons (approved; planned, not implemented).** After analysis, the dropdown shows the detected platform while the mode stays Auto Select; displaying the backend's detected hint must never silently turn into a manual override (the platform hint sent with a later analysis stays absent unless the user explicitly picks a platform). Platform icons are approved for v0.1 and come from an openly licensed icon set; the actual set and license are **still open** (no candidate chosen; selection/research awaits approval, no dependency is added now). The preview platform badge keeps brand colour/logo with the existing contrast check, and an icon is never the only semantic carrier of the platform (the text label stays).
+**Auto Select display and platform icons (approved; planned, not implemented).** After analysis, the dropdown shows the detected platform while the mode stays Auto Select; displaying the backend's detected hint must never silently turn into a manual override (the platform hint sent with a later analysis stays absent unless the user explicitly picks a platform). Platform icons are approved for v0.1 (timing: ARCHITECTURE §59 plan item 5) and come from an openly licensed icon set; the actual set and license are **still open** (no candidate chosen; selection/research awaits approval, no dependency is added now). The preview platform badge keeps brand colour/logo with the existing contrast check, and an icon is never the only semantic carrier of the platform (the text label stays).
 
 ---
 
@@ -196,7 +210,7 @@ Possible causes:
 • The content may require authentication
 • The URL may not currently be supported
 
-[ Retry ] [ View Activity ]
+[ Retry ]
 ```
 
 More specific errors should be shown when they can be determined reliably.
@@ -212,9 +226,9 @@ Examples:
 
 Raw Python exceptions should not be used as the primary user-facing error message.
 
-Technical details may appear in the Activity panel.
+Technical details of job failures stay in the Activity panel (§18).
 
-The `[ View Activity ]` action above stays a requirement. Removing it from the analysis-failure example is only a **PROPOSED** spec change from the user-transferred spec audit (ARCHITECTURE §59 M6-Q); nothing is removed until the user approves it. Masked extractor error detail is finding 19 in the approved order.
+**View Activity removed (approved; planned UI change, not implemented):** the analysis-failure example no longer requires a `View Activity` action or button; the error message and `Retry` stay. Queue/history Activity (§17, §18) is unchanged. Timing: ARCHITECTURE §59 plan item 5. Masked extractor error detail remains finding 19.
 
 ---
 
@@ -252,9 +266,9 @@ Library / Device
 
 **Single-item Audio / Video choice (approved; planned, not implemented).** For a single item, the top Audio / Video choice works like the collection one: only the source and output options of the selected type are shown.
 
-**New Download state across navigation (observed; draft restore approved; planned, not implemented).** The analysis, selection and job card are lost on tab navigation or F5. The Queue page (§17) restores access to jobs from the server but does not by itself solve this. Approved (user decision): a `sessionStorage`-based draft restore for New Download. It is not blocking: it is scheduled in Queue Q2 where it fits, or after v0.1 if needed. The technical sketch (only `analysis_id` plus minimal identifiers, safe clear on 410/expired) in ARCHITECTURE §59 (Q2) stays a proposal, not an approved design. Approved condition: after a new analysis, the old job card may be cleared only once Queue actually delivers access to cancelled single-job Retry (§17; the history lives in Queue).
+**New Download state across navigation (observed; draft restore approved; planned, not implemented).** The analysis, selection and job card are lost on tab navigation or F5. The Queue page (§17) restores access to jobs from the server but does not by itself solve this. Approved (user decision): a `sessionStorage`-based draft restore (K2) for New Download, **deferred to v0.2** (not v0.1, not part of Q2; not implemented). The technical sketch (only `analysis_id` plus minimal identifiers, safe clear on 410/expired) in ARCHITECTURE §59 stays a proposal, not an approved design. Approved condition: after a new analysis, the old job card may be cleared only once Queue actually delivers access to cancelled single-job Retry (§17; the history lives in Queue).
 
-**Remember last selection (approved for v0.1; planned, not implemented).** New Download remembers the user's last choices in the browser (`localStorage`); there is no server-side preference storage and Settings defaults stay fixed in v0.1. Only choice identifiers are kept, never raw URLs or full metadata. A remembered choice is applied only when it is still available for the current source; otherwise the default is used. This is separate from the draft restore above, and its v0.1 status does not depend on whether draft restore slips. Technical details in ARCHITECTURE §47.
+**Remember last selection (approved for v0.1; planned, not implemented).** New Download remembers the user's last choices in the browser (`localStorage`); there is no server-side preference storage and Settings defaults stay fixed in v0.1. Only choice identifiers are kept, never raw URLs or full metadata. A remembered choice is applied only when it is still available for the current source; otherwise the default is used. This is separate from the draft restore above (v0.2); it stays v0.1 (ARCHITECTURE §59 plan item 6). Technical details in ARCHITECTURE §47.
 
 ---
 
@@ -391,7 +405,7 @@ v0.1 has a hard cap of **200 selected items per job**, enforced by the backend a
 
 `Select All` selects only the currently available, analyzed, selectable items, within that cap. It must not silently include unseen, unanalyzed, unavailable, or over-cap items. For large sources the UI must explicitly explain the v0.1 selection limit and the scope of the available selection; it must not imply that the entire source will be downloaded. Analysis retrieval and any pagination strategy remain technical design follow-ups, not requirements established here.
 
-**User decision (planned, not implemented):** the collection analysis shows the first 25 items. Below the list the user can choose `Load 25 more` (+25) or `Show all`, which shows at most 200 items; when the source is longer, a short note says so. While more items load a waiting state is shown, and the user's existing selections are preserved. The 200 selected-item cap above is unchanged. The initial 25 matches the current bounded flat analysis budget (ARCHITECTURE.md §59). No API design exists yet.
+**User decision (deferred to v0.2; not implemented):** `Load 25 more` (+25) and `Show all` (at most 200 items), a waiting state while loading, selections preserved, and a short note when the source is longer. **v0.1 keeps the current behaviour: the first 25 items are analyzed and shown, with the 200 selected-item cap above unchanged.** No API design exists (ARCHITECTURE.md §59).
 
 Each collection job uses one collection-level Audio / Video mode, source-quality preference and output choice as described in sections 8–9; individual output profiles are not available in v0.1.
 
@@ -435,6 +449,8 @@ The server prepares the final file.
 Once ready, the browser receives it as a standard browser download.
 
 Downloader must not attempt arbitrary direct filesystem writes on the phone/computer.
+
+**Scope:** this destination (M8) is deferred to **v0.2** and is not implemented; v0.1 shows it honestly as coming later (§22).
 
 ## Keep a copy in App Library
 
@@ -493,7 +509,7 @@ Generic names such as:
 
 must not be used when real titles are known.
 
-M6 decisions (approved; planned, not implemented):
+M6 decisions (approved; planned, not implemented). The M6.6 grouping/numbering rules and the M6.8 edit UI below are deferred to **v0.2**; v0.1 keeps the current naming:
 
 - Artist and album come only from explicit source metadata or user-provided metadata. They are never invented from the title, the channel name is never used as the artist, and a playlist name is not automatically an album.
 - Artist folder (approved; planned, not implemented): an explicit album artist takes priority; otherwise the first name of the structured `artists` list; if there is no list, the single source text as-is. A name is never split on `&`, commas or `feat.`.
@@ -519,7 +535,7 @@ Where metadata can be determined reliably, files should contain embedded metadat
 - Year/date where available
 - Artwork where available and appropriate
 
-Users should be able to inspect or correct important album metadata before the download when automatic metadata is uncertain.
+Users should be able to inspect or correct important album metadata before the download when automatic metadata is uncertain (the M6.8 edit UI and embedded artwork are v0.2; v0.1 writes the M6.5 text tags only).
 
 M6.5 text tags (approved; planned, not implemented; M6.5 stays open until the user's real-use Docker Compose smoke result and the full gates): embedded text tags are planned to be written with the existing third-party Mutagen library (not yet an installed repository dependency), not by hand-written format code: MP3 ID3v2.4, M4A MP4 atoms, FLAC / Ogg Vorbis / Opus Vorbis comments. Minimum fields only; there is no genre/composer field and no provider framework.
 
@@ -527,11 +543,11 @@ M6.5 text tags (approved; planned, not implemented; M6.5 stays open until the us
 - Total tracks and total discs are not in `SourceMetadata` today and M6.5 does not derive them. Playlist source order is never written as an embedded track tag.
 - WAV and the Original WebM fallback (§14 remux fallback) are outside tags and artwork. Video and other unsupported containers are outside this audio-tag scope. An unsupported format is not presented as an error, and no remux or transcode is done just to carry a tag.
 
-M6.7 source artwork (approved; planned, not implemented): by default a track's own thumbnail image is embedded as a square crop; the general playlist image is not used. A missing or broken cover never blocks the download. The user removes or replaces the cover on the M6.8 selection screen. The earlier rule that every source cover requires an explicit selection is superseded and is not an active rule. An album-wide `cover.jpg` is not chosen automatically when tracks have different thumbnail covers; the `cover.jpg` example in §13 is conditional, and the album-wide selection detail stays an open M6.7 design follow-up. For a playlist with different albums, one cover is never applied automatically to all tracks. Format support is not guaranteed.
+M6.7 source artwork (approved; deferred to v0.2; not implemented): by default a track's own thumbnail image is embedded as a square crop; the general playlist image is not used. A missing or broken cover never blocks the download. The user removes or replaces the cover on the M6.8 selection screen. The earlier rule that every source cover requires an explicit selection is superseded and is not an active rule. An album-wide `cover.jpg` is not chosen automatically when tracks have different thumbnail covers; the `cover.jpg` example in §13 is conditional, and the album-wide selection detail stays an open M6.7 design follow-up. For a playlist with different albums, one cover is never applied automatically to all tracks. Format support is not guaranteed.
 
-Alternative cover search (M6.9; approved; planned, not implemented): external search runs only when the user explicitly asks for it on the M6.8 selection screen, never automatically. The UI offers editable artist/album fields and searches an external catalog. Candidates are shown with source/release information and, where verifiable, resolution; the user still chooses the external candidate. High pixel size is not proof of the correct release. There is no silent search, selection, or replacement, and choosing a cover does not change other metadata on its own. A failed search or a missing cover never blocks the download. This is the last separate M6 sub-task and is not started: provider and rights terms must be clarified when M6.9 integration is reached; no new rights research or provider decision is made now. It is neither deferred nor completed automatically.
+Alternative cover search (M6.9; approved; deferred to v0.2; not implemented): external search runs only when the user explicitly asks for it on the M6.8 selection screen, never automatically. The UI offers editable artist/album fields and searches an external catalog. Candidates are shown with source/release information and, where verifiable, resolution; the user still chooses the external candidate. High pixel size is not proof of the correct release. There is no silent search, selection, or replacement, and choosing a cover does not change other metadata on its own. A failed search or a missing cover never blocks the download. This is the last separate M6 sub-task and is not started: provider and rights terms must be clarified when M6.9 integration is reached; no new rights research or provider decision is made now.
 
-Order of work: M6.5 text tags → M6.6 grouping decision and paths → M6.7 source artwork → M6.8 selection/editing → M6.9 user-triggered external search.
+Order of work: M6.5 text tags (v0.1) → M6.6 grouping decision and paths → M6.7 source artwork → M6.8 selection/editing → M6.9 user-triggered external search (M6.6–M6.9 are v0.2 and not withdrawn).
 
 Library note: Mutagen is GPL-2.0-or-later. That is not a blocker for personal use; a distribution/project-license compatibility note remains open, and this is not a legal approval.
 
@@ -584,7 +600,7 @@ The application must never silently overwrite an existing media file.
 
 **Video naming and collision results (approved; planned, not implemented).** A video file name carries the actual resolution of the produced file: `Title (720p).mp4`. Any other name collision uses `(2)`. When the request is exactly the same as an existing one, the existing file is kept and the job is shown as `Already exists`, not `Completed`. This is a user-visible result decision only: no new database state enum and no new API shape has been chosen yet. Planned supersede notes for deprecated behaviour: showing a differently-qualified request as successfully completed from an existing path (finding 3) is superseded by these rules. Note that distinct logical Library rows sharing one physical file are not data corruption: the current skip-existing test contract is deliberate and stays until a storage/catalog contract task decides otherwise; presenting the wrong quality as a successful result from an existing path is a separate defect.
 
-**Replace / Keep Both choice surface (open; user-transferred spec audit).** Where the user chooses Replace or Keep Both (per job, default in Settings, or both) is undecided. The proposed M9-C design task (ARCHITECTURE §59) covers only the Replace / Keep Both behaviours and this choice surface. The correctness of the approved resolution suffix, `(2)` and `Already exists` rules above stays with the finding 3 expert task, after Queue Q1/Q2 and before Q3 and M6.5 in the approved order; M9-C must preserve and align with that contract. There is no joint delivery, and that pre-M6.5 work does not depend on M9. No conflict primitive is implemented by this record.
+**Replace / Keep Both choice surface (open; deferred to v0.2; user-transferred spec audit).** Where the user chooses Replace or Keep Both (per job, default in Settings, or both) is undecided; v0.1 keeps the Skip Existing default and the `(2)` / `Already exists` rules above, with no user-facing Replace / Keep Both choice. The M9-C design task (v0.2; ARCHITECTURE §59) covers only the Replace / Keep Both behaviours and this choice surface. The correctness of the approved resolution suffix, `(2)` and `Already exists` rules above stays with the finding 3 expert task, after Queue Q1/Q2 and before Q3 and M6.5 in the approved order; M9-C must preserve and align with that contract. There is no joint delivery, and that pre-M6.5 work does not depend on M9. No conflict primitive is implemented by this record.
 
 ---
 
@@ -608,15 +624,15 @@ Required actions where appropriate:
 - Retry
 - ~~Remove~~ and ~~Clear Completed~~ — superseded (approved) by the Clear History decision below; there is no per-job remove.
 
-**Queue page status and decisions.** Observed: the Queue page is still a placeholder. It is a v0.1 required capability, and its prerequisite M6-Q comes before M6.5 tag work (ARCHITECTURE §59, which holds the technical details). All items below are approved decisions, **planned, not implemented**, unless marked otherwise:
+**Queue page status and decisions.** The server-backed Queue list with Cancel/Retry (Q1) is implemented; Q2 cancelled single Retry and Q3 Clear History are not (current status: STATE.md). It is a v0.1 required capability (ARCHITECTURE §59, which holds the technical details and the active order). All items below are approved decisions, **planned, not implemented**, unless marked otherwise:
 
 - The page lists active, queued and history jobs with Cancel and Retry (parent-only for collections, per-child UI stays out of scope).
-- **Clear History** replaces the old Remove / Clear Completed actions. There is no single history/job deletion and no per-job delete endpoint (user-settled). A bulk confirmation screen shows the number of jobs and the space that would be freed. By default completed and failed jobs are selected; cancelled jobs (single and collection) stay. An `include_cancelled` checkbox is OFF by default; when checked, the cancelled jobs' partial staging data (including a cancelled single job's retained partial staging) is deleted too. Library media files and catalog records are never deleted by this cleanup. Active and queued jobs are never cleanup candidates.
+- **Clear History** replaces the old Remove / Clear Completed actions. There is no single history/job deletion and no per-job delete endpoint (user-settled). A bulk confirmation preview shows only the number of jobs that would be deleted; there is no space/byte estimate. By default completed and failed jobs are selected; cancelled jobs (single and collection) stay. An `include_cancelled` checkbox is OFF by default; when checked, the cancelled jobs' partial staging data (including a cancelled single job's retained partial staging) is deleted too. Library media files and catalog records are never deleted by this cleanup. Active and queued jobs are never cleanup candidates.
 - **Failed staging (approved):** Clear History also deletes the staging data of the failed jobs it clears. There is no automatic staging deletion at the moment of failure.
 - **Cancelled single Retry (approved):** a cancelled single job keeps its partial staging and can be retried, continuing from where it stopped. Resumption happens only through an explicit user Retry, never automatically. This is a separate bounded Opus expert task in Queue Q2 (ARCHITECTURE §59).
-- **Still open, awaiting explicit user approval:** the byte estimate versus the actually freed amount and real reporting of cleanup failures.
+- **Partial failure (approved; supersedes the earlier open byte-estimate question):** when some jobs cannot be cleared, the result is a short `N jobs could not be deleted` summary plus Activity detail; no byte/space amounts are reported.
 - The clear endpoint does not exist yet (the bulk backend is built from scratch in Q3); delivery is staged and no API payload is designed here (ARCHITECTURE §59).
-- Current behaviour (observed, not yet changed): a cancelled single job cannot be retried and its partial data is removed; a cancelled collection can be retried and resumes. The approved cancelled single Retry above changes this only when Q2 is implemented.
+- Current behaviour (observed, not yet changed): a cancelled single job cannot be retried and its partial data is removed; a cancelled collection can be retried and resumes. The approved cancelled single Retry above changes this only when Q2 is implemented. Q2 is plan item 1 and Clear History (Q3) plan item 3 in ARCHITECTURE §59; Q3 is a separate task from the finding 3 naming work.
 
 **Progress display (approved; planned, not implemented).** Conversion shows its real progress percentage; when it is unknown the bar is indeterminate. Source transfer at 100% is not conversion at 100%, and no smoothing is promised. Observed, unfixed (finding 7): during conversion the UI showed 100% for minutes while ffmpeg ran at about 1000% CPU.
 
@@ -794,7 +810,7 @@ Selecting a Library item should reveal additional information such as:
 - physical path,
 - playlist/album membership.
 
-Observed gap (user-transferred spec audit, not re-verified here): the Library detail does not yet show thumbnail/artwork, extractor/source and playlist/album membership. Membership depends on the M6.6 grouping decision; the proposed M9-L task tracks it (ARCHITECTURE §59). The requirement above is unchanged.
+Observed gap (user-transferred spec audit, not re-verified here): the Library detail does not yet show thumbnail/artwork, extractor/source and playlist/album membership. These detail extras (M9-L) are deferred to **v0.2**; membership depends on the M6.6 grouping decision (also v0.2). v0.1 shows the detail fields that exist today.
 
 ---
 
@@ -865,7 +881,7 @@ Current status (observed; user-transferred spec audit): the Settings page is an 
 
 **Settings plan (approved user decision; planned, not implemented; ARCHITECTURE §47, §59):**
 
-- v0.1 delivers a read-only Settings page (S1) at the M7 opening, validated against the M7 target: it shows the effective Compose/environment values, which destinations are configured, and the stored startup write-check result. Viewing Settings never runs a new check and changes nothing.
+- v0.1 delivers a read-only Settings page (S1) at the M7 opening, validated against the M7 target: it shows the effective Compose/environment values, which destinations are configured, and the stored startup write-check result. Viewing Settings never runs a new check and changes nothing, and S1 shows no probe result before the startup probe exists (not designed here).
 - At startup the application test-writes and deletes a small file in each configured target and staging folder. Success is silent; a failure shows a persistent banner. The result reflects permissions at that moment only and does not guarantee future writes.
 - Editable, saved settings (S2) are post-v0.1 (§33). Until then settings are changed through Compose/environment, and in-app defaults are fixed.
 - An optional welcome screen is post-v0.1.
@@ -1023,8 +1039,8 @@ This slice must work end-to-end before adding the more complex destination and p
 The v0.1 release target includes:
 
 - Dockerized web application
-- responsive web interface
-- mobile-friendly operation
+- responsive web interface (basic phone usability; further mobile polish is v0.2)
+- basic mobile-friendly operation
 - Tailscale/private-network usage
 - platform dropdown
 - Auto Select default
@@ -1042,7 +1058,7 @@ The v0.1 release target includes:
 - App Library destination
 - Plex Music destination
 - Plex Videos destination
-- Download to this device
+- ~~Download to this device~~ — moved to v0.2 (M8; §11)
 - optional Keep a Copy in App Library
 - queue (a real Queue page with active/queued/history, Cancel/Retry and Clear History; §17, planned in M6-Q)
 - progress
@@ -1142,8 +1158,8 @@ Do not introduce this infrastructure preemptively.
 ## Editable Settings (post-v0.1; approved deferral)
 Saved, in-app editable settings (former M9 S2a/S2b/S2c: database-backed settings, validated changes including concurrency, and Settings UI defaults), plus an optional welcome screen. v0.1 uses Compose/environment configuration with a read-only Settings page (§23).
 
-## Theme selector (optional; not v0.1 required)
-A Light / Dark / System theme choice remembered in the browser may be added later. The app already follows the system light/dark preference; a manual choice is optional polish, scheduled only with user approval, otherwise post-v0.1.
+## Theme selector (v0.2; not v0.1)
+A Light / Dark / System theme choice remembered in the browser is deferred to v0.2. The app already follows the system light/dark preference; the manual choice is not implemented.
 
 ## Clip downloads and subtitles (post-v0.1 proposal; not v0.1 required)
 Suggestions only, not approved scope and not v0.1 required: clip download through yt-dlp `download_ranges` with a two-handle slider plus time boxes; subtitles as none / embed / sidecar with a language choice.
@@ -1158,7 +1174,7 @@ Post-v0.1 research/evaluation item only. Integration with an official, provider-
 The interface should be:
 
 - responsive,
-- usable from a phone,
+- usable from a phone (basic usability in v0.1; mobile polish is v0.2),
 - understandable without `yt-dlp` knowledge,
 - clear about current job state,
 - conservative about destructive actions,
@@ -1186,7 +1202,7 @@ The product is considered functionally ready for v0.1 when a user can:
 9. Expand Activity and understand what the job is doing.
 10. Complete a download successfully.
 11. Save media into App Library or configured Plex destinations.
-12. Download the prepared media to the current browser/device.
+12. ~~Download the prepared media to the current browser/device.~~ Moved to v0.2 (M8; §11).
 13. Download a selected subset of a playlist/album.
 14. View the completed media inside Library.
 15. Inspect its size, date, location, format, and path.
@@ -1196,7 +1212,7 @@ The product is considered functionally ready for v0.1 when a user can:
 19. Explicitly delete a physical file after confirmation (Delete modal, checkbox ON; §21).
 20. Restart the Docker application without losing persistent Library state.
 
-Release gate: this functional readiness is complemented by a one-time v0.1 Release Security Hardening / Audit stage (ARCHITECTURE section 59), run after Milestone 9 and before final v0.1 release acceptance; unresolved validated Critical/Important security findings block the release.
+Release gate: this functional readiness is complemented by a one-time v0.1 Release Security Hardening / Audit stage (ARCHITECTURE section 59), run after the v0.1 feature plan (ARCHITECTURE §59 plan items 1–8) and before final v0.1 release acceptance; unresolved validated Critical/Important security findings block the release.
 
 ---
 

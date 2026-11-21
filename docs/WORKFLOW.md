@@ -57,10 +57,13 @@ yüklenir; mevcut oturum reload olmuş sayılmaz.
 2. **Her milestone öncesi Opus görüşü zorunlu.** Alınamazsa açık kullanıcı onayı
    olmadan uygulama yok. Önemli mimari kararlar önce Opus'a, ürün tercihleri
    kullanıcıya gider. Lead burada **Opus önerisi / gerekçe / alternatif-risk +
-   lead kararı** özetini kullanıcıya görünür verir.
+   lead kararı** özetini kullanıcıya görünür verir. Milestone başına tek kısa Opus görüşü
+   yeterlidir; yeni önemli tasarım belirsizliği dışında tekrarlanmaz. Önemli mimari yönlendirme korunur.
 3. Tek bounded iş tanımı: amaç, okunacaklar, izinli dosyalar, kabul kriterleri,
    yapılmayacaklar, exact hedefli kontrol komutları ve çalışma dizinleri.
    Belgelenmemiş/çelişkili ürün gereksiniminde dur; soru ve en basit seçeneği raporla.
+   Bayat durum/uygulama ayrıntısı için onay isteme; ürün/kapsam/geri alınamaz kararları
+   tek mesajda topla. Bağlı düşük riskli işler tek işte birleştirilebilir.
 4. Lead her iş başında **“Uygulayıcı: Sonnet/Opus; gerekçe...”** der; küçük/büyük
    sınıfı ve kısa nedeni de tek satırda ekler ("Küçük iş yolu (KARAR)"). Varsayılan
    uygulayıcı aynı ince adapter üzerinden Sonnet'tir: sınırları net olağan muhakeme.
@@ -69,7 +72,8 @@ yüklenir; mevcut oturum reload olmuş sayılmaz.
    değişikliklerinde baştan açık `--model opus` seçilir. Boyut/dosya sayısı kriter değildir.
    “Sonnet dene, başarısızsa kör Opus” zinciri yoktur; belirsiz ürün davranışı kullanıcı
    kararı gerektirir. fast-worker yalnız mevcut deseni birebir izleyen, net, geri
-   alınabilir, hedefli testli mekanik/düşük riskli işlerde.
+   alınabilir, hedefli testli mekanik/düşük riskli işlerde. Risk uygunsa küçük yol
+   varsayılandır; tek bağımsız çapraz model review, en fazla tek düzeltme turu (belge istisnası: adım 6) ve hedefli lead doğrulaması sürer.
    Migration/kalıcı veri, transaction/concurrency/ownership, filesystem mutation,
    silme/veri kaybı, güvenlik/path-containment veya API/data contract varsa Luna durur.
    **Tek yazıcıyı lead yönetir; adapter kilit tutmaz.** Worker STATE yazmaz, git yazmaz.
@@ -82,9 +86,10 @@ yüklenir; mevcut oturum reload olmuş sayılmaz.
    (bloklamayan gerçek sorun), accepted-risk (düşük olasılık/etki), over-engineering
    (gereksiz karmaşıklık). Reviewer yeni ürün kararı üretmez.
    **En fazla bir review düzeltme turu**, mümkünse aynı Claude session; lead bu
-   politikayı yönetir, adapter tur saymaz. Must-fix sürerse dur.
+   politikayı yönetir, adapter tur saymaz. İstisna: yalnız belge (.md) değişikliği içeren, kod/test/config dosyalarına dokunmayan işlerde lead ikinci turu açabilir. Bu istisna kapsam içi işte kullanıcıya sormadan en fazla ikinci turdur; kod/test/config işinde tek tur kuralı geçerlidir. Must-fix sürerse dur.
 7. Lead yalnız hedefli kontrolleri kendi yeniden çalıştırır; worker PASS raporu yetmez.
-8. STATE yalnız gerçek devam durumu değişince güncellenir. Review (veya "Küçük iş yolu
+8. STATE yalnız gerçek devam durumu değişince iş commitinde güncellenir; hedef 1–2 satırdır,
+   katı sınır değil (80 satır üst sınırı korunur); rutin ayrı kayıt yoktur. Karar kaydı yalnız yeni ürün/mimari karar içindir. Review (veya "Küçük iş yolu
    (KARAR)" saf karar kaydı istisnası) ve kontrollerden geçen iş
    tek otomatik commit olur: görevde gerçekten değişen dosyalar (STATE değiştiyse o da) tek tek
    stage edilir; worker STATE/git yazmaz. Göreve özel açık git yasağına uyulur.
@@ -245,6 +250,7 @@ doğrulanmış iddia edilmez. Server/tmux/ek altyapı yoktur.
   Git status/diff snapshot'ını adapter sabit read-only argv ile prompt'a ekler;
   external diff/textconv kapalıdır. Untracked dosyalar diff'te yoktur, Read ile okunur.
 - OpenCode GPT reviewer için komut sözleşmesi `.opencode/agents/reviewer.md` içindedir; Claude consult/review wrapperına uygulanmaz (o rolde Bash yoktur). Lead her GPT reviewer görev promptuna şu kısa sözleşmeyi ekler: “Git yalnız ayrı doğrudan `git status/diff/show/log` çağrılarıyla, çalışma dizini araç `workdir` parametresiyle; global `--no-pager`/`-C`/`-c`, env prefix, `cd`, zincir, pipe, yönlendirme, `cat`/`head`, `difftool`/`--output` yok; okuma Read/Grep/Glob ile. Ret olursa tekrar deneme veya başka yolla aşma; tam komut + dizin + maskeli ham hatayla dur, genel shell izni yok sonucu çıkarma. Eksik review onay değildir; `review eksik` yaz.”
+  Büyük diff’i önce `git diff --stat`, sonra dosya dosya `git diff -- <dosya>` ile al; çıktı kesilirse değişen bölümü Read ile satır aralığı vererek oku; geçici çıktı dosyalarına/repo dışına erişme.
 - Her iki implement modeli aynı normal Edit/Write ve yalnız proje test/lint Bash izinlerini alır:
   backend `.venv/bin/pytest`, `.venv/bin/ruff check`, `.venv/bin/mypy`; frontend
   `npm test`, `npm run lint/typecheck/build/check:contrast`. İlgili backend/frontend

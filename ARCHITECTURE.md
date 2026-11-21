@@ -829,7 +829,7 @@ For an active yt-dlp/FFmpeg subprocess:
 5. preserve appropriate partial data,
 6. update job state to `cancelled`.
 
-Retrying later may allow yt-dlp to continue from a valid `.part` file when supported. This is not a universal promise; current code boundary (observed): a cancelled single job cannot be retried (`JobService._retry_job` accepts only a failed single job with a retryable error code) and the single runner removes its staging on cancel, so no `.part` survives; a cancelled collection can be retried and resumes from retained child `.part` data (smoke PASS). Extending single cancelled Retry with staging retention is a proposal awaiting user approval (§59), not current behaviour.
+Retrying later may allow yt-dlp to continue from a valid `.part` file when supported. This is not a universal promise; current code boundary (observed): a cancelled single job cannot be retried (`JobService._retry_job` accepts only a failed single job with a retryable error code) and the single runner removes its staging on cancel, so no `.part` survives; a cancelled collection can be retried and resumes from retained child `.part` data (smoke PASS). Cancelled single Retry with partial staging retention and an explicit user Retry (no automatic resume) is approved but not yet implemented (§59, Q2); the current behaviour above stays until then.
 
 For a collection, parent Cancel propagates to active child subprocesses and prevents not-started children from being scheduled. Completed children, finalized files, and Library entries remain untouched. Parent Retry includes failed, cancelled, and incomplete children only, preserving completed work. When cancellation races with child failure, terminal precedence is decided by durable persisted state: a Cancel request persisted before the parent's terminalization transaction makes the parent `cancelled`; a failure terminal committed first keeps the parent `failed`, and a later Cancel cannot supersede it. In-memory event timing is never the decision source. This mechanism does not define all-completed or success-versus-Cancel semantics or shutdown policy; the single runner's precedence is unchanged.
 
@@ -1258,6 +1258,8 @@ or another safe deterministic suffix.
 
 The exact naming policy should remain centralized inside `StorageService`.
 
+**v0.1 alignment with PRODUCT_SPEC §16 (approved; planned, not implemented; no new rule or method is designed here).** An exactly identical request whose result already exists keeps the existing file unchanged and is shown as `Already exists`, not `Completed`. Any other name collision uses the `(2)` suffix; an existing media file is never silently overwritten; the naming stays centralized in `StorageService`. A video name carries the real resolution of the produced file (PRODUCT_SPEC §16). User-selectable Replace and Keep Both are v0.2 (M9-C, §59); the Replace readiness guarantee above (replace only after the new file is prepared, never delete first) and the open design status of those options are retained.
+
 ---
 
 # 31. Music Path Builder
@@ -1408,6 +1410,8 @@ Requirements:
 - support HTTP range/resume behaviour where practical.
 
 The browser handles final saving to the phone/computer.
+
+Scope: M8 device delivery is deferred to v0.2 (PRODUCT_SPEC §11); this section is the target design, not v0.1 work.
 
 ---
 
@@ -1724,7 +1728,7 @@ Docker mount configuration remains an administrator/deployment concern.
 
 **Browser-local preferences (approved; planned, not implemented; frontend-only, no backend).**
 
-- Remember last selection (v0.1): the frontend stores the user's last choices in browser `localStorage`; there is no backend preference storage, and S2 settings stay post-v0.1. Only choice-shaped identifiers are stored — never raw URLs or full metadata. This is distinct from the `sessionStorage` draft restore, which holds job/analysis IDs (§59 Q2). Technical boundary (proposal; exact fields and versioning are design, not a user-defined preference set): restore only values that are still among the currently available, validated choices; a corrupt or unknown entry falls back to the default; denied/unavailable storage degrades to defaults without error.
+- Remember last selection (v0.1): the frontend stores the user's last choices in browser `localStorage`; there is no backend preference storage, and S2 settings stay post-v0.1. Only choice-shaped identifiers are stored — never raw URLs or full metadata. This is distinct from the `sessionStorage` draft restore, which holds job/analysis IDs (K2; v0.2, §59). Technical boundary (proposal; exact fields and versioning are design, not a user-defined preference set): restore only values that are still among the currently available, validated choices; a corrupt or unknown entry falls back to the default; denied/unavailable storage degrades to defaults without error.
 - Theme Light/Dark/System (future; not v0.1-required): may later be added as frontend-only `localStorage`. Observed today: `frontend/src/styles.css` defines `:root` tokens with a `prefers-color-scheme: dark` override (system support exists); the App has no manual selector or persistence. Expected cost is a small bounded frontend task: extend via `data-theme` with simple token mappings (no theme framework), and update `frontend/scripts/check-contrast.mjs`, which currently parses the media-query block.
 
 ---
@@ -2033,6 +2037,21 @@ The architectural foundation must nevertheless allow those features to be added 
 
 # 59. Implementation Milestones
 
+**v0.1 active plan (user-approved order; authoritative over older order/timing wording below; none beyond Q1 is implemented):**
+
+1. Q2: explicit cancelled single Retry, partial staging retention and Queue/New Download access — one Opus task; acceptance is a real Compose Cancel → refresh → Retry → continue-from-partial run (user smoke; not yet done). Q1 is implemented; its batched UI smoke is pending.
+2. Finding 3: real resolution / `(2)` / `Already exists`; the same request existing means skip, never a silent overwrite. Collection quality ceiling picker 2160/1440/1080/720/480 with per-item best fallback is approved, inside item 2 or, if needed, a separate task right after it.
+3. Q3 (finding 10), a separate task: bulk Clear History; preview shows only the job count (no space/byte estimate); partial failure = `N jobs could not be deleted` summary + Activity; cancelled excluded by default, `include_cancelled` option, failed staging included, Library untouched, no per-job DELETE.
+4. M6.5 text tags.
+5. M6.5 presentation UI plus basic error texts: the analysis-failure `View Activity` requirement and example button are removed (error message + Retry stay; Queue/history Activity stays). Platform icons are explicitly v0.1 here (PRODUCT_SPEC §4); the icon set and license are still open and none is chosen.
+6. Remember last selection in `localStorage`.
+7. M7 opening: storage writability check + S1 (S1 shows no result before the probe exists; not designed here).
+8. Plex Music/Videos, Library extra copy, safe Delete modal (`Also delete files` OFF by default, M7 copy selection). Real Plex Music scan with M6.5 embedded text tags plus meaningful file names; if that is insufficient, only the smallest needed directory layout is a separate task. M6.6 is not withdrawn (v0.2).
+9. One focused security round (see Release Security Hardening below).
+10. Final fresh full gate and batched Compose acceptance.
+
+**Deferred to v0.2 (approved; not implemented; PRODUCT_SPEC section in parentheses):** M6.6 album grouping (§13, §14), M6.7 artwork (§14), M6.8 metadata editing (§13, §14), M6.9 external cover search (§14), M8 device download (§11, §31, §35), M9-C Replace/Keep Both (§16), mobile polish beyond basic usability (§34), M9-L Library detail extras (§20), theme selector (§33), K2 draft restore (§6), analysis `Load 25 more`/`Show all` (§10; v0.1 keeps the first 25 and the 200 selected-item cap).
+
 Recommended order:
 
 ## Milestone 0 — Foundation
@@ -2117,9 +2136,9 @@ Approved decisions below are planned, not implemented, except the explicit-conve
 - embedded metadata, written on staged files
 - numbering: playlist video names (M6.3, implemented) use source order, not compacted; a generic audio playlist uses source order, and a reliable album group with known track/disc uses `1-01 - Title` (known multi-disc) or `01 - Title` (known single-disc); unknown numbers are never invented (§31; planned, not implemented)
 - no automatic title cleanup; manual metadata/name review and editing
-- sub-task order (planned, none implemented except the Original Opus remux): M6.5 text tags (Mutagen boundary, §14; closure awaits the user's real-use Docker Compose smoke result and full gates) → M6.6 grouping decision and paths → M6.7 source artwork (a track's own thumbnail as square crop by default, missing/broken never blocks; the old rule requiring explicit selection for every source cover is superseded) → M6.8 selection/editing (user removes/replaces cover) → M6.9 external search only when the user explicitly asks on the M6.8 screen; `cover.jpg` only conditionally with an album folder
+- sub-task order (planned, none implemented except the Original Opus remux; M6.6–M6.9 are deferred to v0.2, see the active plan above): M6.5 text tags (Mutagen boundary, §14; closure awaits the user's real-use Docker Compose smoke result and full gates) → M6.6 grouping decision and paths → M6.7 source artwork (a track's own thumbnail as square crop by default, missing/broken never blocks; the old rule requiring explicit selection for every source cover is superseded) → M6.8 selection/editing (user removes/replaces cover) → M6.9 external search only when the user explicitly asks on the M6.8 screen; `cover.jpg` only conditionally with an album folder
 - tag/artwork/remux failure fallback (PRODUCT_SPEC §14, ARCHITECTURE §14): under Original, an audio remux failure keeps the safe original with an Activity warning only under the bounded conditions in §14 (Original Opus remux fallback: `FFmpegFailureKind.FAILED` with `FFmpegFailureCause.EXIT_STATUS`, cancellation re-checked, normal storage/catalog checks; approved, implemented in M6.5b/c); when an explicitly selected target was already converted successfully, optional tag/artwork failure keeps that ready target; if the explicitly selected target cannot be produced, the job/child fails and no different original is completed; cancellation and direct security/storage/catalog errors are not swallowed (the narrow internal FFmpeg disk/permission exception under `EXIT_STATUS` in §14 is outside that guarantee)
-- last separate sub-task (M6.9), not started; provider/rights questions are handled when integration is reached: user-triggered alternative cover search, only on explicit request on the M6.8 screen, never automatic (MusicBrainz + Cover Art Archive as the first candidate, single chain, not a final choice)
+- last separate sub-task (M6.9, v0.2), not started; provider/rights questions are handled when integration is reached: user-triggered alternative cover search, only on explicit request on the M6.8 screen, never automatic (MusicBrainz + Cover Art Archive as the first candidate, single chain, not a final choice)
 
 ### M6-Q — Queue frontend prerequisite, readiness and plan (documentation only)
 
@@ -2137,12 +2156,12 @@ Labels: **APPROVED** = user decision (planned, not implemented unless stated); *
 - Approved user decisions of 17 Nov (planned, not implemented; product wording in PRODUCT_SPEC):
   1. Cancelled single Retry with partial staging retention, continuing from where it stopped; explicit Retry only, no automatic resume. Separate bounded Opus expert task in Q2. Clear History keeps cancelled single jobs by default; with `include_cancelled` their partial staging is deleted (PRODUCT_SPEC §17).
   2. Clear History also deletes failed jobs' staging; no automatic deletion at the moment of failure (PRODUCT_SPEC §17).
-  3. `sessionStorage` draft restore (K2) is approved but non-blocking: in Q2 where it fits, or after v0.1 if needed. The technical sketch below stays PROPOSED (PRODUCT_SPEC §6).
+  3. `sessionStorage` draft restore (K2) is approved and deferred to v0.2 (not Q2, not v0.1). The technical sketch below stays PROPOSED (PRODUCT_SPEC §6).
   4. Collection standard `Up to Xp` ceiling picker (finding 20; PRODUCT_SPEC §9).
   5. Single item: smallest covering standard ceiling (608 → 720p), no upscaling, `Best Available` only without a reliable height. Collection (user decision, closed): fixed ceilings 2160/1440/1080/720/480; each child takes the best `<= X`, otherwise its best available fallback, which may exceed the cap; no upscaling; no per-item height or probe needed. Planned supersede of the current invalid-variant behaviour (§19 M5-4A note; implementation unchanged).
-  6. Work order: 18 closure → 19 masked error detail → 6 Deno → Queue Q1/Q2 → 3 conflict → 10/Q3 cleanup → M6.5. Technical proposals inside these items (for example the 18 timeout values) are not approved by the order.
+  6. Work order (historical; superseded by the v0.1 active plan at the top of this section): 18 closure → 19 masked error detail → 6 Deno → Queue Q1/Q2 → 3 conflict → 10/Q3 cleanup → M6.5. Technical proposals inside these items (for example the 18 timeout values) are not approved by the order.
   7. Persistent milestone-closure question "is any v0.1-required spec item left unplanned?" — recorded as one closure-checklist rule in `docs/WORKFLOW.md` (Gate and STATE); no new gate, tool or config.
-  8. Placeholder menu entries get a "not built yet" ("Henüz yapılmadı") label (PRODUCT_SPEC §22); no UI change today. Timing PROPOSED: a small bounded UI task alongside Q1.
+  8. Placeholder menu entries get a "not built yet" ("Henüz yapılmadı") label (PRODUCT_SPEC §22); no UI change today. The label requirement stays; its timing is open (no longer tied to Q1; the M6.5 presentation UI is only a suggestion).
   9. Plan approved (17 Nov, decisions round 2): the order in decision 6 stands (at that approval 18 was the next task; current continuation: STATE.md). Q1 covers historical Activity; Q3 is bulk-only. The finding 3 naming correctness (resolution suffix, `(2)`, `Already exists`) stays before Q3/M6.5 and does not move to M9.
   10. Settings: S1 read-only approved, to be validated against the M7 target; S2a/S2b/S2c are post-v0.1 (§47, §60); Compose/environment settings until then.
   11. No per-job `DELETE /jobs/{id}`; only bulk Clear History (user-settled; §7).
@@ -2178,11 +2197,10 @@ Labels: **APPROVED** = user decision (planned, not implemented unless stated); *
     Evidence adds repeated-fragment, A/B/A, distinct-message, 499/500/501 boundary and single/child DB+log dedup/cap tests in the same two test files.
     Q19 is closed by the user; the network smoke result is in STATE.md.
 - Q19 smoke notes (observed; recommendations only, no behaviour change requested): when the network dropped, most collection items failed immediately and Retry then resolved them. Stopping after N consecutive network errors is only a PROPOSAL; no behaviour change is wanted. A failed item showed 0% while its partial remained and Retry resumed from the partial. The unnecessary vertical spacing between failed item rows is a separate M6.5 presentation note, and the internal `network_error` code shown as text remains its own separate visual-text issue (M6.5 note).
-- Collection analysis decision (USER DECISION; planned, NOT implemented; PRODUCT_SPEC §10): show the first 25 items; under the list offer `Load 25 more` (+25) and `Show all` up to at most 200, with a short note when the source is longer;
-  a waiting state while loading and existing selections preserved; the 200 selected-item cap is unchanged.
-  The technical value 25 is consistent with the current bounded flat analysis budget (`COLLECTION_ANALYSIS_WINDOW_LIMIT`, `--playlist-items 1-25`).
-  No API is designed or implemented. The `Load 25 more` / `Show all` (<=200) buttons are PLANNED, NOT IMPLEMENTED (no button, API or UI exists).
-  Placement (user-approved): next to Q1/Q2, after runtime 6, as a larger Opus contract task; the approved order does not change and no new product decision is made.
+- Collection analysis decision (USER DECISION; deferred to v0.2, NOT implemented; PRODUCT_SPEC §10): `Load 25 more` (+25) and `Show all` up to at most 200, with a short note when the source is longer;
+  a waiting state while loading and existing selections preserved.
+  v0.1 keeps the current behaviour: the first 25 items (`COLLECTION_ANALYSIS_WINDOW_LIMIT`, `--playlist-items 1-25`) and the unchanged 200 selected-item cap.
+  No API is designed or implemented; the buttons do not exist. The earlier Q1/Q2-adjacent Opus placement is superseded by the v0.2 deferral.
 - Private/Deleted video placeholders: a YouTube flat entry (exact `ie_key` `Youtube`) with no/null `availability` and exact title `[Private video]` or `[Deleted video]` is `selectable=false` with `unavailable_reason=unavailable`, even with a valid URL; explicit `availability` and other platforms are unchanged. Select All, default selection and the 200 cap already follow `selectable`.
 - Q1: minimal server-backed active/queued/history list with Cancel/Retry, on-demand child/detail Activity, list refresh driven by the existing single global SSE connection (`/api/v1/events`, one shared connection updating the list from every job snapshot) with a REST/poll fallback when needed;
   no per-job SSE endpoint and no new framework.
@@ -2293,17 +2311,17 @@ Labels: **APPROVED** = user decision (planned, not implemented unless stated); *
     → **Q1-fe-api** (`frontend/src/api/jobs.ts` scoped client/types + tests)
     → **Q1-fe-page** (`QueuePage.tsx` and page-local helpers/tests; reusing/extracting `snapshotTime` must not change `NewDownloadPage` behaviour).
     Out of scope: Q2 cancelled single Retry/staging, K2 draft restore, Q3 Clear History, analysis 25/+25/Show all, placeholder label (decision 8), integer collection percent, per-child Cancel/Retry, SSE owner scoping, and any new product decision.
-- Q2: approved cancelled single Retry with staging retention (Opus expert task; decision 1); approved K2 draft restore where it fits (decision 3, non-blocking).
-- Finding 3 (after Q1/Q2): wrong quality/identity/naming through a separate storage/catalog contract expert job that never blindly dedups the current logical shared identity; conflict choice surface stays in M9-C.
-- Q3 (finding 10): bulk Clear History; the backend is built from scratch. Separate Opus expert contract: preview/confirm, drain, retry/cleanup races, staging ownership, path/backend ID handling, symlink/no-follow, DB+filesystem atomicity limits, no arbitrary orphan traversal; failed staging is included (decision 2). Still open: byte estimate vs actually freed amount, real cleanup-failure reporting. No per-job job/history `DELETE` (§7, PRODUCT_SPEC §17); user-settled bulk-only.
-- Q2 technical sketch for K2 draft restore (PROPOSED, unapproved): reuse the existing `GET /api/v1/analysis/{analysis_id}` and its 410 for expired snapshots; keep only `analysis_id` plus bounded selection/output/mode/platform identifiers in `sessionStorage`; no raw metadata or full source URL in persistent `localStorage`. An expired, foreign or missing snapshot, a double submit after create, or a stale variant clears the draft safely with a message. Queue alone does not fully solve New Download state loss.
+- Q2: approved cancelled single Retry with staging retention and Queue/New Download access (one Opus expert task; decision 1). K2 draft restore is NOT part of Q2 (v0.2).
+- Finding 3 (after Q2): wrong quality/identity/naming through a separate storage/catalog contract expert job that never blindly dedups the current logical shared identity; the Replace/Keep Both choice surface stays in M9-C (v0.2). The collection ceiling picker (decision 5) is part of it or a separate task right after.
+- Q3 (finding 10), separate from finding 3: bulk Clear History; the backend is built from scratch. Separate Opus expert contract: preview/confirm, drain, retry/cleanup races, staging ownership, path/backend ID handling, symlink/no-follow, DB+filesystem atomicity limits, no arbitrary orphan traversal; failed staging is included (decision 2); cancelled excluded by default with an `include_cancelled` option; Library untouched. Decided (supersedes the earlier open question): the preview shows only the job count, no byte/space estimate; partial failure is reported as an `N jobs could not be deleted` summary plus Activity. No per-job job/history `DELETE` (§7, PRODUCT_SPEC §17); user-settled bulk-only.
+- Technical sketch for K2 draft restore (v0.2; PROPOSED, unapproved; not a Q2 item): reuse the existing `GET /api/v1/analysis/{analysis_id}` and its 410 for expired snapshots; keep only `analysis_id` plus bounded selection/output/mode/platform identifiers in `sessionStorage`; no raw metadata or full source URL in persistent `localStorage`. An expired, foreign or missing snapshot, a double submit after create, or a stale variant clears the draft safely with a message. Queue alone does not fully solve New Download state loss.
 - Technical record for the Queue decisions (observed code boundaries, not decisions): `QueuePage.tsx` was an 8-line placeholder before Q1-fe-page (now the live server-backed Queue page, 7fed194); M4 closed only the backend. Single cancelled Retry is currently rejected (`JobService._retry_job` accepts a failed single job with a retryable code) and the single runner removes staging on cancel; a collection cancelled parent can be Retried and resumes from retained child staging. Approved decision 1 changes the single path in Q2.
-- Settings S1 (read-only; approved; contract in §47): position after M6.5, at the opening of M7, validated against the M7 target. It shows real effective env values, configured/unconfigured destinations and the stored startup probe result right when M7 adds Plex destinations. Implementer: Opus, because the API contract matters (size is not a criterion). The startup storage write probe (§47) must exist for S1 to display its result; its separate task placement is not fixed here. It also relates to the root-owned container data note (finding 18 close, item 6): a non-root UID/GID plan is a separate bounded Opus task.
+- Settings S1 (read-only; approved; contract in §47): position after M6.5, at the opening of M7, validated against the M7 target. It shows real effective env values, configured/unconfigured destinations and the stored startup probe result right when M7 adds Plex destinations. Implementer: Opus, because the API contract matters (size is not a criterion). The startup storage write probe (§47) must exist for S1 to display its result; S1 shows no result before the probe exists, and the probe is built at the M7 opening (active plan item 7), not designed here. It also relates to the root-owned container data note (finding 18 close, item 6): a non-root UID/GID plan is a separate bounded Opus task.
 - Settings S2a/S2b/S2c: post-v0.1 future backlog (§47, §60); not in M9.
-- Remember last selection (§47; v0.1): proposed as a separate bounded frontend substep near Q2 UI work, independent of the K2 draft restore, whose deferability does not apply to it; it stays v0.1.
-- Theme Light/Dark/System (§47): optional; an M9-T polish slot is only a suggestion without user scheduling approval, otherwise post-v0.1.
-- Spec-audit gaps (assignment only): View Activity on the analysis-failure example stays a requirement; removing it from the spec is only a proposal (PRODUCT_SPEC §5). Library detail thumbnail/extractor/membership gap → M9-L, depends on M6.6 grouping. Concurrency is env-only and tied to Settings (S1 display; changing it through S2 is post-v0.1). Replace / Keep Both behaviours and choice surface only → M9-C; the approved resolution suffix, `(2)` and `Already exists` correctness stays in the finding 3 expert task (after Q1/Q2, before Q3 and M6.5), which M9-C preserves and aligns with — no joint delivery and no M9 dependency for that pre-M6.5 work; no conflict primitive is implemented today. Plex/Device shown honestly as coming later is fine: planned in M7/M8.
-- M9 scheduling (PROPOSED, awaiting approval): the approved UI behaviours (Library single Delete modal, video ceiling/naming display, conversion progress, platform display/icons) stay approved; only their timing is a candidate. Wrong-quality (3) and naming correctness are not M9 items: they follow Queue as a separate expert job. Only the remaining cosmetic/platform/Library-modal refinement is a candidate for an M9 schedule note. The icon set and license are chosen later after approval/research; no dependency is added now.
+- Remember last selection (§47; v0.1): a separate bounded frontend task (active plan item 6), independent of the K2 draft restore (v0.2); it stays v0.1.
+- Theme Light/Dark/System (§47): v0.2; no M9-T slot in v0.1.
+- Spec-audit gaps (assignment only): the `View Activity` requirement and example button on the analysis-failure message are removed (approved; PRODUCT_SPEC §5; UI change in active plan item 5; error message + Retry stay, Queue/history Activity stays). Library detail thumbnail/extractor/membership gap → M9-L (v0.2), depends on M6.6 grouping (v0.2). Concurrency is env-only and tied to Settings (S1 display; changing it through S2 is post-v0.1). Replace / Keep Both behaviours and choice surface only → M9-C (v0.2); the approved resolution suffix, `(2)` and `Already exists` correctness stays in the finding 3 expert task (after Q1/Q2, before Q3 and M6.5), which M9-C preserves and aligns with — no joint delivery and no M9 dependency for that pre-M6.5 work; no conflict primitive is implemented today. Plex/Device shown honestly as coming later is fine: Plex is planned in M7 (v0.1), Device in M8 (v0.2).
+- M9 scheduling (superseded by the active plan): the approved UI behaviours (video ceiling/naming display, conversion progress, platform display/icons; icons timing: plan item 5) stay approved; the Library single Delete modal is in M7 (plan item 8). Wrong-quality (3) and naming correctness are not M9 items: they follow Q2 as a separate expert job (plan item 2). The icon set and license are chosen later after approval/research; no dependency is added now.
 - Closing: complete plan, milestone-close independent review, full gates, the closure question (decision 7), and a user Docker Compose smoke of 3–5 items.
 - Separate pending work, not expanded here: transfer of the approved fixed conversion profiles to the authoritative documents.
 - Post-v0.1 suggestions (clip ranges, subtitles) live in PRODUCT_SPEC §33 and are not v0.1.
@@ -2313,7 +2331,7 @@ Labels: **APPROVED** = user decision (planned, not implemented unless stated); *
 | Ref | Finding |
 | --- | --- |
 | K1 | Queue page was a placeholder with no job access; implemented in Q1-fe-page (current status: STATE.md) |
-| K2 | New Download state is lost on navigation/F5; Queue restores job access but does not fully solve it; single vs collection cancel differs (PRODUCT_SPEC §17) |
+| K2 | New Download state is lost on navigation/F5; Queue restores job access but does not fully solve it; draft restore deferred to v0.2; single vs collection cancel differs (PRODUCT_SPEC §17) |
 | K3 | User-transferred spec audit received (source above; not re-verified in this workspace); findings assigned in Plan items; closure question approved (decision 7) |
 | S0 | Settings page is an 8-line placeholder; env-only config, no settings endpoint/model/table; PRODUCT_SPEC §23 scope reduced to one word in M9 (audit) |
 | L1 | Library detail lacks thumbnail, extractor/source and playlist/album membership (audit; PRODUCT_SPEC §20) |
@@ -2363,33 +2381,35 @@ User smoke limits (user reports; lead did not rerun; passed results are in STATE
 - Plex Videos
 - staging → final transfer
 - destination validation
-- Keep a Copy in App Library
+- Keep a Copy in App Library (an actual extra copy), safe single Delete modal with per-copy choice (`Also delete files` OFF by default; PRODUCT_SPEC §21)
+- opening: startup writability check + read-only S1 (§47)
+- Plex Music verified by a real scan with M6.5 embedded text tags plus meaningful file names; if that is insufficient, only the smallest needed directory layout is a separate task. M6.6 is not withdrawn (v0.2).
 
-## Milestone 8 — Device Download
+## Milestone 8 — Device Download (v0.2; not v0.1, not implemented)
 
 - browser file delivery
 - large-file behaviour
 - download filename handling
 
-## Milestone 9 — v0.1 Polish
+## Milestone 9 — Polish (v0.1 keeps only the basics; the rest is v0.2)
 
-- responsive mobile UI
-- error messages
+- responsive mobile UI (basic usability v0.1; further polish v0.2)
+- error messages (basic texts in v0.1, plan item 5)
 - Settings (PRODUCT_SPEC §23; read-only S1 approved at M7 opening, §47 and §59 M6-Q; persisted S2 is post-v0.1)
-- conflict policies
+- conflict policies (Replace/Keep Both: M9-C, v0.2)
 - end-to-end smoke tests
 - documentation
 
-Proposed M9 sub-tasks (PROPOSED — awaiting user approval, not started; the items above stay):
+M9 sub-tasks (all v0.2; not started):
 
 - M9-C conflict/storage semantics: only the Replace and Keep Both behaviours and their choice surface, as a separate design; Opus (destructive filesystem). The approved resolution suffix, `(2)` and `Already exists` correctness (PRODUCT_SPEC §16) is not M9-C scope: it stays in the finding 3 expert task after Queue Q1/Q2 and before Q3 and M6.5; M9-C preserves and aligns with that contract, with no joint delivery and no M9 dependency for the pre-M6.5 work.
 - M9-L: Library detail gap (thumbnail, extractor/source, playlist/album membership; PRODUCT_SPEC §20); depends on M6.6 grouping.
-- M9-T (suggestion only; no user scheduling approval): optional Light/Dark/System theme selector (§47); otherwise post-v0.1.
+- M9-T: Light/Dark/System theme selector (§47), v0.2.
 - Settings S2a/S2b/S2c are not M9 work; they moved to post-v0.1 future backlog (§47, §60). Existing responsive/error/e2e/docs polish is kept.
 
 ## v0.1 Release Security Hardening / Audit
 
-One-time release security stage after Milestone 9 feature completion/polish and before final v0.1 release acceptance and gates. Status: NOT STARTED / planned. Documenting this stage does not authorize starting it, is not execution or acceptance, and does not change the current milestone plan or the next bounded task.
+One focused release security round (active plan item 9): one existing reviewer's read-only pass, not nine separate tasks, after the v0.1 feature items 1–8 and before the final gate (item 10). Status: NOT STARTED / planned. Documenting this stage does not authorize starting it, is not execution or acceptance, and does not change the current milestone plan or the next bounded task.
 
 This stage is not a new feature, not post-v0.1 scope, not a public-exposure or authentication change, and not continuous security infrastructure. The current private Tailscale / no-auth assumption (PRODUCT_SPEC section 24) and the security rules of sections 49–50 remain unchanged. No recurring telemetry, dashboards, metrics, or recurring audit infrastructure is introduced.
 
@@ -2397,23 +2417,23 @@ Audit execution model:
 
 - The initial audit is read-only and performed by an existing reviewer role (see `docs/WORKFLOW.md`); no new agent/role is added and the auditor applies no fixes directly.
 - Every finding includes evidence, affected boundary/files, realistic preconditions and impact, severity rationale, and a proposed mitigation.
-- An auditor severity label alone is not acceptance: meaningful findings are triaged by an independent reviewer from a different model family than the auditor before any implementation.
+- An auditor severity label alone is not acceptance: a second model (different family) verifies only the meaningful findings, with evidence, before any implementation.
 - False positives are explicitly dismissed with evidence, never silently dropped.
-- Validated fixes are separate bounded implementation tasks under the normal routing and cross-family review of `docs/WORKFLOW.md`.
-- Finding dispositions are recorded, and unresolved validated Critical/Important findings are v0.1 release blockers. Fixes receive targeted re-review where the fix requires it; this is not a continuous or per-task audit.
-- Full normal gates are not run when the audit starts; the fresh configured full gates (section 55) run once at the final release gate. Use the existing configured quality gates; do not invent new validators.
+- A verified Critical/Important finding is a v0.1 release blocker; each is fixed in a separate scoped task under the normal routing and cross-family review of `docs/WORKFLOW.md`, then the final normal gate runs.
+- Finding dispositions are recorded. This is not a continuous or per-task audit.
+- Full normal gates are not run when the audit starts; the fresh configured full gates (section 55) run once at the final release gate. Use the existing configured quality gates; do not invent new validators, new infrastructure, exploit work or operational security tests.
 
-Bounded workstreams:
+v0.1 checks (one pass over these areas, not separate tasks):
 
-1. Ingress/trust boundaries: URL input handling; SSRF and redirects (section 50); yt-dlp source validation; `variant_id` / collection item IDs; raw path and raw CLI argument boundaries.
-2. Subprocess: `create_subprocess_exec` / shell boundary; yt-dlp/FFmpeg argument construction; process groups; cancellation/termination; environment; staging/temp handling.
-3. Filesystem: path traversal; symlink/inode/TOCTOU; placement/finalization ordering (section 51); conflict behaviour; Delete File; hardlink/same-file handling; Library containment.
-4. State/DB/concurrency: transactions/CAS; retry/cancel races; restart recovery; stale callbacks/attempt ownership; duplicate finalization; collection parent/child consistency.
-5. Authorization/ownership: owner scoping; cross-job/library access; object ownership; current Tailscale/no-auth assumptions; future-auth boundary risks (documented only; no authentication implementation).
-6. Frontend/API: forged IDs; malformed/oversized payloads; backend validation; SSE exposure; error and information leakage.
-7. Dependencies/container/deployment: Docker runtime/user; mounts; secrets/config; exposed ports; reverse proxy; dependency/runtime vulnerability exposure.
-8. Abuse/resource exhaustion: large/pathological collections/media; disk exhaustion; queue flooding/concurrency; oversized metadata/artwork; long-running subprocesses; restart/resource loops.
-9. Final security regression and release gate: validate resolved findings; targeted security regressions; fresh configured normal full gates; deployment/release security checklist.
+1. URL/redirects, source/ID handling, raw path and argument limits (section 50).
+2. Subprocess without a shell: arguments, cancellation/shutdown, staging.
+3. Containment, symlink/hardlink, conflicts, safe delete and publishing (section 51).
+4. Retry/Cancel/cleanup, restart, double publishing.
+5. Real private-network access and the existing object boundaries (owner scoping; Tailscale/no-auth assumption unchanged).
+6. Server-side validation; SSE and error responses leaking sensitive data.
+7. Real Compose: ports, mounts, secrets, container user, known serious dependency risks.
+8. Collection/queue limits, timeouts, safe failure on a full disk.
+9. Targeted regression, fresh full gate and real Compose acceptance (item 10).
 
 Do not implement all milestones in one agent task.
 

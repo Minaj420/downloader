@@ -10,7 +10,7 @@ This repository is developed with AI coding agents.
   Before each milestone, obtain Opus advice or explicit user approval to proceed without it.
   Important architecture decisions go to Opus first; product choices go to the user.
   Lead exposes Opus recommendation/reason/alternatives-risk and its own decision.
-  GPT reviewer independently reviews both Sonnet and Opus code. One writer, at most one review fix round; no quota/auth retry
+  GPT reviewer independently reviews both Sonnet and Opus code. One writer, at most one review fix round (doc-only tasks: at most two, see WORKFLOW); no quota/auth retry
   or silent model fallback. CLI permissions are not an OS sandbox (see WORKFLOW).
   Lead announces “Uygulayıcı: Sonnet/Opus; gerekçe...” at each task start. Sonnet handles
   bounded ordinary reasoning; choose Opus upfront for hard/ambiguous work, high-impact

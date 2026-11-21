@@ -89,6 +89,7 @@ WATCH komutunu basar; araç çıktısı gecikebildiğinden anında görünürlü
 İkinci terminalde salt-okunur izleyici kapanınca iş sürer, lead'in çağrısı açık kalır.
 Native attach doğrulandı deme. Sonnet ve Opus kodunu GPT `reviewer` bağımsız inceler. En fazla bir
 düzeltme turunu sen yönet; mümkünse aynı rolde `--resume <claude-session-id>` kullan.
+İstisna: yalnız belge (.md) değişikliği içeren, kod/test/config dosyalarına dokunmayan ve kapsam içi işlerde ikinci düzeltme turunu kullanıcıya sormadan açabilirsin; kod işlerinde tek tur kuralı aynen geçerli.
 Adapter kilit/tur deposu tutmaz; tek yazıcıyı sen koru. Kimlik/log bilgilerini STATE'e koyma.
 İlk raporun `requested_model` değerine bak; resume'da aynı modeli `--model sonnet`
 veya `--model opus` ile AÇIK yeniden ilet. Sessiz family geçişi yoktur. Requested ve
