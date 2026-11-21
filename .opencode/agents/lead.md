@@ -1,7 +1,7 @@
 ---
 description: Tek orkestratör — Opus danışman, Sonnet/Opus uygulayıcı bridge, GPT review, Luna mekanik/checker
 mode: primary
-model: openai/gpt-6.1-sol
+model: openai/gpt-6.2-sol
 steps: 30
 permission:
   edit:

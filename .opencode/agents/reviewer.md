@@ -1,7 +1,7 @@
 ---
 description: Değişiklikleri bağımsız ve salt-okunur inceler
 mode: all
-model: openai/gpt-6.1-sol
+model: openai/gpt-6.2-sol
 permission:
   edit: deny
   task: deny

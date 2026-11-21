@@ -1,7 +1,7 @@
 ---
 description: OBSOLETE — GPT uygulayıcı devre dışı; lead Claude Code Sonnet/Opus bridge kullanır
 mode: subagent
-model: openai/gpt-6.1-sol
+model: openai/gpt-6.2-sol
 disable: true
 permission:
   edit: deny
