@@ -6,13 +6,14 @@ Runner-level rows are written directly as controlled records.
 """
 
 import asyncio
+import os
 import re
 import sqlite3
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Never, cast
 
 import pytest
 from fastapi.testclient import TestClient
@@ -26,6 +27,7 @@ from app.integrations.ffmpeg import (
     FFmpegError,
     FFmpegFailureCause,
     FFmpegFailureKind,
+    VideoDimensions,
 )
 from app.models.analysis import AnalysisSession
 from app.models.jobs import ActivityEvent, DownloadJob
@@ -84,6 +86,22 @@ class StubMedia:
         self.convert_error: BaseException | None = None
         self.in_convert: Callable[[], None] | None = None
         self.download_ext = "mp4"
+        self.dimensions: VideoDimensions | None = None
+        self.probed: list[Path] = []
+        self.probe_error: BaseException | None = None
+        self.on_probe: Callable[[], None] | None = None
+
+    async def probe_video_dimensions(
+        self, media_path: Path, on_process_started: Any = None,
+    ) -> VideoDimensions | None:
+        self.calls.append("probe")
+        self.probed.append(media_path)
+        assert media_path.is_file()
+        if self.on_probe is not None:
+            self.on_probe()
+        if self.probe_error is not None:
+            raise self.probe_error
+        return self.dimensions
 
     async def download(self, **kwargs: Any) -> list[str]:
         path = Path(kwargs["output_template"].replace("%(ext)s", self.download_ext))
@@ -273,17 +291,23 @@ async def test_mp4_muxed_conversion_publishes_video_with_plan_catalog(
     bitrate: float | None,
 ) -> None:
     formats = [fmt("m", MUXED, video=video, audio=audio, bitrate=1500.0)]
-    run, facts = await execute_run(tmp_path, formats, "m", "mp4")
+    run, facts = await execute_run(
+        tmp_path, formats, "m", "mp4", prepare=measured(VideoDimensions(1080, 1920)),
+    )
     record = facts.record
     assert (record.status, record.final_path) == ("completed", f"video/{TITLE}.mp4")
     assert (run.library / "video" / f"{TITLE}.mp4").read_bytes() == b"converted"
-    assert run.media.calls == ["download:raw-m", "convert:mp4"]
+    assert run.media.calls == ["download:raw-m", "convert:mp4", "probe"]
     assert_converted(run.media, "media.mp4", "mp4", copy_audio, copy_video)
+    # The measured staged output (the converted file) is probed, before Finalizing.
+    [probed] = run.media.probed
+    assert is_fresh(probed.name, "converted", "mp4")
     assert facts.messages == [
         "Download started", "Converting to MP4", "Finalizing", "Saved to App Library"]
     [item] = facts.items
     assert (item.media_type, item.format, item.codec, item.bitrate) == (
         "video", "mp4", "h264", bitrate)
+    assert item.resolution == "1080p"  # measured short edge, not the analysis label
 
 
 @pytest.mark.anyio
@@ -302,7 +326,8 @@ async def test_mp4_video_only_merge_then_convert_with_single_post_processing_ste
     run, facts = await execute_run(tmp_path, formats, "v", "mp4")
     assert (facts.record.status, facts.record.final_path) == (
         "completed", f"video/{TITLE}.mp4")
-    assert run.media.calls == ["download:raw-v", "download:raw-a", "merge", "convert:mp4"]
+    assert run.media.calls == [
+        "download:raw-v", "download:raw-a", "merge", "convert:mp4", "probe"]
     [merged] = run.media.merges
     assert is_fresh(merged, "merged", merged_ext), merged
     # The conversion reads exactly the file the merge produced.
@@ -331,7 +356,7 @@ async def test_mp4_stored_h264_profile_drives_video_copy_and_catalog(
         tmp_path, [high10], "m", "mp4", legacy_formats=legacy_formats,
     )
     assert (facts.record.status, facts.record.final_path) == ("completed", f"video/{TITLE}.mp4")
-    assert run.media.calls == ["download:raw-m", "convert:mp4"]
+    assert run.media.calls == ["download:raw-m", "convert:mp4", "probe"]
     assert_converted(run.media, "media.mp4", "mp4", True, copy_video)
     [item] = facts.items
     assert (item.media_type, item.format, item.codec, item.bitrate) == (
@@ -364,13 +389,134 @@ async def test_original_merge_keeps_merge_only_message_and_source_codec(
     ]
     run, facts = await execute_run(tmp_path, formats, "v", None)
     assert facts.record.status == "completed"
-    assert run.media.calls == ["download:raw-v", "download:raw-a", "merge"]
+    assert run.media.calls == ["download:raw-v", "download:raw-a", "merge", "probe"]
     assert facts.messages == [
         "Download started", "Post-processing (merging video and audio)",
         "Finalizing", "Saved to App Library",
     ]
     [item] = facts.items
     assert (item.codec, item.bitrate) == ("vp9", 2800.0)
+    assert item.resolution is None  # unknown measurement: no analysis-label fallback
+
+
+# --- Measured resolution (M6-Q finding 3a) ----------------------------------------------
+
+
+def measured(
+    dimensions: VideoDimensions | None, **attributes: Any,
+) -> Callable[[SingleRun], None]:
+    def prepare(run: SingleRun) -> None:
+        run.media.dimensions = dimensions
+        for name, value in attributes.items():
+            setattr(run.media, name, value)
+
+    return prepare
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("dimensions, label", [
+    (VideoDimensions(1920, 1080), "1080p"),
+    (VideoDimensions(1080, 1920), "1080p"),
+    (VideoDimensions(640, 360), "360p"),
+    (None, None),
+])
+async def test_original_video_resolution_is_measured_short_edge_or_unknown(
+    tmp_path: Path, dimensions: VideoDimensions | None, label: str | None,
+) -> None:
+    formats = [fmt("m", MUXED, video="h264", audio="aac")]
+    formats[0] = formats[0].model_copy(update={"resolution_label": "720p"})
+    run, facts = await execute_run(
+        tmp_path, formats, "m", None, prepare=measured(dimensions),
+    )
+    assert facts.record.status == "completed"
+    assert run.media.calls == ["download:raw-m", "probe"]
+    [probed] = run.media.probed
+    assert probed.name == "media.mp4"
+    [item] = facts.items
+    assert item.resolution == label
+    assert facts.messages == ["Download started", "Finalizing", "Saved to App Library"]
+
+
+@pytest.mark.anyio
+async def test_skipped_existing_video_gets_no_measured_resolution(tmp_path: Path) -> None:
+    def prepare(run: SingleRun) -> None:
+        measured(VideoDimensions(1920, 1080))(run)
+        (run.library / "video").mkdir(parents=True, exist_ok=True)
+        (run.library / "video" / f"{TITLE}.mp4").write_bytes(b"existing")
+
+    formats = [fmt("m", MUXED, video="h264", audio="aac")]
+    run, facts = await execute_run(tmp_path, formats, "m", None, prepare=prepare)
+    assert facts.record.status == "completed"
+    assert (run.library / "video" / f"{TITLE}.mp4").read_bytes() == b"existing"
+    [item] = facts.items
+    assert item.resolution is None  # the kept file was never measured
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("kind", ["symlink", "fifo"])
+async def test_unsafe_staged_output_is_never_probed(tmp_path: Path, kind: str) -> None:
+    formats = [fmt("m", MUXED, video="h264", audio="aac")]
+    outside = tmp_path / "outside.mp4"
+    outside.write_bytes(b"outside")
+
+    def prepare(run: SingleRun) -> None:
+        measured(VideoDimensions(1920, 1080))(run)
+        original = run.media.download
+
+        async def download(**kwargs: Any) -> list[str]:
+            [produced] = await original(**kwargs)
+            Path(produced).unlink()
+            if kind == "symlink":
+                Path(produced).symlink_to(outside)
+            else:
+                os.mkfifo(produced)
+            return [produced]
+
+        async def refuse(*args: Any, **kwargs: Any) -> Never:
+            raise OSError("placement is not under test")  # a FIFO must never be read
+
+        run.media.download = download  # type: ignore[method-assign]
+        run.storage.place_final = refuse  # type: ignore[method-assign]
+
+    run, facts = await execute_run(tmp_path, formats, "m", None, prepare=prepare)
+    assert run.media.probed == [] and "probe" not in run.media.calls
+    assert facts.record.status == "failed"  # placement behaviour/errors are unchanged
+    assert facts.items == [] and outside.read_bytes() == b"outside"
+
+
+@pytest.mark.anyio
+async def test_cancel_during_probe_is_respected_and_keeps_staged_media(
+    tmp_path: Path,
+) -> None:
+    formats = [fmt("m", MUXED, video="h264", audio="aac")]
+
+    def prepare(run: SingleRun) -> None:
+        measured(VideoDimensions(1920, 1080), on_probe=run.cancel.set)(run)
+
+    run, facts = await execute_run(tmp_path, formats, "m", None, prepare=prepare)
+    assert (facts.record.status, facts.record.error_code) == ("cancelled", "cancelled")
+    assert "Finalizing" not in facts.messages
+    assert_nothing_published(run, facts)
+    assert (run.staging / "job" / "media.mp4").read_bytes() == b"source"
+
+
+@pytest.mark.anyio
+async def test_probe_cancellation_error_propagates_and_keeps_staged_media(
+    tmp_path: Path,
+) -> None:
+    formats = [fmt("m", MUXED, video="h264", audio="aac")]
+    run = SingleRun(tmp_path)
+    try:
+        await run.seed(formats, "m", None)
+        run.media.probe_error = asyncio.CancelledError()
+        with pytest.raises(asyncio.CancelledError):
+            await run.run()
+        facts = await run.facts()
+    finally:
+        await run.engine.dispose()
+    assert facts.record.error_code == "interrupted_by_restart"
+    assert_nothing_published(run, facts)
+    assert (run.staging / "job" / "media.mp4").read_bytes() == b"source"
 
 
 # --- Original WebM/Opus remux (M6.5b) ----------------------------------------------

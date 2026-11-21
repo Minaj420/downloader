@@ -13,7 +13,8 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - Onaylı, belgeye aktarılacak: videodan ses çıkarma yok; ses doğrudan ses akışından.
 ## Sıradaki iş
 - Onaylı v0.1 sırası ve v0.2 ertelemeleri: ARCHITECTURE §59 ve PRODUCT_SPEC.
-- Q2 kapandı; sıradaki bulgu 3, koleksiyon kalite tavanı aynı işte veya hemen ardından.
+- Bulgu 3a: bağımsız review'da must-fix yok; 2026-11-22 Fedora hedefli 817 PASS/1 SKIP, Ruff/mypy temiz. Kullanıcı Compose smoke bekleniyor; göreli girdi test kapsamı should-fix.
+- Sıra: 3a Compose smoke → 3b-1 → 3b-2 + 3c → Compose smoke → koleksiyon kalite tavanı (dikey videoda kısa kenar/filtresi).
 - Bekleyen toplu UI Compose smoke: Queue'da active/history; gezinme/F5 sonrası sunucudan iş erişimi.
 - Smoke: uygun Cancel/Retry ve çift tık/pending.
 - Smoke: geçmiş iş detay/Activity, collection öğeleri; Load more ve yeniden bağlantıda güncellik.
@@ -36,11 +37,11 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - New Download adı v0.1'de kalır; History satır içi detay M6.5 UI'a alındı. K2 v0.2.
 - M6.5: UI hata ayrıntısı+maskeleme önerisi, failed0%/iç kod/satırlar arası boşluk; rozet/SSE ve N ağ hatasında durma ARCH §59.
 - network_error/Deno bağı kanıtsız. Analiz +25/hepsi v0.2.
-- Fedora Python 3.14 eski üç backend failure (os.close monkeypatch/pidfd) macOS gate ile doğrulanmadı.
+- Fedora Python 3.14: child storage pidfd testi düzeltme diff'inde geçti; full gate çalışmadı.
 - should-fix: child Skip Existing Activity uyarısı yok; ayrı lifecycle/transaction işi.
 - should-fix: modelsiz implement resume CLI hatasının belgelenmesi ve izleyici partial-line
   testinin deterministikliği açık; restart/model reload ve farklı-rol resume izolasyonu kanıtsız.
-- should-fix: lead.md eski bootstrap referansı; izin-devam dar atfı kullanıcı sync/restart bekler.
+- should-fix: lead.md eski bootstrap referansı.
 - should-fix: geniş git diff/log izinleri --output seçeneğini teknik olarak dışlamıyor;
   yalnız salt-okunur biçimler kullanılır, config bakımı ayrı. gh PR wildcard'ları da repo/hedef/
   body-file sınırını sağlamaz; açık repo/base/head ve düz metin body kullanılmalı.
@@ -52,7 +53,6 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - Network script/Q19 son tek-satır/tekrarsız/detail≤500 PASS; eski audio restart BLOCKED sonucu aşıldı.
 - 2026-11-20 kullanıcı Compose video/Original restart PASS20s: failed, Exit0/OOMyok, shutdown, retryable, recovery.
 - 2026-11-17 kullanıcı Fedora Compose Q18 PASS: single/collection5.5s, idle0.8s, Exit0/OOMfalse, exec doğrulandı.
-- Single restart→Failed/Retry ~%4'ten devam PASS; bu kullanıcı Cancel→Retry değil, Q2 hâlâ bekler.
 - Mix4 sabit seçim/completed korundu, auto-resume yok, Retry46→48; MKV VP9/Opus200s tam decode kullanıcı PASS.
 - Host RPM Fusion FFmpeg smoke 23 PASS/0 SKIP; container libx264 ayrıca görüldü. Sonraki skip'i bildir.
 - 2026-10-30 macOS full gate tarihsel; sonraki uzlaştırma kaynak değişikliğiyle bayat.

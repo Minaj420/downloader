@@ -16,6 +16,7 @@ from app.integrations.ffmpeg import (
     FFmpegFailureCause,
     FFmpegFailureKind,
     FFmpegProcessor,
+    VideoDimensions,
 )
 from app.integrations.ytdlp import DownloadProgress, YtDlpAnalyzer, YtDlpDownloader
 from app.models.jobs import ActivityEvent, DownloadJob, JobItem
@@ -57,6 +58,20 @@ class Adapters(YtDlpAnalyzer, YtDlpDownloader, FFmpegProcessor):
         self.conversions: list[tuple[str, str, str, bool, bool]] = []
         self.download_ext = "mp4"
         self.convert_error: BaseException | None = None
+        self.dimensions: VideoDimensions | None = None
+        self.probed: list[Path] = []
+
+    async def probe_video_dimensions(
+        self, media_path: Path, on_process_started: Any = None,
+    ) -> VideoDimensions | None:
+        # Fake probe: never runs ffprobe; the staged file must exist untouched.
+        self.probed.append(media_path)
+        assert media_path.is_file()
+        on_process_started(cast(asyncio.subprocess.Process, self))
+        # Only recorded in ``calls`` when a test cancels/blocks at this step.
+        if "dimensions" in (self.cancel_at, self.block):
+            await self.step("dimensions")
+        return self.dimensions
 
     async def step(self, name: str) -> None:
         self.calls.append(name)
@@ -440,7 +455,7 @@ async def test_ineligible_skips_before_probe(tmp_path: Path, mismatch: str) -> N
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("step", ["probe", "high", "merge"])
+@pytest.mark.parametrize("step", ["probe", "high", "merge", "dimensions"])
 @pytest.mark.parametrize("origin", ["parent", "caller"])
 async def test_blocked_step_parent_cancel_and_double_cancel_drain(
     tmp_path: Path, step: str, origin: str,
@@ -480,12 +495,14 @@ async def test_blocked_step_parent_cancel_and_double_cancel_drain(
 @pytest.mark.parametrize("at,expected", [("probe", ["probe"]),
     ("high", ["probe", "high"]), ("audio", ["probe", "high", "audio"]),
     ("merge", ["probe", "high", "audio", "merge"]),
+    ("dimensions", ["probe", "high", "audio", "merge", "dimensions"]),
     ("registration", ["probe", "high"])])
 async def test_cancel_blocks_next_step(tmp_path: Path, at: str, expected: list[str]) -> None:
     h = Harness(tmp_path)
     try:
         await h.seed()
         h.adapters.cancel_at = at
+        h.adapters.dimensions = VideoDimensions(1920, 1080)
         if at == "registration":
             h.adapters.returncode = None
         with pytest.raises(asyncio.CancelledError):
@@ -493,7 +510,97 @@ async def test_cancel_blocks_next_step(tmp_path: Path, at: str, expected: list[s
         assert h.adapters.calls == expected
         if at == "registration":
             assert h.adapters.killed
+        if at == "dimensions":
+            # Cancelled measurement never discards the staged media nor publishes.
+            [probed] = h.adapters.probed
+            assert probed.is_file() and probed.parent == tmp_path / "staging" / "child-2"
+            assert not (tmp_path / "library").exists() or not list(
+                (tmp_path / "library").rglob("*.mp4"))
         assert (await h.facts())[2] == 0
+        assert (await h.facts())[5] is None
+    finally:
+        await h.engine.dispose()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("dimensions,label", [
+    (VideoDimensions(1920, 1080), "1080p"),
+    (VideoDimensions(1080, 1920), "1080p"),
+    (VideoDimensions(1280, 720), "720p"),
+    (None, None),
+])
+async def test_video_child_catalog_resolution_is_measured_short_edge_or_unknown(
+    tmp_path: Path, dimensions: VideoDimensions | None, label: str | None,
+) -> None:
+    h = Harness(tmp_path)
+    try:
+        await h.seed("video")
+        h.adapters.dimensions = dimensions
+        assert await h.run() == ChildResult.COMPLETED
+        [probed] = h.adapters.probed
+        assert probed.name.startswith("merged-")  # the staged final output
+        item = (await h.facts())[5]
+        assert item is not None and item.resolution == label
+    finally:
+        await h.engine.dispose()
+
+
+@pytest.mark.anyio
+async def test_video_child_converted_output_is_the_measured_file(tmp_path: Path) -> None:
+    h = Harness(tmp_path)
+    try:
+        await h.seed("video", 360, output="mp4")
+        h.adapters.dimensions = VideoDimensions(640, 360)
+        assert await h.run() == ChildResult.COMPLETED
+        [probed] = h.adapters.probed
+        assert probed.name.startswith("converted-") and probed.suffix == ".mp4"
+        item = (await h.facts())[5]
+        assert item is not None and item.resolution == "360p"
+    finally:
+        await h.engine.dispose()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("kind", ["symlink", "fifo"])
+async def test_unsafe_staged_child_output_is_never_probed(tmp_path: Path, kind: str) -> None:
+    h = Harness(tmp_path)
+    outside = tmp_path / "outside.mp4"
+    outside.write_bytes(b"outside")
+    try:
+        await h.seed("video", 360)  # muxed: the download is the final output
+        h.adapters.dimensions = VideoDimensions(1920, 1080)
+        original = h.adapters.download
+
+        async def download(**kwargs: Any) -> list[str]:
+            [produced] = await original(**kwargs)
+            Path(produced).unlink()
+            if kind == "symlink":
+                Path(produced).symlink_to(outside)
+            else:
+                os.mkfifo(produced)
+            return [produced]
+
+        h.adapters.download = download  # type: ignore[method-assign]
+        # Placement keeps its own typed rejection (mapped to a child failure).
+        with pytest.raises(JobError):
+            await h.run()
+        assert h.adapters.probed == []
+        assert outside.read_bytes() == b"outside"
+        assert (await h.facts())[5] is None
+    finally:
+        await h.engine.dispose()
+
+
+@pytest.mark.anyio
+async def test_audio_child_is_never_probed(tmp_path: Path) -> None:
+    h = Harness(tmp_path)
+    try:
+        await h.seed("audio")
+        h.adapters.dimensions = VideoDimensions(1920, 1080)
+        assert await h.run() == ChildResult.COMPLETED
+        assert h.adapters.probed == []
+        item = (await h.facts())[5]
+        assert item is not None and item.resolution is None
     finally:
         await h.engine.dispose()
 

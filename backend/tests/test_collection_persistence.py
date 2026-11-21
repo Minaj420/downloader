@@ -12,6 +12,7 @@ from app.domain.actors import Actor
 from app.domain.analysis import MediaFormatKind, NormalizedFormat
 from app.domain.jobs import JobError, JobErrorCode, JobStatus
 from app.domain.library import DeleteMediaFileOutcome
+from app.integrations.ffmpeg import VideoDimensions
 from app.models.jobs import ActivityEvent, DownloadJob, JobItem
 from app.models.library import LibraryItem, MediaFile
 from app.repositories import jobs
@@ -610,6 +611,46 @@ def test_completion_catalog_codec_bitrate_follow_output_plan(
                 assert (entry.format, entry.media_type, entry.duration) == ("opus", "audio", 12.5)
                 record = await session.get(DownloadJob, "parent")
                 assert record is not None and record.completed_items == 1
+        finally:
+            await engine.dispose()
+    asyncio.run(scenario())
+
+
+VIDEO_SELECTED = NormalizedFormat(
+    variant_id="native-video", format_id="22", kind=MediaFormatKind.MUXED,
+    video_codec="h264", audio_codec="aac", resolution_label="720p",
+)
+
+
+@pytest.mark.parametrize("selected,dimensions,skipped,expected", [
+    (VIDEO_SELECTED, VideoDimensions(1920, 1080), False, "1080p"),
+    (VIDEO_SELECTED, VideoDimensions(1080, 1920), False, "1080p"),
+    (VIDEO_SELECTED, None, False, None),  # unknown: never the analysis label
+    (VIDEO_SELECTED, VideoDimensions(1920, 1080), True, None),  # kept file: not measured
+    (SELECTED, VideoDimensions(1920, 1080), False, None),  # audio never gets video facts
+])
+def test_completion_catalog_resolution_is_measured_short_edge_only(
+    tmp_path: Path, selected: NormalizedFormat, dimensions: VideoDimensions | None,
+    skipped: bool, expected: str | None,
+) -> None:
+    async def scenario() -> None:
+        engine, sessions = factory(tmp_path)
+        storage, placement = await placed(tmp_path)
+        try:
+            async with sessions() as session:
+                await jobs.stage_collection_job(
+                    session, parent(status="analyzing"), [child(2, status="finalizing")],
+                    owner_id="owner",
+                )
+                await session.commit()
+            async with sessions() as session:
+                assert await complete(session, storage,
+                                      replace(placement, skipped_existing=skipped),
+                                      selected=selected, dimensions=dimensions)
+                await session.commit()
+            async with sessions() as session:
+                entry = await session.get(LibraryItem, "child-2")
+                assert entry is not None and entry.resolution == expected
         finally:
             await engine.dispose()
     asyncio.run(scenario())

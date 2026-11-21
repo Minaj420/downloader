@@ -137,6 +137,138 @@ def test_nonregular_or_missing_rejected(
     assert not list((storage.library_root / "video").iterdir())
 
 
+@pytest.mark.parametrize("kind", [
+    "regular", "nested", "symlink_leaf", "symlink_parent", "symlink_child", "fifo",
+    "directory", "missing", "sibling", "outside", "traversal",
+])
+def test_staged_regular_file_precheck_is_read_only_and_fail_closed(
+    storage: StorageService, tmp_path: Path, kind: str,
+) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "output.mp4").write_bytes(b"outside")
+    sibling = storage.job_staging_dir("sibling") / "output.mp4"
+    sibling.write_bytes(b"sibling")
+    child = storage.job_staging_dir("child")
+    source = child / "output.mp4"
+    if kind in {"regular", "nested"}:
+        if kind == "nested":
+            (child / "nested").mkdir()
+            source = child / "nested" / "output.mp4"
+        source.write_bytes(b"child content")
+    elif kind == "symlink_leaf":
+        source.symlink_to(outside / "output.mp4")
+    elif kind == "symlink_parent":
+        (child / "nested").symlink_to(outside, target_is_directory=True)
+        source = child / "nested" / "output.mp4"
+    elif kind == "symlink_child":
+        child.rmdir()
+        child.symlink_to(outside, target_is_directory=True)
+    elif kind == "fifo":
+        os.mkfifo(source)  # must not block the precheck
+    elif kind == "directory":
+        source.mkdir()
+    elif kind == "sibling":
+        source = sibling
+    elif kind == "outside":
+        source = outside / "output.mp4"
+    elif kind == "traversal":
+        source = child / ".." / "sibling" / "output.mp4"
+    before = sorted(p.name for p in storage.library_root.rglob("*"))
+    assert storage.is_staged_regular_file("child", source) is (kind in {"regular", "nested"})
+    assert (outside / "output.mp4").read_bytes() == b"outside"
+    assert sibling.read_bytes() == b"sibling"
+    assert sorted(p.name for p in storage.library_root.rglob("*")) == before
+
+
+@pytest.mark.parametrize("kind", ["resolved", "alias", "symlink_leaf", "outside"])
+def test_staged_regular_file_precheck_under_aliased_staging_root(
+    tmp_path: Path, kind: str,
+) -> None:
+    (tmp_path / "real-staging").mkdir()
+    alias = tmp_path / "staging-alias"
+    alias.symlink_to(tmp_path / "real-staging", target_is_directory=True)
+    storage = StorageService(alias, tmp_path / "library")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "output.mp4").write_bytes(b"outside")
+    source = storage.job_staging_dir("child") / "output.mp4"  # resolved spelling
+    if kind == "symlink_leaf":
+        source.symlink_to(outside / "output.mp4")
+    else:
+        source.write_bytes(b"child content")
+    if kind == "alias":
+        source = alias / "child" / "output.mp4"
+    elif kind == "outside":
+        source = outside / "output.mp4"
+    assert storage.is_staged_regular_file("child", source) is (kind in {"resolved", "alias"})
+    assert (outside / "output.mp4").read_bytes() == b"outside"
+
+
+def test_aliased_root_placement_copies_matched_file(tmp_path: Path) -> None:
+    (tmp_path / "real-staging").mkdir()
+    alias = tmp_path / "staging-alias"
+    alias.symlink_to(tmp_path / "real-staging", target_is_directory=True)
+    storage = StorageService(alias, tmp_path / "library")
+    storage.ensure_layout()
+    storage.initialize_delete_roots()
+    source = storage.job_staging_dir("child") / "output.mp4"  # resolved spelling
+    source.write_bytes(b"child content")
+
+    result = place(storage, source)
+
+    assert result.final_path.read_bytes() == b"child content"
+    assert not source.exists()
+
+
+def test_alias_swap_after_match_fails_closed_without_touching_either_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The alias is retargeted right after the root is resolved for path
+    # matching. Placement must verify that same resolved root and refuse,
+    # never copying and unlinking the same-named file under the new target.
+    real_a, real_b = tmp_path / "real-a", tmp_path / "real-b"
+    real_a.mkdir()
+    real_b.mkdir()
+    alias = tmp_path / "staging-alias"
+    alias.symlink_to(real_a, target_is_directory=True)
+    storage = StorageService(alias, tmp_path / "library")
+    storage.ensure_layout()
+    storage.initialize_delete_roots()
+    source = storage.job_staging_dir("child") / "output.mp4"
+    source.write_bytes(b"matched")
+    decoy = real_b / "child" / "output.mp4"
+    decoy.parent.mkdir()
+    decoy.write_bytes(b"decoy")
+    original_resolve = Path.resolve
+    swapped = threading.Event()
+
+    def resolve_then_swap(self: Path, strict: bool = False) -> Path:
+        resolved = original_resolve(self, strict=strict)
+        if self == alias and not swapped.is_set():
+            swapped.set()
+            alias.unlink()
+            alias.symlink_to(real_b, target_is_directory=True)
+        return resolved
+
+    monkeypatch.setattr(Path, "resolve", resolve_then_swap)
+    with pytest.raises(StoragePathError):
+        place(storage, source)
+    monkeypatch.undo()
+
+    assert swapped.is_set()
+    assert source.read_bytes() == b"matched"
+    assert decoy.read_bytes() == b"decoy"
+    assert not list((storage.library_root / "video").iterdir())
+
+
+@pytest.mark.parametrize("key", ["", ".", "..", "../child", "a/b", "a\\b", "/child"])
+def test_staged_regular_file_precheck_rejects_invalid_keys(
+    storage: StorageService, key: str,
+) -> None:
+    assert storage.is_staged_regular_file(key, output(storage)) is False
+
+
 @pytest.mark.parametrize("swap", ["parent", "leaf", "replacement"])
 def test_swap_after_pin_never_reads_outside_or_unlinks_replacement(
     storage: StorageService, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, swap: str,
@@ -342,7 +474,8 @@ def test_rejected_output_closes_all_walk_descriptors(
 
     def tracked_close(fd: int) -> None:
         real_close(fd)
-        active.remove(fd)
+        # asyncio closes its own untracked pidfd while creating the loop.
+        active.discard(fd)
 
     monkeypatch.setattr(os, "open", tracked_open)
     monkeypatch.setattr(os, "close", tracked_close)

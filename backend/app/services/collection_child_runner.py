@@ -12,6 +12,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from math import isfinite
+from pathlib import Path
 from typing import Any
 
 from pydantic import ValidationError
@@ -43,7 +44,7 @@ from app.services.job_runner import (
     _REMUX_FALLBACK_SKIPPED,
     _YT_DLP_KIND_TO_JOB_CODE,
 )
-from app.services.prepared_media import OriginalRemux, prepare_media
+from app.services.prepared_media import OriginalRemux, measure_final_dimensions, prepare_media
 from app.services.storage_service import PlacementCancelled, StorageService
 
 logger = logging.getLogger(__name__)
@@ -290,6 +291,15 @@ class _ChildExecution:
                 before_merge=before_merge, child_output=True, output=output,
                 original_remux=OriginalRemux(before_merge, record_remux_fallback),
             )
+            # Best-effort read-only measurement of the staged video; audio is
+            # never probed. Cancellation propagates; the staged file is untouched.
+            dimensions = None
+            if plan.selected.kind != "audio_only":
+                dimensions = await measure_final_dimensions(
+                    Path(media), storage=self.deps.storage, staging_key=child.id,
+                    ffmpeg=self.deps.ffmpeg, check_cancelled=self.check,
+                    on_process_started=self.register,
+                )
             await self.transition(JobStatus.FINALIZING)
             # Storage owns the shielded thread drain. Signal cancellation through
             # its predicate, rather than racing task.cancel() against that drain.
@@ -320,7 +330,7 @@ class _ChildExecution:
                         session, self.deps.storage, job_id=self.job_id,
                         owner_id=self.owner_id, child_id=child.id, selected=plan.selected,
                         placement=placement, duration_seconds=duration_seconds,
-                        platform=platform, plan=conversion,
+                        platform=platform, plan=conversion, dimensions=dimensions,
                     ):
                         raise _LostClaim
                     warning = None

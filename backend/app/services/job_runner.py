@@ -38,6 +38,7 @@ from app.integrations.ffmpeg import (
     FFmpegError,
     FFmpegFailureKind,
     FFmpegProcessor,
+    VideoDimensions,
 )
 from app.integrations.ytdlp import (
     DownloadProgress,
@@ -58,7 +59,7 @@ from app.services.conversion_plan import (
 from app.services.event_bus import EventBus
 from app.services.job_mapping import job_to_dto
 from app.services.library_service import stage_media_catalog_reference
-from app.services.prepared_media import OriginalRemux, prepare_media
+from app.services.prepared_media import OriginalRemux, measure_final_dimensions, prepare_media
 from app.services.storage_service import (
     MediaFileMissingError,
     MediaFileNotRegularError,
@@ -158,6 +159,7 @@ def build_app_library_catalog(
     selected: NormalizedFormat,
     placement: PlacementResult,
     plan: ConversionPlan | None = None,
+    dimensions: VideoDimensions | None = None,
 ) -> tuple[LibraryItem, MediaFile]:
     """Derive the Library catalog rows for a finalized App Library download.
 
@@ -172,9 +174,17 @@ def build_app_library_catalog(
     For a converted download the codec comes from the plan and the bitrate
     only survives a pure stream copy; when an existing file was kept
     (Skip Existing) its content is unknown, so both stay null.
+
+    A video's resolution is the measured short-edge label of the staged
+    output (``dimensions``), never the analysis label; unknown or a kept
+    existing file (never measured) stays null.
     """
     now = datetime.now(UTC)
     audio = selected.kind == "audio_only"
+    if audio:
+        resolution = selected.resolution_label
+    else:
+        resolution = None if placement.skipped_existing or dimensions is None else dimensions.label
     if plan is None:
         codec = selected.audio_codec if audio else selected.video_codec
         bitrate = selected.bitrate_kbps
@@ -195,7 +205,7 @@ def build_app_library_catalog(
         format=placement.final_path.suffix.lstrip(".") or None,
         codec=codec,
         bitrate=bitrate,
-        resolution=selected.resolution_label,
+        resolution=resolution,
         duration=normalized.duration_seconds,
         created_at=now,
     )
@@ -384,6 +394,17 @@ class _JobExecution:
             original_remux=OriginalRemux(before_remux, record_remux_fallback),
         )
 
+        # Best-effort read-only measurement of the staged video; audio is never
+        # probed. Cancellation propagates; the staged file is untouched.
+        dimensions = None
+        if selected.kind != "audio_only":
+            dimensions = await measure_final_dimensions(
+                media_file, storage=self._deps.storage, staging_key=self._job_id,
+                ffmpeg=self._deps.ffmpeg,
+                check_cancelled=self._check_cancelled,
+                on_process_started=self._register_process,
+            )
+
         await self._check_cancelled()
         await self._set_status(JobStatus.FINALIZING, "Finalizing")
         media_kind = "audio" if selected.kind == "audio_only" else "video"
@@ -404,7 +425,7 @@ class _JobExecution:
 
         await self._complete(
             record, normalized, selected, placement, plan,
-            remux_fallback=remux_fallback,
+            remux_fallback=remux_fallback, dimensions=dimensions,
         )
         self._deps.storage.remove_staging(self._job_id)
 
@@ -484,6 +505,7 @@ class _JobExecution:
         plan: ConversionPlan | None = None,
         *,
         remux_fallback: bool = False,
+        dimensions: VideoDimensions | None = None,
     ) -> None:
         """Complete the job and write its Library catalog rows atomically.
 
@@ -504,7 +526,7 @@ class _JobExecution:
         published only once the completion has committed.
         """
         item, media_file = build_app_library_catalog(
-            record, normalized, selected, placement, plan
+            record, normalized, selected, placement, plan, dimensions
         )
         async with self._deps.session_factory() as session:
             won = await job_repo.stage_job_update_if_status(

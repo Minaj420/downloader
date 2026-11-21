@@ -60,6 +60,7 @@ def app_factory(
         *,
         yt_dlp: str | None = None,
         ffmpeg: str | None = None,
+        ffprobe: str | None = None,
         concurrency: int = 2,
         analyzer_result: dict | None = None,
     ) -> TestClient:
@@ -74,10 +75,20 @@ def app_factory(
             overrides["yt_dlp_binary"] = yt_dlp
         if ffmpeg is not None:
             overrides["ffmpeg_binary"] = ffmpeg
+        if ffprobe is not None:
+            overrides["ffprobe_binary"] = ffprobe
         return TestClient(build_application(settings, analyzer, overrides))
 
     _make.binaries = binaries  # type: ignore[attr-defined]
     return _make
+
+
+def fake_ffprobe(directory: Path, stdout: str, code: int = 0) -> str:
+    """Deterministic ffprobe stand-in printing ``stdout`` (never real ffprobe)."""
+    path = directory / "ffprobe-fake"
+    path.write_text(f"#!/bin/sh\ncat <<'JSON'\n{stdout}\nJSON\nexit {code}\n")
+    path.chmod(0o755)
+    return str(path)
 
 
 def wait_for_job(
@@ -240,6 +251,7 @@ class TestLibraryCatalogCreation:
         with app_factory(
             yt_dlp=fake_ytdlp_ok(binaries),
             ffmpeg=str(binaries / "ffmpeg-missing"),
+            ffprobe=fake_ffprobe(binaries, '{"streams": [{"width": 1280, "height": 720}]}'),
         ) as client:
             analysis = create_analysis(client)
             job = create_job(client, analysis).json()
@@ -316,6 +328,45 @@ class TestLibraryCatalogCreation:
 
         assert _row_count(settings, "library_items") == 1
         assert _row_count(settings, "media_files") == 1
+
+    @pytest.mark.parametrize("probe_stdout, probe_code, expected", [
+        ('{"streams": [{"width": 1080, "height": 1920}]}', 0, "1080p"),
+        ('{"streams": []}', 0, None),
+        ('{"streams": [{"width": 1280, "height": 720}]}', 1, None),
+    ])
+    def test_video_catalog_resolution_is_measured_or_unknown_never_analysis_label(
+        self, app_factory: Any, settings: Settings,
+        probe_stdout: str, probe_code: int, expected: str | None,
+    ) -> None:
+        binaries = app_factory.binaries
+        with app_factory(
+            yt_dlp=fake_ytdlp_ok(binaries),
+            ffmpeg=str(binaries / "ffmpeg-missing"),
+            ffprobe=fake_ffprobe(binaries, probe_stdout, probe_code),
+        ) as client:
+            job = create_job(client, create_analysis(client)).json()
+            final = wait_for_job(client, job["id"], statuses={"completed", "failed"})
+
+        # A probe failure is best effort: the job still completes.
+        assert final["status"] == "completed", final
+        row = _fetch_one(settings, "SELECT resolution FROM library_items")
+        assert row is not None and row[0] == expected
+
+    def test_missing_ffprobe_is_unknown_resolution_not_job_failure(
+        self, app_factory: Any, settings: Settings
+    ) -> None:
+        binaries = app_factory.binaries
+        with app_factory(
+            yt_dlp=fake_ytdlp_ok(binaries),
+            ffmpeg=str(binaries / "ffmpeg-missing"),
+            ffprobe=str(binaries / "ffprobe-missing"),
+        ) as client:
+            job = create_job(client, create_analysis(client)).json()
+            final = wait_for_job(client, job["id"], statuses={"completed", "failed"})
+
+        assert final["status"] == "completed", final
+        row = _fetch_one(settings, "SELECT resolution FROM library_items")
+        assert row is not None and row[0] is None
 
     def test_audio_download_catalogs_audio_metadata(
         self, app_factory: Any, settings: Settings

@@ -1,5 +1,7 @@
 import asyncio
+import os
 import re
+import shutil
 from pathlib import Path
 from typing import Any, cast
 
@@ -19,7 +21,12 @@ from app.main import create_app
 from app.services.analysis_normalizer import normalize_source_formats
 from app.services.collection_profile_resolver import NativeChildPlan, resolve_native_child
 from app.services.job_runner import _JobExecution
-from app.services.prepared_media import OriginalRemux, merge_container, prepare_media
+from app.services.prepared_media import (
+    OriginalRemux,
+    measure_final_dimensions,
+    merge_container,
+    prepare_media,
+)
 from app.services.storage_service import StorageService
 from tests.fake_binaries import fake_ffmpeg_record
 
@@ -777,11 +784,278 @@ async def test_remux_hooks_leave_merge_and_explicit_output_unchanged(pipeline: P
 @pytest.mark.anyio
 async def test_production_ffmpeg_uses_configured_conversion_timeout(settings: Settings) -> None:
     assert Settings.model_fields["ffmpeg_conversion_timeout_seconds"].default == 3600.0
+    assert Settings.model_fields["ffprobe_binary"].default == "ffprobe"
     application = create_app(settings.model_copy(update={
-        "ffmpeg_timeout_seconds": 12.0, "ffmpeg_conversion_timeout_seconds": 42.0}))
+        "ffmpeg_timeout_seconds": 12.0, "ffmpeg_conversion_timeout_seconds": 42.0,
+        "ffprobe_binary": "custom-ffprobe", "ffprobe_timeout_seconds": 7.0}))
     try:
         ffmpeg = application.state.queue_manager._deps.ffmpeg
         assert ffmpeg._timeout_seconds == 12.0
         assert ffmpeg._conversion_timeout_seconds == 42.0
+        assert ffmpeg._ffprobe_binary == "custom-ffprobe"
+        assert ffmpeg._probe_timeout_seconds == 7.0
     finally:
         await application.state.engine.dispose()
+
+
+def _staged(tmp_path: Path) -> tuple[StorageService, Path]:
+    storage = StorageService(tmp_path / "staging", tmp_path / "library")
+    media = storage.job_staging_dir("job") / "final.mp4"
+    media.write_bytes(b"staged")
+    return storage, media
+
+
+def _fake_ffprobe(directory: Path, body: str) -> str:
+    path = directory / "ffprobe"
+    path.write_text(f"#!/bin/sh\n{body}\n")
+    path.chmod(0o755)
+    return str(path)
+
+
+@pytest.mark.anyio
+async def test_measure_final_dimensions_registers_process_and_drains_hook_task(
+    tmp_path: Path,
+) -> None:
+    storage, media = _staged(tmp_path)
+    binary = _fake_ffprobe(
+        tmp_path, """echo '{"streams": [{"width": 1080, "height": 1920}]}'""")
+    registered: list[asyncio.subprocess.Process] = []
+    drained: list[bool] = []
+
+    async def helper() -> None:
+        await asyncio.sleep(0.05)
+        drained.append(True)
+
+    def hook(process: asyncio.subprocess.Process) -> asyncio.Task[Any]:
+        registered.append(process)
+        return asyncio.get_running_loop().create_task(helper())
+
+    async def never_cancelled() -> None:
+        return None
+
+    result = await measure_final_dimensions(
+        media, storage=storage, staging_key="job",
+        ffmpeg=FFmpegProcessor(ffprobe_binary=binary),
+        check_cancelled=never_cancelled, on_process_started=hook,
+    )
+    assert result == (1080, 1920) and result.label == "1080p"
+    assert len(registered) == 1 and drained == [True]  # drained before returning
+    assert media.read_bytes() == b"staged"
+
+
+@pytest.mark.anyio
+async def test_measure_final_dimensions_unknown_on_probe_failure(tmp_path: Path) -> None:
+    storage, media = _staged(tmp_path)
+
+    async def never_cancelled() -> None:
+        return None
+
+    for binary in (_fake_ffprobe(tmp_path, "echo 'secret diagnostics' >&2; exit 1"),
+                   str(tmp_path / "missing-ffprobe")):
+        result = await measure_final_dimensions(
+            media, storage=storage, staging_key="job",
+            ffmpeg=FFmpegProcessor(ffprobe_binary=binary),
+            check_cancelled=never_cancelled, on_process_started=lambda process: None,
+        )
+        assert result is None
+    assert media.read_bytes() == b"staged"
+
+
+@pytest.mark.anyio
+async def test_measure_final_dimensions_cancelled_before_probe_never_spawns(
+    tmp_path: Path,
+) -> None:
+    storage, media = _staged(tmp_path)
+    spawned = tmp_path / "spawned"
+    binary = _fake_ffprobe(tmp_path, f"touch {spawned}")
+
+    async def cancelled() -> None:
+        raise JobError(JobErrorCode.CANCELLED)
+
+    with pytest.raises(JobError) as caught:
+        await measure_final_dimensions(
+            media, storage=storage, staging_key="job",
+            ffmpeg=FFmpegProcessor(ffprobe_binary=binary),
+            check_cancelled=cancelled, on_process_started=lambda process: None,
+        )
+    assert caught.value.code == JobErrorCode.CANCELLED
+    assert not spawned.exists() and media.read_bytes() == b"staged"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("kind", [
+    "symlink_leaf", "symlink_parent", "symlink_job_dir", "fifo", "directory", "missing",
+    "other_job", "outside_staging", "traversal",
+])
+async def test_measure_final_dimensions_prevalidates_staging_before_spawning(
+    tmp_path: Path, kind: str,
+) -> None:
+    storage, media = _staged(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "final.mp4").write_bytes(b"outside")
+    job_dir = media.parent
+    if kind == "symlink_leaf":
+        media.unlink()
+        media.symlink_to(outside / "final.mp4")
+        target = media
+    elif kind == "symlink_parent":
+        (job_dir / "nested").symlink_to(outside, target_is_directory=True)
+        target = job_dir / "nested" / "final.mp4"
+    elif kind == "symlink_job_dir":
+        shutil.rmtree(job_dir)
+        job_dir.symlink_to(outside, target_is_directory=True)
+        target = job_dir / "final.mp4"
+    elif kind == "fifo":
+        media.unlink()
+        os.mkfifo(media)
+        target = media
+    elif kind == "directory":
+        media.unlink()
+        media.mkdir()
+        target = media
+    elif kind == "missing":
+        media.unlink()
+        target = media
+    elif kind == "other_job":
+        target = storage.job_staging_dir("other") / "final.mp4"
+        target.write_bytes(b"other")
+    elif kind == "outside_staging":
+        target = outside / "final.mp4"
+    else:
+        target = job_dir / ".." / "other" / "final.mp4"
+    spawned = tmp_path / "spawned"
+    binary = _fake_ffprobe(
+        tmp_path, f"touch {spawned}; echo '{{\"streams\": [{{\"width\": 9, \"height\": 9}}]}}'")
+
+    async def never_cancelled() -> None:
+        return None
+
+    result = await asyncio.wait_for(measure_final_dimensions(
+        target, storage=storage, staging_key="job",
+        ffmpeg=FFmpegProcessor(ffprobe_binary=binary),
+        check_cancelled=never_cancelled, on_process_started=lambda process: None,
+    ), timeout=5)
+    assert result is None and not spawned.exists()
+    assert (outside / "final.mp4").read_bytes() == b"outside"
+
+
+def _aliased_staged(tmp_path: Path) -> tuple[StorageService, Path, Path]:
+    # Configured staging root is a symlink alias of the real directory.
+    (tmp_path / "real-staging").mkdir()
+    alias = tmp_path / "staging-alias"
+    alias.symlink_to(tmp_path / "real-staging", target_is_directory=True)
+    storage = StorageService(alias, tmp_path / "library")
+    media = storage.job_staging_dir("job") / "final.mp4"  # handed out resolved
+    media.write_bytes(b"staged")
+    return storage, media, alias
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("spelling", ["resolved", "alias"])
+async def test_measure_final_dimensions_works_under_aliased_staging_root(
+    tmp_path: Path, spelling: str,
+) -> None:
+    storage, media, alias = _aliased_staged(tmp_path)
+    assert media.parent.parent == (tmp_path / "real-staging").resolve()
+    target = media if spelling == "resolved" else alias / "job" / "final.mp4"
+    binary = _fake_ffprobe(tmp_path, """echo '{"streams": [{"width": 1920, "height": 1080}]}'""")
+
+    async def never_cancelled() -> None:
+        return None
+
+    result = await measure_final_dimensions(
+        target, storage=storage, staging_key="job",
+        ffmpeg=FFmpegProcessor(ffprobe_binary=binary),
+        check_cancelled=never_cancelled, on_process_started=lambda process: None,
+    )
+    assert result == (1920, 1080) and result.label == "1080p"
+    assert media.read_bytes() == b"staged"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("kind", ["symlink_leaf", "symlink_job_dir", "outside_staging"])
+async def test_measure_final_dimensions_aliased_root_still_rejects_outside(
+    tmp_path: Path, kind: str,
+) -> None:
+    storage, media, _ = _aliased_staged(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "final.mp4").write_bytes(b"outside")
+    target = media
+    if kind == "symlink_leaf":
+        media.unlink()
+        media.symlink_to(outside / "final.mp4")
+    elif kind == "symlink_job_dir":
+        shutil.rmtree(media.parent)
+        media.parent.symlink_to(outside, target_is_directory=True)
+    else:
+        target = outside / "final.mp4"
+    spawned = tmp_path / "spawned"
+    binary = _fake_ffprobe(
+        tmp_path, f"touch {spawned}; echo '{{\"streams\": [{{\"width\": 9, \"height\": 9}}]}}'")
+
+    async def never_cancelled() -> None:
+        return None
+
+    result = await measure_final_dimensions(
+        target, storage=storage, staging_key="job",
+        ffmpeg=FFmpegProcessor(ffprobe_binary=binary),
+        check_cancelled=never_cancelled, on_process_started=lambda process: None,
+    )
+    assert result is None and not spawned.exists()
+    assert (outside / "final.mp4").read_bytes() == b"outside"
+
+
+@pytest.mark.anyio
+async def test_measure_final_dimensions_non_whitelisted_format_is_unknown(
+    tmp_path: Path,
+) -> None:
+    storage = StorageService(tmp_path / "staging", tmp_path / "library")
+    playlist = storage.job_staging_dir("job") / "final.m3u8"
+    playlist.write_text("#EXTM3U\n/elsewhere/video.mp4\n")
+    argv = tmp_path / "argv"
+    # Mimic ffprobe refusing a demuxer outside -format_whitelist.
+    binary = _fake_ffprobe(
+        tmp_path,
+        f"""printf '%s\\n' "$@" > {argv}
+echo "[hls] Format not on whitelist 'mov,matroska'" >&2; exit 1""")
+
+    async def never_cancelled() -> None:
+        return None
+
+    result = await measure_final_dimensions(
+        playlist, storage=storage, staging_key="job",
+        ffmpeg=FFmpegProcessor(ffprobe_binary=binary),
+        check_cancelled=never_cancelled, on_process_started=lambda process: None,
+    )
+    assert result is None  # unknown, no exception: the job carries on
+    args = argv.read_text().splitlines()
+    assert args[args.index("-format_whitelist") + 1] == "mov,matroska"
+    assert args[args.index("-protocol_whitelist") + 1] == "file"
+    assert args.index("-protocol_whitelist") < args.index("-i")
+
+
+@pytest.mark.anyio
+async def test_measure_final_dimensions_probes_relative_staging_by_absolute_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    storage = StorageService(Path("staging"), Path("library"))
+    media = storage.job_staging_dir("job") / "final.mp4"
+    media.write_bytes(b"staged")
+    argv = tmp_path / "argv"
+    binary = _fake_ffprobe(
+        tmp_path,
+        f"""printf '%s\\n' "$@" > {argv}; echo '{{"streams": [{{"width": 3, "height": 2}}]}}'""")
+
+    async def never_cancelled() -> None:
+        return None
+
+    result = await measure_final_dimensions(
+        media, storage=storage, staging_key="job",
+        ffmpeg=FFmpegProcessor(ffprobe_binary=binary),
+        check_cancelled=never_cancelled, on_process_started=lambda process: None,
+    )
+    assert result == (3, 2)
+    assert argv.read_text().splitlines()[-1] == str(media.absolute())

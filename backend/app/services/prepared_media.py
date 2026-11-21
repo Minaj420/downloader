@@ -20,6 +20,7 @@ from app.integrations.ffmpeg import (
     FFmpegFailureCause,
     FFmpegFailureKind,
     FFmpegProcessor,
+    VideoDimensions,
     output_extension,
 )
 from app.integrations.ytdlp import DownloadProgress, YtDlpDownloader
@@ -61,6 +62,54 @@ def merge_container(video: NormalizedFormat, audio: NormalizedFormat) -> str:
     if audio.audio_codec == "aac" and video.video_codec in {"h264", "hevc"}:
         return "mp4"
     return "mkv"
+
+
+async def measure_final_dimensions(
+    media: Path,
+    *,
+    storage: StorageService,
+    staging_key: str,
+    ffmpeg: FFmpegProcessor,
+    check_cancelled: Callable[[], Awaitable[None]],
+    on_process_started: Callable[[asyncio.subprocess.Process], HookTask],
+) -> VideoDimensions | None:
+    """Measure the staged final VIDEO output; ``None`` means unknown.
+
+    Read-only and best effort (adapter returns ``None`` for every probe
+    failure); cancellation propagates and the staged file is never touched.
+    Before spawning, storage must confirm ``media`` is a regular file inside
+    ``staging_key``'s own staging (no symlinks, FIFO-safe); otherwise the
+    result is unknown, no process starts, and placement later reports its
+    usual error. This precheck does not pin the inode the probe reopens.
+    Callers must not use it for audio and must keep ``prepare_media``'s result
+    for placement. Hook tasks are drained before returning, also on failure.
+    """
+    helpers: set[asyncio.Task[Any]] = set()
+
+    def register(process: asyncio.subprocess.Process) -> None:
+        task = on_process_started(process)
+        if task is not None:
+            helpers.add(task)
+
+    try:
+        await check_cancelled()
+        # Same cwd interpretation as storage's walk; ffprobe gets an absolute
+        # local path (never a protocol-looking or option-looking relative name).
+        media = media.absolute()
+        if not storage.is_staged_regular_file(staging_key, media):
+            return None
+        return await ffmpeg.probe_video_dimensions(media, on_process_started=register)
+    finally:
+        if helpers:
+            drain = asyncio.gather(*helpers, return_exceptions=True)
+            cancelled = False
+            while not drain.done():
+                try:
+                    await asyncio.shield(drain)
+                except asyncio.CancelledError:
+                    cancelled = True
+            if cancelled:
+                raise asyncio.CancelledError
 
 
 async def prepare_media(

@@ -48,6 +48,8 @@ def settings(tmp_path: Path) -> Settings:
         staging_dir=tmp_path / "staging",
         library_dir=tmp_path / "library",
         frontend_dist_dir=None,
+        # Ordinary app tests never run the host ffprobe; real smoke builds its own.
+        ffprobe_binary=str(tmp_path / "ffprobe-not-installed"),
     )
 
 

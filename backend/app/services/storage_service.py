@@ -400,18 +400,26 @@ class StorageService:
         # interpretation as the adapter's existing Path output.
         if ".." in output.parts or "\\" in str(output) or "\x00" in str(output):
             raise StoragePathError("invalid child output path")
-        child_root = self._staging_root.absolute() / key
-        try:
-            parts = output.absolute().relative_to(child_root).parts
-        except ValueError as exc:
-            raise StoragePathError("output is outside child staging") from exc
+        # The root may be named as configured or resolved: job_staging_dir()
+        # hands out resolved paths, so an aliased root must still match. Only
+        # the root is resolved; the output stays lexical for the no-follow walk.
+        # Resolve once: the descriptor capture below must verify the very root
+        # that was matched, so an alias swapped in between fails closed.
+        resolved_root = self._staging_root.resolve()
+        absolute_output = output.absolute()
+        for root in (self._staging_root.absolute(), resolved_root):
+            try:
+                parts = absolute_output.relative_to(root / key).parts
+                break
+            except ValueError:
+                continue
+        else:
+            raise StoragePathError("output is outside child staging")
         if not parts:
             raise StoragePathError("output must name a child file")
         # Only configured root aliases (e.g. macOS /var) may be expanded;
         # child and adapter-supplied parents are strictly no-follow.
-        parent_fd, _ = self._capture_root_descriptor(
-            self._staging_root, self._staging_root.resolve()
-        )
+        parent_fd, _ = self._capture_root_descriptor(self._staging_root, resolved_root)
         pinned_fd: int | None = None
         try:
             for component in (key, *parts[:-1]):
@@ -443,6 +451,27 @@ class StorageService:
                 os.close(pinned_fd)
             os.close(parent_fd)
             raise
+
+    def is_staged_regular_file(self, key: str, output: Path) -> bool:
+        """Read-only precheck: ``output`` is a regular file in staging ``key``.
+
+        Reuses the descriptor walk of child placement (no-follow on every
+        directory component and the leaf, ``O_NONBLOCK`` so a FIFO cannot
+        block). Any rejection or error is ``False``; nothing is mutated and
+        no descriptor outlives the call. This is only a precheck: a consumer
+        that reopens the path (e.g. a probe subprocess) is not pinned to the
+        inspected inode, so a same-directory swap in the micro-window after
+        this check remains possible in the private staging directory.
+        """
+        try:
+            prepared = self._prepare_child_output(self._validated_job_id(key), output)
+        except (
+            ValueError, OSError, MediaFileMissingError, MediaFileNotRegularError,
+            StorageDeleteFailedError,
+        ):
+            return False
+        prepared.close()
+        return True
 
     @staticmethod
     def _check_child_entry(source: PreparedMediaFile) -> None:

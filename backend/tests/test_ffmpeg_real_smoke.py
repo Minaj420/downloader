@@ -293,6 +293,115 @@ def _processor() -> FFmpegProcessor:
     )
 
 
+@requires_ffmpeg
+def test_real_ffprobe_measures_landscape_portrait_and_unknown_for_audio(
+    tmp_path: Path,
+) -> None:
+    landscape = _odd_video_source(tmp_path)
+    portrait_frames = _write_raw_frames(tmp_path / "frames_portrait.rgb", _EVEN_SIZE[::-1])
+    portrait = _encode(
+        [*_raw_video_input(portrait_frames, _EVEN_SIZE[::-1]), "-c:v", "ffv1", "-f", "matroska"],
+        tmp_path / "portrait.mkv",
+    )
+    audio = _write_tone_wav(tmp_path / "tone.wav")
+    processor = FFmpegProcessor(ffprobe_binary=_ffprobe())
+
+    measured_landscape = asyncio.run(processor.probe_video_dimensions(landscape))
+    measured_portrait = asyncio.run(processor.probe_video_dimensions(portrait))
+
+    assert measured_landscape is not None and measured_portrait is not None
+    assert measured_landscape == _ODD_SIZE and measured_landscape.label == "241p"
+    assert measured_portrait == _EVEN_SIZE[::-1]
+    assert measured_portrait.height == 320 and measured_portrait.label == "240p"
+    assert asyncio.run(processor.probe_video_dimensions(audio)) is None  # no video stream
+
+
+@requires_ffmpeg
+def test_real_ffprobe_rejects_playlist_that_opens_a_second_input(tmp_path: Path) -> None:
+    outside = _odd_video_source(tmp_path)
+    staged = tmp_path / "staging"
+    staged.mkdir()
+    playlist = staged / "final.m3u8"
+    playlist.write_text(
+        f"#EXTM3U\n#EXT-X-TARGETDURATION:1\n#EXTINF:1,\n{outside}\n#EXT-X-ENDLIST\n"
+    )
+    # Unrestricted ffprobe follows the playlist to the file outside staging...
+    assert any(s["codec_type"] == "video" for s in _probe(playlist)["streams"])
+    # ...the adapter's whitelists refuse the HLS demuxer, so it is unknown.
+    processor = FFmpegProcessor(ffprobe_binary=_ffprobe())
+    assert asyncio.run(processor.probe_video_dimensions(playlist)) is None
+
+
+def _cover_jpeg(tmp_path: Path) -> Path:
+    # A different size than the real video, so a wrongly selected cover shows.
+    frames = _write_raw_frames(tmp_path / "cover.rgb", (64, 48))
+    return _encode(
+        [*_raw_video_input(frames, (64, 48)), "-frames:v", "1", "-c:v", "mjpeg",
+         "-pix_fmt", "yuvj420p"],
+        tmp_path / "cover.jpg",
+    )
+
+
+def _move_udta_before_tracks(source: Path, target: Path) -> Path:
+    data = source.read_bytes()
+    out = bytearray()
+    offset = 0
+    while offset < len(data):
+        size = int.from_bytes(data[offset:offset + 4], "big")
+        kind = data[offset + 4:offset + 8]
+        if kind == b"moov":
+            children: list[tuple[bytes, bytes]] = []
+            position = offset + 8
+            while position < offset + size:
+                child_size = int.from_bytes(data[position:position + 4], "big")
+                children.append((data[position + 4:position + 8],
+                                 data[position:position + child_size]))
+                position += child_size
+            ordered = ([c for c in children if c[0] == b"mvhd"]
+                       + [c for c in children if c[0] == b"udta"]
+                       + [c for c in children if c[0] not in {b"mvhd", b"udta"}])
+            assert any(c[0] == b"udta" for c in children), [c[0] for c in children]
+            out += (size).to_bytes(4, "big") + b"moov" + b"".join(c[1] for c in ordered)
+        else:
+            out += data[offset:offset + size]
+        offset += size
+    target.write_bytes(bytes(out))
+    return target
+
+
+@requires_ffmpeg
+def test_real_ffprobe_ignores_attached_cover_before_video_and_cover_only_is_unknown(
+    tmp_path: Path,
+) -> None:
+    cover = _cover_jpeg(tmp_path)
+    frames = _write_raw_frames(tmp_path / "frames.rgb", _EVEN_SIZE)
+    tone = _write_tone_wav(tmp_path / "tone.wav")
+    with_video = _encode(
+        ["-i", str(cover), *_raw_video_input(frames, _EVEN_SIZE),
+         "-map", "0:v:0", "-map", "1:v:0", "-c:v:0", "mjpeg", "-c:v:1", "mpeg4",
+         "-disposition:v:0", "attached_pic", "-f", "mp4"],
+        tmp_path / "cover_first.mp4",
+    )
+    cover_only = _encode(
+        ["-i", str(cover), "-i", str(tone), "-map", "0:v:0", "-map", "1:a:0",
+         "-c:v", "mjpeg", "-c:a", "aac", "-disposition:v:0", "attached_pic", "-f", "mp4"],
+        tmp_path / "cover_only.mp4",
+    )
+    # FFmpeg's muxers always list the cover after the video; move the metadata
+    # box (``udta``, which carries ``covr``) ahead of the tracks so the demuxer
+    # reports the attached picture as stream 0. Box sizes do not change.
+    cover_first = _move_udta_before_tracks(with_video, tmp_path / "cover_first_real.mp4")
+    first, second = _probe(cover_first)["streams"]
+    assert (first["width"], first["disposition"]["attached_pic"]) == (64, 1)
+    assert (second["width"], second["disposition"]["attached_pic"]) == (320, 0)
+    with_video = cover_first
+    processor = FFmpegProcessor(ffprobe_binary=_ffprobe())
+
+    measured = asyncio.run(processor.probe_video_dimensions(with_video))
+    assert measured == _EVEN_SIZE and measured is not None and measured.label == "240p"
+    assert asyncio.run(processor.probe_video_dimensions(cover_only)) is None
+
+
 class _ProfileCase(NamedTuple):
     profile: ConversionProfile
     encoders: tuple[str, ...]

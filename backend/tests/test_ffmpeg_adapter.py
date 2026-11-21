@@ -1129,3 +1129,123 @@ def test_convert_value_errors_keep_priority_over_existing_output(
         assert output.is_symlink() and os.readlink(output) == str(source)
     else:
         assert output.read_text() == "existing"
+
+
+# --- ffprobe dimension measurement (read-only, best effort) ---------------------------
+
+PROBE_SCRIPT = """#!/bin/sh
+printf '%s\\n' "$@" > {argv}
+cat <<'JSON'
+{payload}
+JSON
+exit {code}
+"""
+
+
+def _probe_binary(
+    tmp_path: Path, payload: str, *, code: int = 0, argv: Path | None = None
+) -> str:
+    return _write_script(
+        tmp_path, "ffprobe",
+        PROBE_SCRIPT.format(argv=argv or tmp_path / "argv", payload=payload, code=code),
+    )
+
+
+def _probe(
+    tmp_path: Path, binary: str, **kwargs: Any
+) -> ffmpeg_module.VideoDimensions | None:
+    media = tmp_path / "media.mp4"
+    media.write_text("staged")
+    processor = FFmpegProcessor(ffprobe_binary=binary, **kwargs)
+    result = asyncio.run(processor.probe_video_dimensions(media))
+    assert media.read_text() == "staged"  # probing never touches the staged media
+    return result
+
+
+@pytest.mark.parametrize("width, height, label", [
+    (1920, 1080, "1080p"),
+    (1080, 1920, "1080p"),  # portrait: short edge names the label
+    (1280, 720, "720p"),
+    (853, 480, "480p"),
+])
+def test_probe_returns_dimensions_and_short_edge_label(
+    tmp_path: Path, width: int, height: int, label: str
+) -> None:
+    payload = f'{{"streams": [{{"width": {width}, "height": {height}}}]}}'
+    argv = tmp_path / "argv"
+    result = _probe(tmp_path, _probe_binary(tmp_path, payload, argv=argv))
+
+    assert result == (width, height)
+    assert result is not None and result.height == height and result.label == label
+    # Fixed argv, width/height only (no rotation or side data), container and
+    # protocol whitelists before the input, local path last.
+    assert argv.read_text().splitlines() == [
+        "-v", "error", "-select_streams", "V:0", "-show_entries", "stream=width,height",
+        "-of", "json", "-format_whitelist", "mov,matroska", "-protocol_whitelist", "file",
+        "-i", str(tmp_path / "media.mp4"),
+    ]
+
+
+@pytest.mark.parametrize("payload", [
+    "",
+    "not json",
+    "[]",
+    '{"streams": []}',
+    '{"streams": {}}',
+    '{"streams": [1]}',
+    '{"streams": [{"width": 1920}]}',
+    '{"streams": [{"height": 1080}]}',
+    '{"streams": [{"width": 0, "height": 1080}]}',
+    '{"streams": [{"width": 1920, "height": -1}]}',
+    '{"streams": [{"width": 19.2, "height": 1080}]}',
+    '{"streams": [{"width": "1920", "height": 1080}]}',
+    '{"streams": [{"width": true, "height": 1080}]}',
+    '{"streams": [{"width": null, "height": 1080}]}',
+    '{"streams": [{"width": 1920, "height": 1080}, {"width": 1, "height": 1}]}',
+])
+def test_probe_invalid_stream_data_is_unknown(tmp_path: Path, payload: str) -> None:
+    assert _probe(tmp_path, _probe_binary(tmp_path, payload)) is None
+
+
+def test_probe_nonzero_exit_is_unknown_even_with_valid_output(tmp_path: Path) -> None:
+    payload = '{"streams": [{"width": 1920, "height": 1080}]}'
+    assert _probe(tmp_path, _probe_binary(tmp_path, payload, code=1)) is None
+
+
+def test_probe_missing_binary_is_unknown(tmp_path: Path) -> None:
+    assert _probe(tmp_path, str(tmp_path / "missing-ffprobe")) is None
+
+
+def test_probe_timeout_is_unknown_and_reaps_child(tmp_path: Path) -> None:
+    started = tmp_path / "started"
+    binary = _write_script(tmp_path, "ffprobe", SLOW_SCRIPT.format(started=started))
+    media = tmp_path / "media.mp4"
+    media.write_text("staged")
+    processor = FFmpegProcessor(ffprobe_binary=binary, probe_timeout_seconds=0.5)
+    seen: list[asyncio.subprocess.Process] = []
+
+    assert asyncio.run(processor.probe_video_dimensions(media, seen.append)) is None
+
+    assert len(seen) == 1 and seen[0].returncode is not None
+    assert media.read_text() == "staged"
+
+
+def test_probe_cancellation_propagates_reaps_child_and_keeps_media(tmp_path: Path) -> None:
+    started = tmp_path / "started"
+    binary = _write_script(tmp_path, "ffprobe", SLOW_SCRIPT.format(started=started))
+    media = tmp_path / "media.mp4"
+    media.write_text("staged")
+    processor = FFmpegProcessor(ffprobe_binary=binary)
+    seen: list[asyncio.subprocess.Process] = []
+
+    async def run() -> None:
+        task = asyncio.create_task(processor.probe_video_dimensions(media, seen.append))
+        await _wait_for_started(started)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(run())
+
+    assert len(seen) == 1 and seen[0].returncode is not None
+    assert media.read_text() == "staged"

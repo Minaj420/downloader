@@ -9,6 +9,7 @@ conversion, never a quality increase.
 
 import asyncio
 import contextlib
+import json
 from collections.abc import Callable
 from enum import StrEnum
 from pathlib import Path
@@ -130,16 +131,115 @@ def _discard_output(output_path: Path) -> None:
         pass
 
 
+# Demuxer names as FFmpeg lists them ("mov,mp4,m4a,3gp,3g2,mj2" and
+# "matroska,webm"); ffprobe matches any shared token.
+_PROBE_FORMAT_WHITELIST = "mov,matroska"
+
+
+class VideoDimensions(NamedTuple):
+    """Measured positive pixel dimensions of the first video stream."""
+
+    width: int
+    height: int
+
+    @property
+    def short_edge(self) -> int:
+        return min(self.width, self.height)
+
+    @property
+    def label(self) -> str:
+        # Short-edge label: 1080x1920 portrait is "1080p" like 1920x1080.
+        return f"{self.short_edge}p"
+
+
+def _positive_int(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        return None
+    return value
+
+
+def _parse_dimensions(stdout: bytes) -> VideoDimensions | None:
+    # Best effort: anything but one stream with positive integer width/height
+    # is "unknown"; nothing is guessed or defaulted.
+    try:
+        data = json.loads(stdout)
+    except ValueError:
+        return None
+    streams = data.get("streams") if isinstance(data, dict) else None
+    if not isinstance(streams, list) or len(streams) != 1 or not isinstance(streams[0], dict):
+        return None
+    width = _positive_int(streams[0].get("width"))
+    height = _positive_int(streams[0].get("height"))
+    if width is None or height is None:
+        return None
+    return VideoDimensions(width, height)
+
+
 class FFmpegProcessor:
     def __init__(
         self,
         binary: str = "ffmpeg",
         timeout_seconds: float = 600.0,
         conversion_timeout_seconds: float = 3600.0,
+        ffprobe_binary: str = "ffprobe",
+        probe_timeout_seconds: float = 30.0,
     ) -> None:
         self._binary = binary
         self._timeout_seconds = timeout_seconds
         self._conversion_timeout_seconds = conversion_timeout_seconds
+        self._ffprobe_binary = ffprobe_binary
+        self._probe_timeout_seconds = probe_timeout_seconds
+
+    async def probe_video_dimensions(
+        self,
+        media_path: Path,
+        on_process_started: Callable[[asyncio.subprocess.Process], None] | None = None,
+    ) -> VideoDimensions | None:
+        """Measure width/height of the first real video stream; read-only, best effort.
+
+        Uppercase ``V:0`` excludes attached pictures (cover art/thumbnails).
+
+        Missing binary, spawn failure, non-zero exit, timeout and invalid or
+        empty stream data all return ``None`` (unknown); raw tool output is
+        never surfaced. Cancellation terminates the child and propagates. The
+        probed file is never modified or removed.
+
+        Only the MP4/MOV and Matroska/WebM demuxers over the ``file``
+        protocol may open input, so a staged HLS/concat/playlist-style file
+        cannot make ffprobe read a second input; other formats exit non-zero
+        and are therefore unknown.
+        """
+        command = [
+            self._ffprobe_binary, "-v", "error", "-select_streams", "V:0",
+            "-show_entries", "stream=width,height", "-of", "json",
+            "-format_whitelist", _PROBE_FORMAT_WHITELIST,
+            "-protocol_whitelist", "file",
+            "-i", str(media_path),
+        ]
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+        except OSError:
+            return None
+        try:
+            if on_process_started is not None:
+                on_process_started(process)
+            stdout, _ = await asyncio.wait_for(
+                process.communicate(), timeout=self._probe_timeout_seconds
+            )
+        except TimeoutError:
+            await _terminate(process)
+            return None
+        except BaseException:
+            await _terminate(process)
+            raise
+        if process.returncode != 0:
+            return None
+        return _parse_dimensions(stdout)
 
     async def merge_streams(
         self,

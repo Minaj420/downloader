@@ -45,6 +45,8 @@ def create_app(settings: Settings | None = None, analyzer: URLAnalyzer | None = 
         binary=resolved_settings.ffmpeg_binary,
         timeout_seconds=resolved_settings.ffmpeg_timeout_seconds,
         conversion_timeout_seconds=resolved_settings.ffmpeg_conversion_timeout_seconds,
+        ffprobe_binary=resolved_settings.ffprobe_binary,
+        probe_timeout_seconds=resolved_settings.ffprobe_timeout_seconds,
     )
     queue_manager = QueueManager(
         session_factory=session_factory,

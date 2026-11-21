@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     analysis_timeout_seconds: float = 90.0
 
     ffmpeg_binary: str = "ffmpeg"
+    ffprobe_binary: str = "ffprobe"
+    ffprobe_timeout_seconds: float = 30.0
     ffmpeg_timeout_seconds: float = 600.0
     ffmpeg_conversion_timeout_seconds: float = 3600.0
     download_timeout_seconds: float = 3600.0
