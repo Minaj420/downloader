@@ -68,6 +68,8 @@ zorunlu; yoksa açık kullanıcı onayı olmadan uygulama yok. Önemli mimari ka
 Opus'a, ürün tercihleri kullanıcıya. Kullanıcıya "Opus önerisi / gerekçe /
 alternatif-risk + lead kararı" özeti ver. Kota/kimlik/izin hatasında tekrar veya
 sessiz fallback yok, dur. Eski reddedilen claude --version sorgusunu tekrarlama.
+İstisna: uygulayıcı izin reddinden sonra işi izinli araçla tamamladıysa kendiliğinden
+durma; docs/WORKFLOW.md “İzin reddi sonrası devam (KARAR)” bölümünü uygula.
 
 Asıl uygulayıcı `bash scripts/claude-agent.sh implement`: açık görev metni ve izinli
 dosyaları prompt argümanı veya destekleyen API'de düz metin stdin ile gönder.
