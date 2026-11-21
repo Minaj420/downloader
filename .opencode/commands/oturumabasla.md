@@ -1,7 +1,6 @@
 ---
 description: Oturum başlangıcı — dal, uzak güncellik ve devam noktası kontrolü
 agent: lead
-model: openai/gpt-6.1-sol
 ---
 
 Türkçe cevap ver.

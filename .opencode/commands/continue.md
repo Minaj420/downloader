@@ -1,7 +1,6 @@
 ---
 description: Birincil OpenCode akışı — Opus danışman, Sonnet/Opus uygulayıcı, GPT reviewer, Luna checker
 agent: lead
-model: openai/gpt-6.1-sol
 ---
 
 Türkçe cevap ver.
