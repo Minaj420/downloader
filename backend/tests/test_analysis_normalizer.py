@@ -161,6 +161,128 @@ def test_collection_unavailable_entries_with_urls_are_not_selectable(availabilit
     assert collection.items[0].unavailable_reason == "unavailable"
 
 
+def _placeholder_collection(
+    entries: list[dict[str, Any]],
+) -> list[Any]:
+    collection = normalize_collection(
+        {"entries": entries, "playlist_count": len(entries)}, analysis_id="snapshot"
+    )
+    assert collection is not None
+    return [collection]
+
+
+@pytest.mark.parametrize("title", ["[Private video]", "[Deleted video]"])
+@pytest.mark.parametrize("availability", ["missing", None])
+def test_youtube_placeholder_title_without_availability_is_not_selectable(
+    title: str, availability: str | None
+) -> None:
+    placeholder: dict[str, Any] = {
+        "ie_key": "Youtube",
+        "id": "abc",
+        "url": "https://www.youtube.com/watch?v=abc",
+        "title": title,
+    }
+    if availability != "missing":
+        placeholder["availability"] = availability
+    normal = {
+        "ie_key": "Youtube",
+        "id": "ok",
+        "url": "https://www.youtube.com/watch?v=ok",
+        "title": "Normal",
+    }
+    [collection] = _placeholder_collection([normal, placeholder, normal])
+    assert [item.source_order for item in collection.items] == [1, 2, 3]
+    assert [item.selectable for item in collection.items] == [True, False, True]
+    assert collection.items[1].unavailable_reason == "unavailable"
+    assert collection.items[1].url == "https://www.youtube.com/watch?v=abc"
+    assert collection.items[1].title == title
+    assert collection.selectable_items == 2
+    assert collection.analyzed_items == 3
+    assert [item.title for item in collection.preview_items] == ["Normal", title, "Normal"]
+
+
+def test_youtube_placeholder_counts_both_placeholders() -> None:
+    entries = [
+        {"ie_key": "Youtube", "url": "https://www.youtube.com/watch?v=a",
+         "title": "[Private video]"},
+        {"ie_key": "Youtube", "url": "https://www.youtube.com/watch?v=b",
+         "title": "[Deleted video]"},
+        {"ie_key": "Youtube", "url": "https://www.youtube.com/watch?v=c", "title": "C"},
+    ]
+    [collection] = _placeholder_collection(entries)
+    assert collection.selectable_items == 1
+    assert [item.unavailable_reason for item in collection.items] == [
+        "unavailable", "unavailable", None
+    ]
+
+
+def test_youtube_explicit_availability_keeps_existing_flow() -> None:
+    entries = [
+        {"ie_key": "Youtube", "url": "https://www.youtube.com/watch?v=a",
+         "title": "[Private video]", "availability": "public"},
+        {"ie_key": "Youtube", "url": "https://www.youtube.com/watch?v=b",
+         "title": "Real title", "availability": "private"},
+    ]
+    [collection] = _placeholder_collection(entries)
+    assert [item.selectable for item in collection.items] == [True, False]
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {"ie_key": "Vimeo"},
+        {"ie_key": "SoundcloudTrack"},
+        {"ie_key": "youtube"},
+        {"ie_key": "YoutubeTab"},
+        {},
+    ],
+)
+@pytest.mark.parametrize("title", ["[Private video]", "[Deleted video]"])
+def test_placeholder_title_outside_youtube_entry_is_unchanged(
+    entry: dict[str, Any], title: str
+) -> None:
+    [collection] = _placeholder_collection(
+        [{**entry, "url": "https://example.com/a", "title": title}]
+    )
+    assert collection.items[0].selectable is True
+    assert collection.items[0].unavailable_reason is None
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "[private video]", "[Private video] ", "Private video", "[Private videos]",
+        "x [Deleted video]", "[Deleted video] x", "[Deleted  video]", "[Private video]!",
+    ],
+)
+def test_youtube_near_placeholder_titles_stay_selectable(title: str) -> None:
+    [collection] = _placeholder_collection(
+        [{"ie_key": "Youtube", "url": "https://www.youtube.com/watch?v=a", "title": title}]
+    )
+    assert collection.items[0].selectable is True
+    assert collection.items[0].unavailable_reason is None
+
+
+@pytest.mark.parametrize("title", [["[Private video]"], {"text": "[Deleted video]"}, []])
+@pytest.mark.parametrize("availability", ["missing", None])
+def test_youtube_non_string_title_does_not_break_analysis(
+    title: object, availability: str | None
+) -> None:
+    entry: dict[str, Any] = {
+        "ie_key": "Youtube",
+        "url": "https://www.youtube.com/watch?v=a",
+        "title": title,
+    }
+    if availability != "missing":
+        entry["availability"] = availability
+    ok = {"ie_key": "Youtube", "url": "https://www.youtube.com/watch?v=b", "title": "B"}
+    [collection] = _placeholder_collection([entry, ok])
+    assert [item.selectable for item in collection.items] == [True, True]
+    assert collection.items[0].unavailable_reason is None
+    assert collection.items[0].title is None
+    assert collection.selectable_items == 2
+
+
 def test_collection_url_candidates_use_existing_boundary_without_synthesis() -> None:
     collection = normalize_collection(
         {"entries": [{"webpage_url": "/bad", "url": " https://example.com/a "}]},

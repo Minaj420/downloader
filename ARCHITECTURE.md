@@ -2183,7 +2183,7 @@ Labels: **APPROVED** = user decision (planned, not implemented unless stated); *
   The technical value 25 is consistent with the current bounded flat analysis budget (`COLLECTION_ANALYSIS_WINDOW_LIMIT`, `--playlist-items 1-25`).
   No API is designed or implemented. The `Load 25 more` / `Show all` (<=200) buttons are PLANNED, NOT IMPLEMENTED (no button, API or UI exists).
   Placement (user-approved): next to Q1/Q2, after runtime 6, as a larger Opus contract task; the approved order does not change and no new product decision is made.
-- Private video selectable/default/selected-count bug: waits for a separate small fix; not implemented now.
+- Private/Deleted video placeholders: a YouTube flat entry (exact `ie_key` `Youtube`) with no/null `availability` and exact title `[Private video]` or `[Deleted video]` is `selectable=false` with `unavailable_reason=unavailable`, even with a valid URL; explicit `availability` and other platforms are unchanged. Select All, default selection and the 200 cap already follow `selectable`.
 - Q1: minimal server-backed active/queued/history list with Cancel/Retry, on-demand child/detail Activity, list refresh driven by the existing single global SSE connection (`/api/v1/events`, one shared connection updating the list from every job snapshot) with a REST/poll fallback when needed;
   no per-job SSE endpoint and no new framework.
   On-demand detail explicitly covers past completed/failed/cancelled jobs: persisted Activity is read through the existing backend, with no new SSE.

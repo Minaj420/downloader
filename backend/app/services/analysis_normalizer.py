@@ -698,6 +698,25 @@ def _collection_item_url(entry: dict[str, Any]) -> str | None:
     return None
 
 
+_YOUTUBE_PLACEHOLDER_TITLES = frozenset({"[Private video]", "[Deleted video]"})
+
+
+def _is_youtube_placeholder_entry(entry: dict[str, Any]) -> bool:
+    """YouTube flat entry with no availability whose title is an exact placeholder.
+
+    yt-dlp's YouTube flat playlists can omit availability for private/deleted
+    videos. Requires the exact YouTube ie_key and exact title; explicit
+    availability always wins and other platforms are untouched.
+    """
+    title = entry.get("title")
+    return (
+        entry.get("availability") is None
+        and entry.get("ie_key") == "Youtube"
+        and isinstance(title, str)
+        and title in _YOUTUBE_PLACEHOLDER_TITLES
+    )
+
+
 def normalize_collection(
     raw_info: dict[str, Any], *, analysis_id: str
 ) -> CollectionInfo | None:
@@ -713,8 +732,11 @@ def normalize_collection(
     ):
         entry = raw_entry if isinstance(raw_entry, dict) else {}
         url = _collection_item_url(entry)
-        unavailable = not isinstance(raw_entry, dict) or entry.get("availability") in (
-            "private", "premium_only", "subscriber_only", "needs_auth", "unavailable"
+        unavailable = (
+            not isinstance(raw_entry, dict)
+            or entry.get("availability")
+            in ("private", "premium_only", "subscriber_only", "needs_auth", "unavailable")
+            or _is_youtube_placeholder_entry(entry)
         )
         digest = hashlib.sha256(
             f"downloader/collection-item/v1\x00{analysis_id}\x00{source_order}".encode()

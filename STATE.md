@@ -5,6 +5,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 ## Şu an
 
 - Mod: Normal, lead OpenCode; bekleyen Claude-only GPT review'u yok.
+- Lead/reviewer/implementer tanımı GPT‑6.2 Sol (implementer pasif); Luna/Claude değişmedi. ARCH-A tamam: smoke/kapanış STATE'te; ARCH bayat durumları güncellenir, karar çatışmasında durulur.
 - M6 açık; Q0/18 ve runtime6 kullanıcı Compose smoke/onayıyla kapandı. M6-Q genel kapanışı yok.
 - Uzlaştırma yedek dalı korunur; push yalnız açık kullanıcı talebi ve hedefle.
 - Onaylı sabit profillerin yetkili belgeye aktarımı bekliyor: MP3 V0, M4A AAC 256k,
@@ -16,6 +17,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - Bekleyen toplu UI Compose smoke: Queue'da active/history; gezinme/F5 sonrası sunucudan iş erişimi.
 - Smoke: uygun Cancel/Retry ve çift tık/pending; cancelled single Retry henüz yok (Q2).
 - Smoke: geçmiş iş detay/Activity, collection öğeleri; Load more ve yeniden bağlantıda güncellik.
+- Smoke: Private video içeren playlist; satır devre dışı, Select All ve sayaç dışında.
 - M6.5 Mutagen/adapter/pipeline → M6.6 grup/yollar → M6.7 kapak sırası korunur.
 - M6.4/5 kapanışı yok; full gate ve değişen davranış için yeni kullanıcı Compose smoke'u gerekir.
 ## Açık kararlar
@@ -33,8 +35,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - Audit aktarımı alındı (ARCH §59): Settings → S1/M7; Library detay → M9-L; son seçim localStorage v0.1.
 - K2 New Download gezinme/F5 draft kaybı sürer; restore tasarımı/uygulaması ayrı iş bekler.
 - M6.5: UI hata ayrıntısı+maskeleme önerisi, failed0%/iç kod/satırlar arası boşluk; rozet/SSE ve N ağ hatasında durma ARCH §59.
-- Öncelikli3/6/10/19 ve kullanıcı smoke/notları ARCH §59; network_error/deno bağı kanıtsız.
-  Analiz25/+25/hepsi200 yerleşimi Q1/Q2 yanında onaylı, uygulanmadı; Private video filtresi ayrı iş bekler.
+- ARCH §59: öncelikli3/6/10/19; network_error/deno bağı kanıtsız. Analiz25/+25/hepsi200 onaylı, uygulanmadı.
 - Fedora Python 3.14 eski üç backend failure (os.close monkeypatch/pidfd) macOS gate ile doğrulanmadı.
 - should-fix: child Skip Existing Activity uyarısı yok; ayrı lifecycle/transaction işi; analiz View Activity açık.
 - should-fix: modelsiz implement resume CLI hatasının belgelenmesi ve izleyici partial-line
@@ -55,8 +56,8 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - Mix4 sabit seçim/completed korundu, auto-resume yok, Retry46→48; MKV VP9/Opus200s tam decode kullanıcı PASS.
 - Host RPM Fusion FFmpeg smoke 23 PASS/0 SKIP; container libx264 ayrıca görüldü. Sonraki skip'i bildir.
 - 2026-10-30 macOS full gate tarihsel; sonraki uzlaştırma kaynak değişikliğiyle bayat.
-
 ## Bilinen riskler
+- Accepted: YouTube'da aynı gerçek başlık ve eksik availability yanlışlıkla elenebilir.
 - Accepted: smoke idle kontrolü atomik değil; testte başka iş başlatılmaz; kullanıcı ağ/restart kurtarma PASS.
 - Accepted: Original remux EXIT_STATUS içindeki disk/izin hatası genel uyarıda kalabilir (PRODUCT_SPEC §14).
 - Accepted: commit anında iptal canlı child uyarısını kaçırabilir; commit edilmiş
