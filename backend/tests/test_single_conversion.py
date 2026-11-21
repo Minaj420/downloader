@@ -535,7 +535,8 @@ async def test_cancel_during_remux_exit_status_cancels_without_warning(tmp_path:
     assert_nothing_published(run, facts)
     assert facts.messages[-1] == "Cancelled"
     assert [event["event"] for event in run.bus.events][-1] == "job.cancelled"
-    assert not (run.staging / "job").exists()
+    # Q2: the downloaded source stays in job staging for an explicit Retry.
+    assert (run.staging / "job" / "media.webm").read_bytes() == b"source"
 
 
 @pytest.mark.anyio
@@ -687,7 +688,7 @@ async def test_ffmpeg_failure_maps_code_and_never_publishes_the_original(
 
 
 @pytest.mark.anyio
-async def test_cancel_during_conversion_cleans_staging_and_publishes_nothing(
+async def test_cancel_during_conversion_keeps_staging_and_publishes_nothing(
     tmp_path: Path,
 ) -> None:
     def prepare(run: SingleRun) -> None:
@@ -703,11 +704,45 @@ async def test_cancel_during_conversion_cleans_staging_and_publishes_nothing(
     assert (record.status, record.error_code, record.output_profile) == (
         "cancelled", "cancelled", "mp3")
     assert run.media.calls == ["download:raw-a", "convert:mp3"]
-    assert not (run.staging / "job").exists()
+    assert (run.staging / "job" / "media.mp4").read_bytes() == b"source"
     assert run.published_files() == []
     assert (facts.items, facts.files) == ([], [])
     assert facts.messages[-1] == "Cancelled"
     assert [event["event"] for event in run.bus.events][-1] == "job.cancelled"
+
+
+@pytest.mark.anyio
+async def test_cancelled_conversion_retry_reuses_staging_and_cleans_on_success(
+    tmp_path: Path,
+) -> None:
+    run = SingleRun(tmp_path)
+    try:
+        await run.seed([fmt("a", AUDIO, audio="opus")], "a", "mp3")
+
+        def cancel_and_terminate() -> None:
+            run.cancel.set()
+            run.media.convert_error = FFmpegError(FFmpegFailureKind.FAILED, "terminated")
+
+        run.media.in_convert = cancel_and_terminate
+        await run.run()
+        cancelled = await run.facts()
+        assert cancelled.record.status == "cancelled"
+        assert (run.staging / "job" / "media.mp4").exists()
+        assert run.published_files() == []
+        async with run.sessions() as session:
+            assert await job_repo.stage_retry_job(session, "job", "owner")
+            await session.commit()
+        run.cancel = asyncio.Event()
+        run.media.in_convert = None
+        run.media.convert_error = None
+        await run.run()
+        facts = await run.facts()
+    finally:
+        await run.engine.dispose()
+    assert (facts.record.status, facts.record.final_path) == ("completed", f"audio/{TITLE}.mp3")
+    assert run.published_files() == [run.library / "audio" / f"{TITLE}.mp3"]
+    assert (run.library / "audio" / f"{TITLE}.mp3").read_bytes() == b"converted"
+    assert not (run.staging / "job").exists()
 
 
 # --- Skip Existing --------------------------------------------------------------------

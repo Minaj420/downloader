@@ -80,9 +80,13 @@ export interface Job {
   items?: JobItem[] | null;
 }
 
+/**
+ * Retry follows the backend's `error.retryable` decision for terminal
+ * failed/cancelled jobs, single and collection alike (cancelled single
+ * Retry, PRODUCT_SPEC §17 Q2); no business rule is duplicated here.
+ */
 export function canRetryJob(job: Job): boolean {
-  return Boolean(job.error?.retryable && (job.status === "failed" ||
-    (job.job_type === "collection" && job.status === "cancelled")));
+  return Boolean(job.error?.retryable && (job.status === "failed" || job.status === "cancelled"));
 }
 
 export type CollectionMode = "audio" | "video";

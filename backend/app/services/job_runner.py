@@ -588,8 +588,9 @@ class _JobExecution:
                     "completed_at": now,
                 },
             )
-        if cancelled:
-            self._deps.storage.remove_staging(self._job_id)
+        # Cancelled staging is retained for an explicit Retry to resume from
+        # (PRODUCT_SPEC §17 Q2); only a successful finish removes it. Nothing
+        # partial is published: placement is gated and FFmpeg discards its output.
         if not won:
             return
         await self._activity(

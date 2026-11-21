@@ -27,8 +27,8 @@ from app.domain.jobs import (
     JobErrorCode,
     JobStatus,
     OutputProfile,
-    job_error_code_retryable,
     output_profile_allowed,
+    single_job_retryable,
 )
 from app.models.analysis import AnalysisSession
 from app.models.jobs import DownloadJob, JobItem
@@ -303,10 +303,11 @@ class JobService:
                 if cancelled:
                     raise asyncio.CancelledError
                 return result
-            if record.status != JobStatus.FAILED.value or not job_error_code_retryable(
-                record.error_code or ""
-            ):
+            if not single_job_retryable(record.status, record.error_code):
                 raise JobError(JobErrorCode.INVALID_STATE)
+            # A cancelled single job's old attempt (or a stale queued-cancel
+            # signal) is drained here; reset_attempt after the CAS commit drops
+            # its cancel event so it never reaches the new attempt.
             await self._queue_manager.wait_for_attempt(job_id)
             # Keep the lock until the transaction, session close and runtime
             # finalization have a definite outcome, even on repeated request

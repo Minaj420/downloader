@@ -304,19 +304,27 @@ async function fillAndSubmit(user: ReturnType<typeof userEvent.setup>, url: stri
 }
 
 describe("NewDownloadPage", () => {
-  it("only offers Retry for a retryable failed job", async () => {
+  it("only offers Retry for a retryable failed or cancelled job", async () => {
     retryFlowHandler(() => Promise.resolve(jsonResponse(retriedJob)));
     await showRetryableFailure();
     expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
     const statuses = ["queued", "analyzing", "downloading", "post_processing", "finalizing", "completed", "cancelled", "failed"] as const;
     for (const [index, status] of statuses.entries()) {
+      const terminalRetry = status === "failed" || status === "cancelled";
       act(() => FakeEventSource.current?.emit("job.updated", {
-        ...failedRetryJob, status, error: { ...failedRetryJob.error, retryable: status !== "failed" },
+        ...failedRetryJob, status, error: { ...failedRetryJob.error, retryable: !terminalRetry },
         // Each independent status transition is a strictly newer snapshot.
         updated_at: `2026-09-28T12:00:${String(4 + index).padStart(2, "0")}Z`,
       }));
       expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
     }
+    // Cancelled single Retry (Q2): the backend's retryable flag alone decides.
+    act(() => FakeEventSource.current?.emit("job.cancelled", {
+      ...failedRetryJob, status: "cancelled",
+      error: { code: "cancelled", message: "The download was cancelled.", retryable: true },
+      updated_at: "2026-09-28T12:00:20Z",
+    }));
+    expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
   });
 
   it("posts an empty payload to the same id once, preserves Activity and resumes polling", async () => {
@@ -1279,11 +1287,42 @@ describe("NewDownloadPage", () => {
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(await screen.findByText("Download cancelled.")).toBeInTheDocument();
     expect(screen.getByText("Cancelled")).toBeInTheDocument();
+    // The backend decides Retry: without `retryable` no Retry is offered.
+    expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
 
     const cancelCall = fetchMock.mock.calls.find(
       ([url]) => url === `/api/v1/jobs/${queuedJob.id}/cancel`,
     );
     expect(cancelCall?.[1]?.method).toBe("POST");
     expect(JSON.parse(String(cancelCall?.[1]?.body))).toEqual({});
+  });
+
+  it("offers explicit Retry for a cancelled single job the backend marks retryable", async () => {
+    const cancelledRetryable: Job = {
+      ...queuedJob,
+      status: "cancelled",
+      error: { code: "cancelled", message: "The download was cancelled.", retryable: true },
+      updated_at: "2026-09-28T12:00:03Z",
+      completed_at: "2026-09-28T12:00:03Z",
+    };
+    const fetchMock = retryFlowHandler(
+      () => Promise.resolve(jsonResponse(retriedJob)),
+      () => Promise.resolve(jsonResponse(cancelledRetryable)),
+      undefined,
+      () => Promise.resolve(jsonResponse(cancelledRetryable)),
+    );
+    const { user } = await renderNewDownload();
+    await createQueuedJob(user);
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(await screen.findByText("Download cancelled.")).toBeInTheDocument();
+    // No automatic resume: nothing is retried until the user clicks Retry.
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/retry"))).toHaveLength(0);
+    await user.click(await screen.findByRole("button", { name: "Retry" }));
+    await screen.findByText("Queued");
+    const retryCalls = fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/retry"));
+    expect(retryCalls).toHaveLength(1);
+    expect(retryCalls[0]?.[0]).toBe("/api/v1/jobs/job-1/retry");
+    expect(retryCalls[0]?.[1]?.method).toBe("POST");
+    expect(screen.queryByText("Download cancelled.")).not.toBeInTheDocument();
   });
 });

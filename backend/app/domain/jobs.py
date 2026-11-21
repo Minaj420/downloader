@@ -163,6 +163,21 @@ def job_error_code_retryable(code: str) -> bool:
         return False
 
 
+SINGLE_RETRYABLE_ANY_CODE_STATUSES = frozenset({JobStatus.CANCELLED})
+
+
+def single_job_retryable(status: str, error_code: str | None) -> bool:
+    """Explicit single Retry eligibility (PRODUCT_SPEC §17 Q2), shared with the CAS.
+
+    Every cancelled single job is retryable regardless of its persisted code;
+    a failed one needs a known retryable code. ``CANCELLED`` is deliberately
+    not a general retryable error code, so collection policy is unaffected.
+    """
+    return status in SINGLE_RETRYABLE_ANY_CODE_STATUSES or (
+        status == JobStatus.FAILED and job_error_code_retryable(error_code or "")
+    )
+
+
 def collection_child_retryable(status: str, error_code: str | None) -> bool:
     """Persisted child policy; incomplete rows are used only after attempt drain."""
     return (

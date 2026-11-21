@@ -1,8 +1,12 @@
 import asyncio
 import gc
+import os
 import sqlite3
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 from weakref import ref
 
@@ -11,12 +15,14 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 from app.domain.actors import Actor
-from app.domain.jobs import JobError, JobErrorCode
+from app.domain.jobs import JobError, JobErrorCode, job_error_code_retryable
 from app.integrations.ytdlp import DownloadProgress
+from app.models.jobs import DownloadJob
 from app.repositories import activity as activity_repo
 from app.repositories import jobs as job_repo
+from app.services.job_mapping import job_to_dto
 from app.services.job_runner import _JobExecution
-from tests.fake_binaries import fake_ytdlp_fail, fake_ytdlp_ok
+from tests.fake_binaries import fake_ytdlp_fail, fake_ytdlp_ok, fake_ytdlp_slow
 from tests.test_jobs import (
     _activity_messages,
     _expire_analysis,
@@ -271,8 +277,10 @@ def test_lifecycle_waiter_revalidates_owner_and_state(
     ("status", "code"),
     [(s, "network_error") for s in (
         "queued", "analyzing", "downloading", "post_processing", "finalizing",
-        "completed", "cancelled",
-    )] + [("failed", c) for c in ("unsupported_url", "disk_write_failed", "unknown", None)],
+        "completed",
+    )] + [("failed", c) for c in (
+        "unsupported_url", "disk_write_failed", "unknown", None, "cancelled",
+    )],
 )
 def test_retry_invalid_states(
     app_factory: Any, settings: Any, status: str, code: str | None
@@ -290,17 +298,27 @@ def test_retry_invalid_states(
             connection.commit()
         response = client.post(f"/api/v1/jobs/{job['id']}/retry")
         assert response.status_code == 409
-        assert response.json()["error"]["code"] == "invalid_state"
+        # Error envelope is unchanged by the cancelled single Retry decision.
+        assert response.json()["error"] == {
+            "code": "invalid_state",
+            "message": "This job has already finished.",
+            "retryable": False,
+            "job_id": None,
+        }
 
 
+@pytest.mark.parametrize("terminal", [
+    "status = 'failed', error_code = 'network_error'",
+    "status = 'cancelled', error_code = 'cancelled'",
+])
 def test_concurrent_retry_one_committed_event(
-    app_factory: Any, settings: Any
+    app_factory: Any, settings: Any, terminal: str
 ) -> None:
     with app_factory(yt_dlp=fake_ytdlp_ok(app_factory.binaries)) as client:
         job = completed_job(client)
         assert client.portal is not None
         client.portal.call(client.app.state.queue_manager.stop)
-        mutate(settings, job["id"], "status = 'failed', error_code = 'network_error'")
+        mutate(settings, job["id"], terminal)
         bus = client.app.state.event_bus
         subscriber = bus.subscribe()
         try:
@@ -737,3 +755,318 @@ def test_retry_real_commit_failure_rolls_back_without_runtime_finalization(
                 assert connection.execute("SELECT * FROM retry_commit_probe").fetchall() == []
         finally:
             client.app.state.event_bus.unsubscribe(subscriber)
+
+
+# --- Q2: explicit cancelled single Retry (PRODUCT_SPEC §17, ARCHITECTURE §20) -----
+
+_YTDLP_HEAD = r"""#!/bin/sh
+out=""
+next=0
+for a in "$@"; do
+  if [ "$next" = "1" ]; then out="$a"; next=0; fi
+  [ "$a" = "-o" ] && next=1
+done
+out=$(printf '%s' "$out" | sed 's/%(ext)s/mp4/g')
+"""
+
+# Leaves a source-style ``.part`` partial and then hangs until cancelled.
+_YTDLP_PARTIAL = _YTDLP_HEAD + r"""printf 'partial' > "$out.part"
+printf 'PROG 1 100 NA 500000 99\n'
+exec sleep 30
+"""
+
+# Continues a valid partial when present (like yt-dlp's default continue),
+# otherwise starts from scratch; records which path ran.
+_YTDLP_RESUME = _YTDLP_HEAD + r"""if [ -f "$out.part" ]; then
+  printf 'resumed\n' >> 'LOG'
+  cat "$out.part" > "$out"
+  printf ' rest' >> "$out"
+  rm -f "$out.part"
+else
+  printf 'fresh\n' >> 'LOG'
+  printf 'fresh media' > "$out"
+fi
+printf '%s\n' "$out"
+"""
+
+
+def swap_ytdlp(binaries: Path, body: str) -> str:
+    """Atomically replace the fake binary; a running script keeps its old inode."""
+    staged = binaries / "yt-dlp.next"
+    staged.write_text(body)
+    staged.chmod(0o755)
+    target = binaries / "yt-dlp"
+    os.replace(staged, target)
+    return str(target)
+
+
+def swap_in_fast_ytdlp(binaries: Path) -> str:
+    """Atomically install the existing ``fake_ytdlp_ok`` (writes file, then path)."""
+    staged_dir = binaries / "next"
+    staged_dir.mkdir(exist_ok=True)
+    target = binaries / "yt-dlp"
+    os.replace(fake_ytdlp_ok(staged_dir), target)
+    return str(target)
+
+
+def wait_path(path: Path, timeout: float = 5.0) -> None:
+    deadline = time.monotonic() + timeout
+    while not path.exists() and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert path.exists(), path
+
+
+def library_files(settings: Any) -> list[Path]:
+    return [path for path in settings.library_dir.rglob("*") if path.is_file()]
+
+
+def test_cancelled_single_retry_resumes_retained_partial_and_cleans_on_success(
+    app_factory: Any, settings: Any, tmp_path: Path
+) -> None:
+    log = tmp_path / "ytdlp.log"
+    binaries = app_factory.binaries
+    with app_factory(yt_dlp=swap_ytdlp(binaries, _YTDLP_PARTIAL)) as client:
+        manager = client.app.state.queue_manager
+        assert client.portal is not None
+        job = create_job(client, create_analysis(client)).json()
+        staging = settings.staging_dir / job["id"]
+        partial = staging / "media.mp4.part"
+        wait_path(partial)
+        assert client.post(f"/api/v1/jobs/{job['id']}/cancel").status_code == 200
+        cancelled = wait_for_job(client, job["id"], statuses={"cancelled"})
+        # Same error body shape (message stays the runner's existing text);
+        # only the backend retry decision changed.
+        assert set(cancelled["error"]) == {"code", "message", "retryable"}
+        assert (cancelled["error"]["code"], cancelled["error"]["retryable"]) == (
+            "cancelled", True)
+        client.portal.call(manager.wait_for_attempt, job["id"])
+        assert partial.read_text() == "partial"
+        assert library_files(settings) == []
+
+        swap_ytdlp(binaries, _YTDLP_RESUME.replace("LOG", str(log)))
+        response = client.post(f"/api/v1/jobs/{job['id']}/retry")
+        assert response.status_code == 200
+        assert (response.json()["status"], response.json()["error"]) == ("queued", None)
+        final = wait_for_job(client, job["id"], statuses={"completed", "failed", "cancelled"})
+        assert final["status"] == "completed", final
+        client.portal.call(manager.wait_for_attempt, job["id"])
+        assert (settings.library_dir / "video" / "Test Video.mp4").read_text() == "partial rest"
+        assert not staging.exists()
+    assert log.read_text().splitlines() == ["resumed"]
+    messages = _activity_messages(settings, job["id"])
+    assert messages.index("Cancelled") < messages.index("Retry queued")
+    assert messages.count("Retry queued") == 1
+
+
+@pytest.mark.parametrize("code", ["cancelled", None])
+def test_old_cancelled_single_without_staging_retries_from_scratch(
+    app_factory: Any, settings: Any, tmp_path: Path, code: str | None
+) -> None:
+    log = tmp_path / "ytdlp.log"
+    binaries = app_factory.binaries
+    with app_factory(yt_dlp=fake_ytdlp_ok(binaries)) as client:
+        job = completed_job(client)
+        assert client.portal is not None
+        client.portal.call(client.app.state.queue_manager.stop)
+    # A cancelled row from before Q2: its staging was already removed.
+    with sqlite3.connect(settings.state_dir / "downloader.db") as connection:
+        connection.execute(
+            "UPDATE download_jobs SET status = 'cancelled', error_code = ?, "
+            "error_message = NULL, final_path = NULL WHERE id = ?", (code, job["id"]))
+        connection.execute("DELETE FROM media_files")
+        connection.execute("DELETE FROM library_items")
+        connection.commit()
+    for path in library_files(settings):
+        path.unlink()
+    assert not (settings.staging_dir / job["id"]).exists()
+    with app_factory(yt_dlp=swap_ytdlp(binaries, _YTDLP_RESUME.replace("LOG", str(log)))) as client:
+        # Before Retry, detail and history expose the existing body shape.
+        detail = client.get(f"/api/v1/jobs/{job['id']}").json()
+        [history] = [entry for entry in client.get("/api/v1/jobs?scope=history").json()["jobs"]
+                     if entry["id"] == job["id"]]
+        for snapshot in (detail, history):
+            assert snapshot["status"] == "cancelled"
+            assert set(snapshot["error"]) == {"code", "message", "retryable"}
+            assert (snapshot["error"]["code"], snapshot["error"]["retryable"]) == (
+                "cancelled", True)
+            if code is None:
+                assert snapshot["error"]["message"] == "The download was cancelled."
+        response = client.post(f"/api/v1/jobs/{job['id']}/retry")
+        assert response.status_code == 200
+        final = wait_for_job(client, job["id"], statuses={"completed", "failed", "cancelled"})
+        assert final["status"] == "completed", final
+        assert client.portal is not None
+        client.portal.call(client.app.state.queue_manager.wait_for_attempt, job["id"])
+        assert (settings.library_dir / "video" / "Test Video.mp4").read_text() == "fresh media"
+        assert not (settings.staging_dir / job["id"]).exists()
+    assert log.read_text().splitlines() == ["fresh"]
+
+
+def test_queued_cancel_retry_does_not_carry_stale_cancel_signal(
+    app_factory: Any, settings: Any
+) -> None:
+    binaries = app_factory.binaries
+    with app_factory(yt_dlp=fake_ytdlp_slow(binaries), concurrency=1) as client:
+        manager = client.app.state.queue_manager
+        analysis = create_analysis(client)
+        first = create_job(client, analysis).json()
+        wait_for_job(client, first["id"], statuses={"downloading"})
+        # Progress proves the first process already runs its slow script.
+        deadline = time.monotonic() + 5
+        while client.get(f"/api/v1/jobs/{first['id']}").json()["progress"][
+                "downloaded_bytes"] is None and time.monotonic() < deadline:
+            time.sleep(0.02)
+        swap_in_fast_ytdlp(binaries)
+        second = create_job(client, analysis).json()
+        assert client.post(f"/api/v1/jobs/{second['id']}/cancel").status_code == 200
+        cancelled = wait_for_job(client, second["id"], statuses={"cancelled"})
+        assert cancelled["error"]["retryable"] is True
+        # The queued Cancel signalled an event no attempt ever consumed.
+        assert manager._cancel_events[second["id"]].is_set()
+
+        assert client.post(f"/api/v1/jobs/{second['id']}/retry").status_code == 200
+        stale = manager._cancel_events.get(second["id"])
+        assert stale is None or not stale.is_set()
+
+        response = client.post(f"/api/v1/jobs/{first['id']}/cancel")
+        assert response.status_code == 200, (
+            response.json(), client.get(f"/api/v1/jobs/{first['id']}").json())
+        wait_for_job(client, first["id"], statuses={"cancelled"})
+        final = wait_for_job(client, second["id"], statuses={"completed", "failed", "cancelled"})
+        assert final["status"] == "completed", final
+    messages = _activity_messages(settings, second["id"])
+    assert messages[:3] == ["Queued", "Cancelled", "Retry queued"]
+    assert "Download started" in messages[3:]
+
+
+def test_cancelled_single_retry_waits_for_old_attempt_drain(
+    app_factory: Any, settings: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cancelled_activity = threading.Event()
+    release = threading.Event()
+    retry_waiting = threading.Event()
+    executions: list[Any] = []
+    real_activity = _JobExecution._activity
+    real_execute = _JobExecution._execute
+
+    async def execute(execution: Any, record: Any) -> None:
+        executions.append(execution)
+        await real_execute(execution, record)
+
+    async def activity(execution: Any, message: str, **kwargs: Any) -> None:
+        if message == "Cancelled" and execution is executions[0]:
+            cancelled_activity.set()
+            while not release.is_set():
+                await asyncio.sleep(0.01)
+        await real_activity(execution, message, **kwargs)
+
+    monkeypatch.setattr(_JobExecution, "_execute", execute)
+    monkeypatch.setattr(_JobExecution, "_activity", activity)
+    binaries = app_factory.binaries
+    with app_factory(yt_dlp=fake_ytdlp_slow(binaries)) as client:
+        manager = client.app.state.queue_manager
+        job = create_job(client, create_analysis(client)).json()
+        wait_for_job(client, job["id"], statuses={"downloading"})
+        old_event = manager.cancel_event_for(job["id"])
+        assert client.post(f"/api/v1/jobs/{job['id']}/cancel").status_code == 200
+        assert cancelled_activity.wait(5)
+        swap_in_fast_ytdlp(binaries)
+        real_wait = manager.wait_for_attempt
+
+        async def wait_attempt(job_id: str, **kwargs: Any) -> None:
+            retry_waiting.set()
+            await real_wait(job_id, **kwargs)
+
+        monkeypatch.setattr(manager, "wait_for_attempt", wait_attempt)
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            retry = pool.submit(client.post, f"/api/v1/jobs/{job['id']}/retry")
+            try:
+                assert retry_waiting.wait(5)
+                time.sleep(0.1)
+                assert not retry.done()
+                assert len(executions) == 1
+            finally:
+                release.set()
+            response = retry.result(timeout=5)
+        assert response.status_code == 200
+        final = wait_for_job(client, job["id"], statuses={"completed", "failed"})
+        assert final["status"] == "completed", final
+        assert len(executions) == 2
+        assert old_event.is_set()
+        assert executions[1]._cancel_event is not old_event
+        assert not executions[1]._cancel_event.is_set()
+    messages = _activity_messages(settings, job["id"])
+    assert messages.index("Cancelled") < messages.index("Retry queued")
+
+
+def test_cancelled_retry_cas_is_single_only(app_factory: Any, settings: Any) -> None:
+    with app_factory(yt_dlp=fake_ytdlp_ok(app_factory.binaries)) as client:
+        job = completed_job(client)
+        assert client.portal is not None
+        client.portal.call(client.app.state.queue_manager.stop)
+        mutate(settings, job["id"],
+               "job_type = 'collection', status = 'cancelled', error_code = 'cancelled'")
+        sessions = client.app.state.job_service._session_factory
+
+        async def stage() -> bool:
+            async with sessions() as session:
+                won = await job_repo.stage_retry_job(session, job["id"], "local")
+                await session.rollback()
+                return won
+
+        assert client.portal.call(stage) is False
+        mutate(settings, job["id"], "job_type = 'single'")
+        assert client.portal.call(stage) is True
+
+
+def _dto_record(job_type: str, status: str, code: str | None) -> DownloadJob:
+    now = datetime.now(UTC)
+    return DownloadJob(
+        id="j" * 32, owner_id="local", analysis_id="a" * 32, source_url="https://x.test",
+        title="t", variant_id="", destination="app_library", conflict_policy="skip",
+        keep_app_copy=False, status=status, error_code=code, error_message="m",
+        progress_percent=0.0, job_type=job_type,
+        collection_mode="audio" if job_type == "collection" else None,
+        total_items=1, completed_items=0, failed_items=0, created_at=now, updated_at=now,
+    )
+
+
+@pytest.mark.parametrize(("job_type", "status", "code", "children", "expected"), [
+    ("single", "cancelled", "cancelled", None, True),
+    ("single", "failed", "cancelled", None, False),
+    ("single", "failed", "network_error", None, True),
+    ("collection", "cancelled", "cancelled", [("completed", None)], False),
+    ("collection", "cancelled", "cancelled", [("cancelled", "cancelled")], True),
+    ("collection", "failed", "partial_failure", [("failed", "cancelled")], False),
+    ("collection", "failed", "partial_failure", [("failed", "network_error")], True),
+])
+def test_retryable_dto_single_status_aware_collection_unchanged(
+    job_type: str, status: str, code: str, children: Any, expected: bool
+) -> None:
+    record = _dto_record(job_type, status, code)
+    if children is not None:
+        record._collection_retry_children = children  # type: ignore[attr-defined]
+    error = job_to_dto(record).error
+    assert error is not None
+    assert (error.code, error.retryable) == (code, expected)
+    assert job_error_code_retryable("cancelled") is False
+
+
+def test_null_code_cancelled_single_dto_is_retryable_and_collection_unchanged() -> None:
+    single = _dto_record("single", "cancelled", None)
+    single.error_message = None
+    error = job_to_dto(single).error
+    assert error is not None
+    assert error.model_dump() == {
+        "code": "cancelled", "message": "The download was cancelled.", "retryable": True,
+    }
+    kept = _dto_record("single", "cancelled", None)
+    assert job_to_dto(kept).error.model_dump() == {  # type: ignore[union-attr]
+        "code": "cancelled", "message": "m", "retryable": True,
+    }
+    # Collection snapshots and other NULL-code rows keep their existing body.
+    collection = _dto_record("collection", "cancelled", None)
+    collection._collection_retry_children = [("cancelled", "cancelled")]  # type: ignore[attr-defined]
+    assert job_to_dto(collection).error is None
+    assert job_to_dto(_dto_record("single", "failed", None)).error is None
+    assert job_to_dto(_dto_record("single", "queued", None)).error is None

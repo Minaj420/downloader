@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.api.v1.events import _replay_backlog
 from app.config import Settings
-from app.domain.jobs import job_error_code_retryable
+from app.domain.jobs import job_error_code_retryable, single_job_retryable
 from app.integrations.ytdlp import YtDlpDownloader, YtDlpError, YtDlpFailureKind
 from app.models.jobs import ActivityEvent, DownloadJob
 from app.repositories import activity as activity_repo
@@ -1097,7 +1097,7 @@ class TestQueueConcurrency:
 
 
 class TestCancellation:
-    def test_cancel_running_job_terminates_and_cleans_staging(
+    def test_cancel_running_job_terminates_and_keeps_staging(
         self, app_factory: Any, settings: Settings
     ) -> None:
         binaries = app_factory.binaries
@@ -1122,13 +1122,11 @@ class TestCancellation:
             final = wait_for_job(client, job["id"], statuses={"cancelled"})
             assert final["status"] == "cancelled"
             assert final["error"]["code"] == "cancelled"
-
-            # Staging cleanup happens right after the cancelled status is
-            # persisted; allow a short grace period for it.
-            deadline = time.monotonic() + 3.0
-            while staging_dir.exists() and time.monotonic() < deadline:
-                time.sleep(0.05)
-            assert not staging_dir.exists()
+            # Cancelled single Retry (PRODUCT_SPEC §17 Q2): staging is kept.
+            assert final["error"]["retryable"] is True
+            assert client.portal is not None
+            client.portal.call(client.app.state.queue_manager.wait_for_attempt, job["id"])
+            assert staging_dir.exists()
 
     def test_cancel_during_cross_filesystem_finalization_does_not_publish_file(
         self,
@@ -1355,13 +1353,9 @@ class TestCancellation:
             final = wait_for_job(client, job["id"], statuses={"cancelled"})
             assert final["status"] == "cancelled"
             assert final["error"]["code"] == "cancelled"
-
-            deadline = time.monotonic() + 3.0
-            while (settings.staging_dir / job["id"]).exists() and (
-                time.monotonic() < deadline
-            ):
-                time.sleep(0.05)
-            assert not (settings.staging_dir / job["id"]).exists()
+            assert client.portal is not None
+            client.portal.call(client.app.state.queue_manager.wait_for_attempt, job["id"])
+            assert (settings.staging_dir / job["id"]).exists()
 
     def test_cancel_between_video_and_audio_steps(
         self, app_factory: Any, settings: Settings
@@ -1387,13 +1381,9 @@ class TestCancellation:
             final = wait_for_job(client, job["id"], statuses={"cancelled"})
             assert final["status"] == "cancelled"
             assert not (settings.library_dir / "video" / "Test Video.mkv").exists()
-
-            deadline = time.monotonic() + 3.0
-            while (settings.staging_dir / job["id"]).exists() and (
-                time.monotonic() < deadline
-            ):
-                time.sleep(0.05)
-            assert not (settings.staging_dir / job["id"]).exists()
+            assert client.portal is not None
+            client.portal.call(client.app.state.queue_manager.wait_for_attempt, job["id"])
+            assert video_file.exists()
 
     def test_cancel_during_merge_does_not_place_file(
         self, app_factory: Any, settings: Settings
@@ -1420,13 +1410,13 @@ class TestCancellation:
             final = wait_for_job(client, job["id"], statuses={"cancelled"})
             assert final["status"] == "cancelled"
             assert not (settings.library_dir / "video" / "Test Video.mkv").exists()
-
-            deadline = time.monotonic() + 3.0
-            while (settings.staging_dir / job["id"]).exists() and (
-                time.monotonic() < deadline
-            ):
-                time.sleep(0.05)
-            assert not (settings.staging_dir / job["id"]).exists()
+            assert client.portal is not None
+            client.portal.call(client.app.state.queue_manager.wait_for_attempt, job["id"])
+            # Downloaded sources stay for Retry; the half-written merge output
+            # is still discarded by the FFmpeg adapter and never published.
+            staged = sorted(p.name for p in (settings.staging_dir / job["id"]).iterdir())
+            assert staged and not any(name.startswith("merged") for name in staged)
+            assert not [p for p in settings.library_dir.rglob("*") if p.is_file()]
 
     def test_process_registered_after_cancel_is_terminated(
         self,
@@ -1459,12 +1449,9 @@ class TestCancellation:
             )
 
             assert final["status"] == "cancelled", final
-            deadline = time.monotonic() + 3.0
-            while (settings.staging_dir / job["id"]).exists() and (
-                time.monotonic() < deadline
-            ):
-                time.sleep(0.05)
-            assert not (settings.staging_dir / job["id"]).exists()
+            assert client.portal is not None
+            client.portal.call(client.app.state.queue_manager.wait_for_attempt, job["id"])
+            assert (settings.staging_dir / job["id"]).exists()
 
     def test_publish_wins_when_cancel_arrives_at_publish_boundary(
         self, app_factory: Any, settings: Settings, monkeypatch: pytest.MonkeyPatch
@@ -1607,6 +1594,28 @@ class TestJobErrorRetryabilityTaxonomy:
     )
     def test_job_error_code_retryable(self, code: str, expected: bool) -> None:
         assert job_error_code_retryable(code) is expected
+
+    @pytest.mark.parametrize(
+        ("status", "code", "expected"),
+        [
+            ("cancelled", "cancelled", True),
+            ("cancelled", None, True),
+            ("cancelled", "unsupported_url", True),
+            ("failed", "network_error", True),
+            ("failed", "cancelled", False),
+            ("failed", "unsupported_url", False),
+            ("failed", None, False),
+            ("completed", "network_error", False),
+            ("queued", "network_error", False),
+            ("downloading", "cancelled", False),
+        ],
+    )
+    def test_single_job_retryable_is_status_aware(
+        self, status: str, code: str | None, expected: bool
+    ) -> None:
+        # Cancelled single Retry (Q2) is status-based; the code list is unchanged.
+        assert single_job_retryable(status, code) is expected
+        assert job_error_code_retryable("cancelled") is False
 
 
 class TestSse:

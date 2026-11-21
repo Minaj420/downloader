@@ -7,14 +7,16 @@ from app.domain.jobs import (
     ORIGINAL_OUTPUT_PROFILE,
     CollectionProfile,
     JobDto,
+    JobError,
     JobErrorBody,
+    JobErrorCode,
     JobItemDto,
     JobProgress,
     JobStatus,
     OutputProfile,
     collection_child_retryable,
     collection_retryable,
-    job_error_code_retryable,
+    single_job_retryable,
 )
 from app.models.jobs import DownloadJob, JobItem
 
@@ -24,13 +26,20 @@ def _as_utc(value: datetime) -> datetime:
 
 
 def job_to_dto(record: DownloadJob, items: list[JobItem] | None = None) -> JobDto:
-    retryable = job_error_code_retryable(record.error_code or "")
+    retryable = single_job_retryable(record.status, record.error_code)
     if record.job_type == "collection":
         facts = ([(item.status, item.error_code) for item in items] if items is not None
                  else getattr(record, "_collection_retry_children", None))
         if facts is None and record.status in {"failed", "cancelled"} and record.error_code:
             raise ValueError("Collection snapshots require preloaded child retry facts")
         retryable = collection_retryable(record.status, facts or [])
+    error_code, error_message = record.error_code, record.error_message
+    if (record.job_type != "collection" and record.status == JobStatus.CANCELLED
+            and not error_code):
+        # Legacy cancelled single rows may lack a code; expose the same
+        # cancelled body shape so the explicit Retry stays reachable (Q2).
+        error_code = JobErrorCode.CANCELLED.value
+        error_message = error_message or JobError(JobErrorCode.CANCELLED).message
     return JobDto(
         id=record.id,
         analysis_id=record.analysis_id,
@@ -64,11 +73,11 @@ def job_to_dto(record: DownloadJob, items: list[JobItem] | None = None) -> JobDt
         ),
         final_path=record.final_path,
         error=JobErrorBody(
-            code=record.error_code or "internal_error",
-            message=record.error_message or "",
+            code=error_code or "internal_error",
+            message=error_message or "",
             retryable=retryable,
         )
-        if record.error_code
+        if error_code
         else None,
         created_at=_as_utc(record.created_at),
         updated_at=_as_utc(record.updated_at),

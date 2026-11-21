@@ -13,12 +13,12 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - Onaylı, belgeye aktarılacak: videodan ses çıkarma yok; ses doğrudan ses akışından.
 ## Sıradaki iş
 - Onaylı v0.1 sırası ve v0.2 ertelemeleri: ARCHITECTURE §59 ve PRODUCT_SPEC.
-- Sıradaki Q2: iptal edilen tekil indirmeyi kısmi veriden sürdürme (Opus).
+- Q2 kapandı; sıradaki bulgu 3, koleksiyon kalite tavanı aynı işte veya hemen ardından.
 - Bekleyen toplu UI Compose smoke: Queue'da active/history; gezinme/F5 sonrası sunucudan iş erişimi.
-- Smoke: uygun Cancel/Retry ve çift tık/pending; cancelled single Retry henüz yok (Q2).
+- Smoke: uygun Cancel/Retry ve çift tık/pending.
 - Smoke: geçmiş iş detay/Activity, collection öğeleri; Load more ve yeniden bağlantıda güncellik.
 - Smoke: Private video içeren playlist; satır devre dışı, Select All ve sayaç dışında.
-- Q2 kapanışında gerçek Compose: Cancel → yenile → Retry → kısmi veriden devam.
+- 2026-11-22 kullanıcı Compose Q2: Retry kaldığı yerden devam etti ve indirme tamamlandı.
 - M6.4/5 kapanışı yok; full gate ve değişen davranış için yeni kullanıcı Compose smoke'u gerekir.
 ## Açık kararlar
 - M6.6 güvenilir albüm grubu/ön hazırlık ve çoklu album_artists klasör değeri; M6.7 cover.jpg seçimi açık.
@@ -33,7 +33,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - should-fix: collection başarılı convert/caller-cancel testi sleep(0) ile deterministik değil;
   single başarılı convert+iptal ek testi eksik. Üretim hatası bulunmadı.
 - Audit aktarımı alındı (ARCH §59): Settings → S1/M7; Library detay → M9-L; son seçim localStorage v0.1.
-- K2 New Download gezinme/F5 draft kaybı sürer; restore tasarımı/uygulaması ayrı iş bekler.
+- New Download adı v0.1'de kalır; History satır içi detay M6.5 UI'a alındı. K2 v0.2.
 - M6.5: UI hata ayrıntısı+maskeleme önerisi, failed0%/iç kod/satırlar arası boşluk; rozet/SSE ve N ağ hatasında durma ARCH §59.
 - network_error/Deno bağı kanıtsız. Analiz +25/hepsi v0.2.
 - Fedora Python 3.14 eski üç backend failure (os.close monkeypatch/pidfd) macOS gate ile doğrulanmadı.

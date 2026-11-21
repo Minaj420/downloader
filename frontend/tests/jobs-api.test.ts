@@ -1,5 +1,6 @@
 import { ApiRequestError } from "../src/api/client";
 import {
+  canRetryJob,
   cancelJob,
   getJob,
   listActiveJobs,
@@ -176,5 +177,24 @@ describe("existing job calls", () => {
     await retryJob("j2");
     expect(retryFetch.mock.calls[0][0]).toBe("/api/v1/jobs/j2/retry");
     expect(retryFetch.mock.calls[0][1]?.method).toBe("POST");
+  });
+});
+
+describe("canRetryJob", () => {
+  const error = (retryable: boolean) => ({ code: "cancelled", message: "m", retryable });
+
+  it.each([
+    ["single cancelled, retryable", { status: "cancelled", job_type: "single", error: error(true) }, true],
+    ["legacy single cancelled (no job_type), retryable", { status: "cancelled", error: error(true) }, true],
+    ["single cancelled, not retryable", { status: "cancelled", job_type: "single", error: error(false) }, false],
+    ["single cancelled, no error body", { status: "cancelled", job_type: "single", error: null }, false],
+    ["single failed, retryable", { status: "failed", error: error(true) }, true],
+    ["single failed, not retryable", { status: "failed", error: error(false) }, false],
+    ["collection cancelled, retryable", { status: "cancelled", job_type: "collection", error: error(true) }, true],
+    ["collection cancelled, not retryable", { status: "cancelled", job_type: "collection", error: error(false) }, false],
+    ["completed with a stale retryable body", { status: "completed", error: error(true) }, false],
+    ["active with a stale retryable body", { status: "downloading", error: error(true) }, false],
+  ] as const)("follows the backend decision: %s", (_label, overrides, expected) => {
+    expect(canRetryJob(makeJob("j", overrides as Partial<Job>))).toBe(expected);
   });
 });

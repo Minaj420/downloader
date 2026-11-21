@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.jobs import (
     ACTIVE_JOB_STATUSES,
+    SINGLE_RETRYABLE_ANY_CODE_STATUSES,
     TERMINAL_JOB_STATUSES,
     JobErrorCode,
     JobStatus,
@@ -348,15 +349,28 @@ async def claimable_queued_jobs(
 
 
 async def stage_retry_job(session: AsyncSession, job_id: str, owner_id: str) -> bool:
-    """Compare-and-set at the actual write; caller owns activity and commit."""
+    """Compare-and-set at the actual write; caller owns activity and commit.
+
+    Same predicate as ``single_job_retryable``: any cancelled single job, or a
+    failed one with a retryable persisted code. Job staging (keyed by job id)
+    is never touched here, so a retained partial can be resumed.
+    """
     result = await session.execute(
         update(DownloadJob)
         .where(
             DownloadJob.id == job_id,
             DownloadJob.owner_id == owner_id,
-            DownloadJob.status == JobStatus.FAILED.value,
-            DownloadJob.error_code.in_(
-                [code.value for code in JobErrorCode if job_error_code_retryable(code)]
+            DownloadJob.job_type == "single",
+            or_(
+                DownloadJob.status.in_(
+                    [status.value for status in SINGLE_RETRYABLE_ANY_CODE_STATUSES]
+                ),
+                and_(
+                    DownloadJob.status == JobStatus.FAILED.value,
+                    DownloadJob.error_code.in_(
+                        [code.value for code in JobErrorCode if job_error_code_retryable(code)]
+                    ),
+                ),
             ),
         )
         .values(

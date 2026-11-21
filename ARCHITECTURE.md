@@ -829,7 +829,7 @@ For an active yt-dlp/FFmpeg subprocess:
 5. preserve appropriate partial data,
 6. update job state to `cancelled`.
 
-Retrying later may allow yt-dlp to continue from a valid `.part` file when supported. This is not a universal promise; current code boundary (observed): a cancelled single job cannot be retried (`JobService._retry_job` accepts only a failed single job with a retryable error code) and the single runner removes its staging on cancel, so no `.part` survives; a cancelled collection can be retried and resumes from retained child `.part` data (smoke PASS). Cancelled single Retry with partial staging retention and an explicit user Retry (no automatic resume) is approved but not yet implemented (§59, Q2); the current behaviour above stays until then.
+Retrying later may allow yt-dlp to continue from a valid `.part` file when supported. This is not a universal promise. Cancelled single Retry (Q2, implemented; user Compose smoke pending): the single runner keeps the job staging (keyed by job id) on cancel and removes it only after a successful finish; the FFmpeg adapter still discards its half-written output and placement stays cancellation-gated, so nothing partial is published. Retry eligibility is the shared status-aware `single_job_retryable` (any cancelled single job, or a failed one with a retryable persisted code); `stage_retry_job` uses the same predicate in its CAS (single rows only), and `CANCELLED` is not added to the general retryable code list, so collection policy and the error body are unchanged. The existing order is kept: lifecycle lock → old attempt drain → CAS commit → `reset_attempt`, which also drops a stale queued-cancel signal before a new attempt can be claimed. The next attempt reuses the staging, so yt-dlp continues a valid `.part` when the source supports it, otherwise it starts from scratch; no automatic resume. A cancelled collection can be retried and resumes from retained child `.part` data (smoke PASS).
 
 For a collection, parent Cancel propagates to active child subprocesses and prevents not-started children from being scheduled. Completed children, finalized files, and Library entries remain untouched. Parent Retry includes failed, cancelled, and incomplete children only, preserving completed work. When cancellation races with child failure, terminal precedence is decided by durable persisted state: a Cancel request persisted before the parent's terminalization transaction makes the parent `cancelled`; a failure terminal committed first keeps the parent `failed`, and a later Cancel cannot supersede it. In-memory event timing is never the decision source. This mechanism does not define all-completed or success-versus-Cancel semantics or shutdown policy; the single runner's precedence is unchanged.
 
@@ -2037,9 +2037,9 @@ The architectural foundation must nevertheless allow those features to be added 
 
 # 59. Implementation Milestones
 
-**v0.1 active plan (user-approved order; authoritative over older order/timing wording below; none beyond Q1 is implemented):**
+**v0.1 active plan (user-approved order; authoritative over older order/timing wording below; none beyond Q1 and Q2 is implemented):**
 
-1. Q2: explicit cancelled single Retry, partial staging retention and Queue/New Download access — one Opus task; acceptance is a real Compose Cancel → refresh → Retry → continue-from-partial run (user smoke; not yet done). Q1 is implemented; its batched UI smoke is pending.
+1. Q2: explicit cancelled single Retry, partial staging retention and Queue/New Download access — one Opus task; implemented (§20); acceptance is a real Compose Cancel → refresh → Retry → continue-from-partial run (user smoke; not yet done). Q1 is implemented; its batched UI smoke is pending.
 2. Finding 3: real resolution / `(2)` / `Already exists`; the same request existing means skip, never a silent overwrite. Collection quality ceiling picker 2160/1440/1080/720/480 with per-item best fallback is approved, inside item 2 or, if needed, a separate task right after it.
 3. Q3 (finding 10), a separate task: bulk Clear History; preview shows only the job count (no space/byte estimate); partial failure = `N jobs could not be deleted` summary + Activity; cancelled excluded by default, `include_cancelled` option, failed staging included, Library untouched, no per-job DELETE.
 4. M6.5 text tags.
@@ -2143,8 +2143,8 @@ Approved decisions below are planned, not implemented, except the explicit-conve
 ### M6-Q — Queue frontend prerequisite, readiness and plan (documentation only)
 
 Plan and decision record; current delivery/smoke status lives in STATE.md, task history in commit bodies.
-Delivered so far: Q0 deployment fix (closed), Q19 log/detail changes, runtime 6 Deno/yt-dlp (closed), Q1 backend and frontend.
-Q2/Q3 and the other tasks are open; M6-Q and the general M6 milestone are NOT closed.
+Delivered so far: Q0 deployment fix (closed), Q19 log/detail changes, runtime 6 Deno/yt-dlp (closed), Q1 backend and frontend, Q2 cancelled single Retry (implemented; Compose smoke pending).
+Q3 and the other tasks are open; M6-Q and the general M6 milestone are NOT closed.
 Smoke evidence is user-reported; lead/worker did not run Docker.
 Labels: **APPROVED** = user decision (planned, not implemented unless stated); **PROPOSED** = awaiting user approval, not started; **OBSERVED** = finding, unfixed.
 
@@ -2154,7 +2154,7 @@ Labels: **APPROVED** = user decision (planned, not implemented unless stated); *
 - Decisions recorded in PRODUCT_SPEC and planned, not implemented: single Audio/Video choice (§6), video ceilings and naming/collision rules (§9, §16), real conversion progress (§17), Auto Select display and platform icons (§4; icons approved for v0.1, actual set/license still open), single Delete modal (§21; §38 here). The old job card may be cleared on a new analysis only after Queue actually delivers access to cancelled single-job Retry (finding 8); Queue restores job access from the backend.
 - Lifecycle: the M5 orderly-shutdown contract (§19, §21) stays an implemented contract; container graceful stop is user-smoke verified for Q0 only (finding 18 CLOSED/PASS), which is not a milestone closure.
 - Approved user decisions of 17 Nov (planned, not implemented; product wording in PRODUCT_SPEC):
-  1. Cancelled single Retry with partial staging retention, continuing from where it stopped; explicit Retry only, no automatic resume. Separate bounded Opus expert task in Q2. Clear History keeps cancelled single jobs by default; with `include_cancelled` their partial staging is deleted (PRODUCT_SPEC §17).
+  1. Cancelled single Retry with partial staging retention, continuing from where it stopped; explicit Retry only, no automatic resume. Separate bounded Opus expert task in Q2 — implemented (§20; every cancelled single job, including queued/pre-Q2 cancels, gets Retry; from scratch without a valid partial); Compose smoke pending. Clear History keeps cancelled single jobs by default; with `include_cancelled` their partial staging is deleted (PRODUCT_SPEC §17).
   2. Clear History also deletes failed jobs' staging; no automatic deletion at the moment of failure (PRODUCT_SPEC §17).
   3. `sessionStorage` draft restore (K2) is approved and deferred to v0.2 (not Q2, not v0.1). The technical sketch below stays PROPOSED (PRODUCT_SPEC §6).
   4. Collection standard `Up to Xp` ceiling picker (finding 20; PRODUCT_SPEC §9).
@@ -2209,7 +2209,7 @@ Labels: **APPROVED** = user decision (planned, not implemented unless stated); *
   ensure every non-terminal job is visible and terminal history is bounded with simple load-more/pagination;
   reduce collection children N+1 loading; on-demand detail API; backward compatibility is checked in the design.
 - **Q1 technical contract** (DESIGN, documented 20 Nov).
-  Status: Q1-be, Q1-fe-api and Q1-fe-page implemented (current status: STATE.md); Q2/Q3 open; no M6-Q/M6 closure.
+  Status: Q1-be, Q1-fe-api and Q1-fe-page implemented (current status: STATE.md); Q2 implemented (§20), Q3 open; no M6-Q/M6 closure.
   Code: `api/v1/jobs.py` scope/limit/cursor, `repositories/jobs.py` batched children and scoped reads, `services/job_service.py` cursor codec; evidence `backend/tests/test_job_listing.py`.
   USER DECISION recorded here as authoritative: Queue history order is `created_at` newest → oldest.
   No migration, new SSE route/event, provider/framework or new detail/Activity endpoint.
@@ -2311,11 +2311,11 @@ Labels: **APPROVED** = user decision (planned, not implemented unless stated); *
     → **Q1-fe-api** (`frontend/src/api/jobs.ts` scoped client/types + tests)
     → **Q1-fe-page** (`QueuePage.tsx` and page-local helpers/tests; reusing/extracting `snapshotTime` must not change `NewDownloadPage` behaviour).
     Out of scope: Q2 cancelled single Retry/staging, K2 draft restore, Q3 Clear History, analysis 25/+25/Show all, placeholder label (decision 8), integer collection percent, per-child Cancel/Retry, SSE owner scoping, and any new product decision.
-- Q2: approved cancelled single Retry with staging retention and Queue/New Download access (one Opus expert task; decision 1). K2 draft restore is NOT part of Q2 (v0.2).
+- Q2: approved cancelled single Retry with staging retention and Queue/New Download access (one Opus expert task; decision 1) — implemented (§20); Compose smoke pending. K2 draft restore is NOT part of Q2 (v0.2).
 - Finding 3 (after Q2): wrong quality/identity/naming through a separate storage/catalog contract expert job that never blindly dedups the current logical shared identity; the Replace/Keep Both choice surface stays in M9-C (v0.2). The collection ceiling picker (decision 5) is part of it or a separate task right after.
 - Q3 (finding 10), separate from finding 3: bulk Clear History; the backend is built from scratch. Separate Opus expert contract: preview/confirm, drain, retry/cleanup races, staging ownership, path/backend ID handling, symlink/no-follow, DB+filesystem atomicity limits, no arbitrary orphan traversal; failed staging is included (decision 2); cancelled excluded by default with an `include_cancelled` option; Library untouched. Decided (supersedes the earlier open question): the preview shows only the job count, no byte/space estimate; partial failure is reported as an `N jobs could not be deleted` summary plus Activity. No per-job job/history `DELETE` (§7, PRODUCT_SPEC §17); user-settled bulk-only.
 - Technical sketch for K2 draft restore (v0.2; PROPOSED, unapproved; not a Q2 item): reuse the existing `GET /api/v1/analysis/{analysis_id}` and its 410 for expired snapshots; keep only `analysis_id` plus bounded selection/output/mode/platform identifiers in `sessionStorage`; no raw metadata or full source URL in persistent `localStorage`. An expired, foreign or missing snapshot, a double submit after create, or a stale variant clears the draft safely with a message. Queue alone does not fully solve New Download state loss.
-- Technical record for the Queue decisions (observed code boundaries, not decisions): `QueuePage.tsx` was an 8-line placeholder before Q1-fe-page (now the live server-backed Queue page, 7fed194); M4 closed only the backend. Single cancelled Retry is currently rejected (`JobService._retry_job` accepts a failed single job with a retryable code) and the single runner removes staging on cancel; a collection cancelled parent can be Retried and resumes from retained child staging. Approved decision 1 changes the single path in Q2.
+- Technical record for the Queue decisions (observed code boundaries, not decisions): `QueuePage.tsx` was an 8-line placeholder before Q1-fe-page (now the live server-backed Queue page, 7fed194); M4 closed only the backend. Historical (pre-Q2): single cancelled Retry was rejected (`JobService._retry_job` accepted only a failed single job with a retryable code) and the single runner removed staging on cancel; superseded by Q2 — current single behaviour is in §20. A collection cancelled parent can be Retried and resumes from retained child staging (unchanged).
 - Settings S1 (read-only; approved; contract in §47): position after M6.5, at the opening of M7, validated against the M7 target. It shows real effective env values, configured/unconfigured destinations and the stored startup probe result right when M7 adds Plex destinations. Implementer: Opus, because the API contract matters (size is not a criterion). The startup storage write probe (§47) must exist for S1 to display its result; S1 shows no result before the probe exists, and the probe is built at the M7 opening (active plan item 7), not designed here. It also relates to the root-owned container data note (finding 18 close, item 6): a non-root UID/GID plan is a separate bounded Opus task.
 - Settings S2a/S2b/S2c: post-v0.1 future backlog (§47, §60); not in M9.
 - Remember last selection (§47; v0.1): a separate bounded frontend task (active plan item 6), independent of the K2 draft restore (v0.2); it stays v0.1.
@@ -2355,7 +2355,7 @@ Finding 18 close (user report; lead/worker did not rerun Docker or ffmpeg; Pytho
 - Restart recovery with Retry and partial resume is demonstrated for a single job and a collection:
   completed children are kept, the interrupted child ends `interrupted_by_restart`, a queued sibling does not auto-start (no auto-resume),
   and Retry uses the persisted first-analysis items without re-downloading completed children.
-- It is NOT a single-job user Cancel retry (the cancelled path still rejects and removes staging, pending the Q2 expert task);
+- It is NOT a single-job user Cancel retry (at that time the cancelled path rejected Retry and removed staging; superseded by Q2, see §20);
   resume is source-supported, not a universal promise.
 - The `NewDownloadPage` subscription guard is `jobId == null`, not `jobActive`, so a tracked terminal job can stay subscribed;
   an idle shutdown duration alone does not prove an actual browser connection, and no forced 5 s is expected.

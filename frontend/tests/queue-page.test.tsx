@@ -674,4 +674,45 @@ describe("QueuePage actions", () => {
     expect(count((url) => url.endsWith("/retry"))).toBe(1);
     expect(rowTitles(activeRegion())).toEqual(["Job a"]);
   });
+
+  it("offers Retry on cancelled single history rows only when the backend marks them retryable", async () => {
+    const cancelledError = (flag: boolean) => ({ code: "cancelled", message: "The download was cancelled.", retryable: flag });
+    server.pages.set("", {
+      jobs: [
+        job("c1", { status: "cancelled", job_type: "single", error: cancelledError(true), created_at: at(9) }),
+        job("c2", { status: "cancelled", job_type: "single", error: cancelledError(false), created_at: at(8) }),
+      ],
+      next_cursor: null,
+    });
+    server.actions.set("/api/v1/jobs/c1/retry", () => Promise.resolve(json(job("c1", { status: "queued", created_at: at(9), updated_at: at(20) }))));
+    const { user } = await mount();
+    expect(row("Job c2").queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
+    // Explicit only: nothing is retried before the user clicks.
+    expect(count((url) => url.endsWith("/retry"))).toBe(0);
+
+    await user.click(row("Job c1").getByRole("button", { name: "Retry" }));
+    await settle();
+    expect(count((url) => url === "/api/v1/jobs/c1/retry")).toBe(1);
+    expect(rowTitles(activeRegion())).toEqual(["Job c1"]);
+    expect(rowTitles(historyRegion())).toEqual(["Job c2"]);
+  });
+
+  it("shows Retry after cancelling an active single job once the cancelled snapshot is retryable", async () => {
+    server.active = [job("a", { status: "downloading", job_type: "single", updated_at: at(5) })];
+    server.actions.set("/api/v1/jobs/a/cancel", () => Promise.resolve(json(job("a", { status: "downloading", updated_at: at(5) }))));
+    server.actions.set("/api/v1/jobs/a/retry", () => Promise.resolve(json(job("a", { status: "queued", updated_at: at(9) }))));
+    const { stream, user } = await mount();
+    await user.click(row("Job a").getByRole("button", { name: "Cancel" }));
+    await settle();
+    stream.emit("job.cancelled", job("a", {
+      status: "cancelled", job_type: "single", updated_at: at(6),
+      error: { code: "cancelled", message: "The download was cancelled.", retryable: true },
+    }));
+    expect(rowTitles(historyRegion())).toEqual(["Job a"]);
+    expect(count((url) => url.endsWith("/retry"))).toBe(0);
+    await user.click(row("Job a").getByRole("button", { name: "Retry" }));
+    await settle();
+    expect(count((url) => url === "/api/v1/jobs/a/retry")).toBe(1);
+    expect(rowTitles(activeRegion())).toEqual(["Job a"]);
+  });
 });
