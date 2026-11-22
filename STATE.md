@@ -1,9 +1,7 @@
 # Durum
 
 Devam özeti; iş akışı `docs/WORKFLOW.md`.
-
 ## Şu an
-
 - Mod: Normal, lead OpenCode; bekleyen Claude-only GPT review'u yok.
 - Lead/reviewer/implementer tanımı GPT‑6.2 Sol (implementer pasif); Luna/Claude değişmedi. ARCH-A tamam: smoke/kapanış STATE'te; ARCH bayat durumları güncellenir, karar çatışmasında durulur.
 - M6 açık; Q0/18 ve runtime6 kullanıcı Compose smoke/onayıyla kapandı. M6-Q genel kapanışı yok.
@@ -13,8 +11,9 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - Onaylı, belgeye aktarılacak: videodan ses çıkarma yok; ses doğrudan ses akışından.
 ## Sıradaki iş
 - Onaylı v0.1 sırası ve v0.2 ertelemeleri: ARCHITECTURE §59 ve PRODUCT_SPEC.
-- Bulgu 3a: bağımsız review'da must-fix yok; 2026-11-22 Fedora hedefli 817 PASS/1 SKIP, Ruff/mypy temiz. Kullanıcı Compose smoke bekleniyor; göreli girdi test kapsamı should-fix.
-- Sıra: 3a Compose smoke → 3b-1 → 3b-2 + 3c → Compose smoke → koleksiyon kalite tavanı (dikey videoda kısa kenar/filtresi).
+- Bulgu 3a kapandı: Fedora Compose ffprobe 7.1.5; tekil 720p, dikey 1080p; ağ hatalı öğe Retry ile indi (4/4), sıra korundu. Hedefli 817 PASS/1 SKIP, Ruff/mypy ve review temiz; göreli girdi testi should-fix.
+- Q3b-2 ve 3c Already exists v0.1 sonrası; güvenli numara ve çözünürlük eki kalır. Aday ve açık review bulguları `wip/already-exists` dalında.
+- Gelecek: arşiv benzeri katalog eşleşmesi (PRODUCT_SPEC §16), ihtiyaç doğarsa önce koleksiyonlar. Sıradaki iş: koleksiyon kalite tavanı seçici (dikey kısa kenar).
 - Bekleyen toplu UI Compose smoke: Queue'da active/history; gezinme/F5 sonrası sunucudan iş erişimi.
 - Smoke: uygun Cancel/Retry ve çift tık/pending.
 - Smoke: geçmiş iş detay/Activity, collection öğeleri; Load more ve yeniden bağlantıda güncellik.
@@ -33,15 +32,16 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
   kapanış paragrafında bayat; sabit profillerin yetkili belgeye aktarımı ayrı iş.
 - should-fix: collection başarılı convert/caller-cancel testi sleep(0) ile deterministik değil;
   single başarılı convert+iptal ek testi eksik. Üretim hatası bulunmadı.
-- Audit aktarımı alındı (ARCH §59): Settings → S1/M7; Library detay → M9-L; son seçim localStorage v0.1.
+- Audit (ARCH §59): Settings → S1/M7; son seçim localStorage v0.1. Library detay (M9-L): başlığa tıklanabilirlik belirsiz, detay sayfa sonunda; popup/satır içi genişleme kararı açık.
 - New Download adı v0.1'de kalır; History satır içi detay M6.5 UI'a alındı. K2 v0.2.
-- M6.5: UI hata ayrıntısı+maskeleme önerisi, failed0%/iç kod/satırlar arası boşluk; rozet/SSE ve N ağ hatasında durma ARCH §59.
+- M6.5: Media Preview “Single item” etiketi için daha sade ifade değerlendirilecek; hata ayrıntısı/maskeleme, failed0%/iç kod/satır boşluğu, rozet/SSE ve ağ hatası eşiği ARCH §59.
 - network_error/Deno bağı kanıtsız. Analiz +25/hepsi v0.2.
 - Fedora Python 3.14: child storage pidfd testi düzeltme diff'inde geçti; full gate çalışmadı.
 - should-fix: child Skip Existing Activity uyarısı yok; ayrı lifecycle/transaction işi.
 - should-fix: modelsiz implement resume CLI hatasının belgelenmesi ve izleyici partial-line
   testinin deterministikliği açık; restart/model reload ve farklı-rol resume izolasyonu kanıtsız.
 - should-fix: lead.md eski bootstrap referansı.
+- Takip: scripts/claude-agent.py review prompt'unu yeni review sınıf sınırıyla eşitle; ARCH §59 zamanlaması erteleme kararı öncesinden.
 - should-fix: geniş git diff/log izinleri --output seçeneğini teknik olarak dışlamıyor;
   yalnız salt-okunur biçimler kullanılır, config bakımı ayrı. gh PR wildcard'ları da repo/hedef/
   body-file sınırını sağlamaz; açık repo/base/head ve düz metin body kullanılmalı.
