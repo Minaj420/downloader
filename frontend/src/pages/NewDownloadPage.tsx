@@ -28,6 +28,13 @@ import { AUTO_PLATFORM_VALUE } from "../features/new-download/platforms";
 
 const POLL_INTERVAL_MS = 2000;
 
+/**
+ * Fixed collection video short-edge ceilings (PRODUCT_SPEC §9). Sent as the
+ * backend's historical `max_height` field; Best Available omits it.
+ */
+const COLLECTION_VIDEO_CEILINGS = [2160, 1440, 1080, 720, 480] as const;
+type CollectionVideoCeiling = (typeof COLLECTION_VIDEO_CEILINGS)[number];
+
 /** Collection selection is scoped to one analysis snapshot (PRODUCT_SPEC §10). */
 interface CollectionSelectionState {
   analysisId: string;
@@ -82,6 +89,12 @@ export function NewDownloadPage() {
   const [outputSelection, setOutputSelection] = useState<{
     analysisId: string;
     profile: OutputProfile;
+  } | null>(null);
+  // Explicit collection video ceiling for one analysis snapshot; null means
+  // Best Available. Cleared on a switch to audio and on every new analysis.
+  const [videoCeilingSelection, setVideoCeilingSelection] = useState<{
+    analysisId: string;
+    ceiling: CollectionVideoCeiling;
   } | null>(null);
   const [job, setJob] = useState<Job | null>(null);
   const [itemsLoadStatus, setItemsLoadStatus] = useState<ItemsLoadStatus>("loading");
@@ -214,6 +227,22 @@ export function NewDownloadPage() {
     outputProfilesFor(outputKind).includes(outputSelection.profile)
       ? outputSelection.profile
       : "original";
+  // Only a collection in video mode offers (and posts) a quality ceiling.
+  const offersVideoCeiling =
+    analyze.data?.content_type === "collection" && outputKind === "video";
+  const videoCeiling: CollectionVideoCeiling | null =
+    offersVideoCeiling && videoCeilingSelection?.analysisId === analyze.data?.analysis_id
+      ? (videoCeilingSelection?.ceiling ?? null)
+      : null;
+
+  const handleSelectVideoCeiling = (ceiling: CollectionVideoCeiling | null) => {
+    const result = analyze.data;
+    if (result == null || !offersVideoCeiling || analyze.isPending || createJob.isPending ||
+      createPending.current) return;
+    setVideoCeilingSelection(
+      ceiling == null ? null : { analysisId: result.analysis_id, ceiling },
+    );
+  };
 
   const handleSelectVariant = (variantId: string) => {
     const result = analyze.data;
@@ -281,6 +310,8 @@ export function NewDownloadPage() {
     if (!collectionSnapshotMatches) return;
     // The mode decides the audio/video output set: a change clears the choice.
     if (mode !== activeCollectionSelection?.mode) setOutputSelection(null);
+    // Audio has no video ceiling: a stale choice never returns on video.
+    if (mode === "audio") setVideoCeilingSelection(null);
     setCollectionSelection((current) =>
       current == null ? current : { ...current, mode },
     );
@@ -296,6 +327,7 @@ export function NewDownloadPage() {
         // Every successful analysis restarts at Original, even for a repeated
         // analysis id.
         setOutputSelection(null);
+        setVideoCeilingSelection(null);
       },
     });
   };
@@ -380,7 +412,10 @@ export function NewDownloadPage() {
           analysis_id: result.analysis_id,
           item_ids: itemIds,
           collection_mode: selection.mode,
-          collection_profile: { kind: "original_best_available" },
+          collection_profile:
+            selection.mode === "video" && videoCeiling != null
+              ? { kind: "original_best_available", max_height: videoCeiling }
+              : { kind: "original_best_available" },
           output_profile: outputProfile,
           destination: "app_library",
         },
@@ -582,6 +617,44 @@ export function NewDownloadPage() {
   const analyzeRetryable =
     analyzeError instanceof ApiRequestError && analyzeError.retryable;
   const createError = createJob.error;
+  // Rendered by AnalysisResult inside the collection output section.
+  const videoCeilingControl = (
+    <>
+      <fieldset className="destination-group">
+        <legend>Video quality</legend>
+        <label className="destination-option">
+          <input
+            type="radio"
+            name="collection-video-ceiling"
+            value="best"
+            checked={videoCeiling == null}
+            disabled={analyze.isPending || createJob.isPending}
+            onChange={() => handleSelectVideoCeiling(null)}
+          />
+          Best Available
+        </label>
+        {COLLECTION_VIDEO_CEILINGS.map((ceiling) => (
+          <label key={ceiling} className="destination-option">
+            <input
+              type="radio"
+              name="collection-video-ceiling"
+              value={ceiling}
+              checked={videoCeiling === ceiling}
+              disabled={analyze.isPending || createJob.isPending}
+              onChange={() => handleSelectVideoCeiling(ceiling)}
+            />
+            {`Up to ${ceiling}p`}
+          </label>
+        ))}
+      </fieldset>
+      <p className="muted-note">
+        A limit prefers each item's best source whose shorter side fits it
+        (Up to 1080p covers 1920×1080 and vertical 1080×1920). If an item has no
+        source within the limit, its Best Available source is used instead.
+        Video is never resized; the output format is chosen separately.
+      </p>
+    </>
+  );
 
   return (
     <section>
@@ -620,6 +693,7 @@ export function NewDownloadPage() {
           collectionMode={activeCollectionSelection?.mode ?? null}
           outputKind={outputKind}
           outputProfile={outputProfile}
+          collectionQualityControl={offersVideoCeiling ? videoCeilingControl : null}
           isCreatingJob={createJob.isPending}
           isAnalyzing={analyze.isPending}
           onSelectVariant={handleSelectVariant}

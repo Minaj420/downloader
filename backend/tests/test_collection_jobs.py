@@ -237,6 +237,36 @@ def test_profile_contract(
         assert stored["collection_profile"] == job["collection_profile"]
 
 
+@pytest.mark.parametrize("profile,stored", [
+    *[({"kind": "original_best_available", "max_height": cap},
+       {"kind": "original_best_available", "max_height": cap})
+      for cap in (2160, 1440, 1080, 720, 480)],
+    # Best Available: omitted, null or kind-only all persist NULL.
+    (None, None),
+    ({"kind": "original_best_available"}, None),
+    ({"kind": "original_best_available", "max_height": None}, None),
+])
+def test_video_short_edge_ceiling_round_trip_and_default(
+    client: TestClient, analyzer: FakeAnalyzer, settings: Settings,
+    profile: Any, stored: dict[str, Any] | None,
+) -> None:
+    request = request_for(analyze(client, analyzer))
+    request["collection_mode"] = "video"
+    if profile is not None:
+        request["collection_profile"] = profile
+    response = client.post("/api/v1/jobs", json=request)
+    assert response.status_code == 200
+    job = response.json()
+    expected = stored or {"kind": "original_best_available", "max_height": None}
+    assert job["collection_profile"] == expected
+    assert client.get(f"/api/v1/jobs/{job['id']}").json()["collection_profile"] == expected
+    assert [j["collection_profile"] for j in client.get("/api/v1/jobs").json()["jobs"]] == [
+        expected]
+    with sqlite3.connect(settings.state_dir / "downloader.db") as connection:
+        row = connection.execute("SELECT collection_profile_json FROM download_jobs").fetchone()
+    assert (json.loads(row[0]) if row[0] is not None else None) == stored
+
+
 @pytest.mark.parametrize("extra", [
     {"variant_id": "audio-best"}, {"source_url": "https://evil.example"},
     {"format_id": "137"}, {"raw_args": ["--exec", "evil"]}, {"item_profiles": []},

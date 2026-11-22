@@ -226,7 +226,12 @@ class JobErrorBody(BaseModel):
 
 
 class CollectionProfile(BaseModel):
-    """Native source-aware preference, not a conversion or quality guarantee."""
+    """Native source-aware preference, not a conversion or quality guarantee.
+
+    ``max_height`` keeps its historical wire/persisted name but means a
+    collection video short-edge ceiling preference (PRODUCT_SPEC §9); it is
+    never scaling and falls back to Best Available when no source fits.
+    """
 
     model_config = ConfigDict(extra="forbid", strict=True)
     kind: Literal["original_best_available"] = "original_best_available"

@@ -9,7 +9,7 @@ from typing import Any, cast
 import pytest
 from sqlalchemy import select, update
 
-from app.domain.jobs import JobError, JobErrorCode, JobStatus
+from app.domain.jobs import CollectionProfile, JobError, JobErrorCode, JobStatus
 from app.integrations.ffmpeg import (
     ConversionProfile,
     FFmpegError,
@@ -27,6 +27,7 @@ from app.services.collection_child_runner import ChildResult, ChildRunnerDeps, r
 from app.services.collection_persistence import (
     CollectionCancelRequestOutcome,
     stage_collection_cancel_request,
+    stage_collection_retry,
 )
 from app.services.job_runner import _REMUX_FALLBACK_SAVED
 from app.services.storage_service import StorageService
@@ -213,6 +214,117 @@ async def test_native_completion_catalog_and_counters(
         assert (await h.facts())[:5] == facts[:5]
         assert not h.processes
         assert not (tmp_path / "staging" / "child-2").exists()
+    finally:
+        await h.engine.dispose()
+
+
+def portrait_source() -> dict[str, Any]:
+    return {"formats": [
+        {"format_id": "audio", "ext": "m4a", "vcodec": "none", "acodec": "mp4a.40.2"},
+        {"format_id": "portrait", "ext": "mp4", "width": 1080, "height": 1920,
+         "vcodec": "avc1", "acodec": "none"},
+        {"format_id": "tall", "ext": "mp4", "width": 2160, "height": 3840,
+         "vcodec": "avc1", "acodec": "none"},
+    ]}
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("height,portrait,selectors", [
+    # Below every source: same actual selector as uncapped Best Available.
+    (240, False, ["high", "audio", "merge"]),
+    (None, False, ["high", "audio", "merge"]),
+    (1080, True, ["portrait", "audio", "merge"]),
+    (1440, True, ["portrait", "audio", "merge"]),
+    (2160, True, ["tall", "audio", "merge"]),
+])
+async def test_short_edge_ceiling_drives_actual_download_selector(
+    tmp_path: Path, height: int | None, portrait: bool, selectors: list[str],
+) -> None:
+    h = Harness(tmp_path)
+    try:
+        await h.seed("video", height)
+        if portrait:
+            h.adapters.source = portrait_source()
+        assert await h.run() == ChildResult.COMPLETED
+        assert h.adapters.calls == ["probe", *selectors]
+        assert h.adapters.conversions == []
+        assert (await h.facts())[:3] == ("completed", "analyzing", 1)
+    finally:
+        await h.engine.dispose()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("height", [None, 1080])
+async def test_no_eligible_video_candidate_still_fails_before_download(
+    tmp_path: Path, height: int | None,
+) -> None:
+    h = Harness(tmp_path)
+    try:
+        await h.seed("video", height)
+        h.adapters.source = {"formats": [
+            {"format_id": "silent", "ext": "mp4", "width": 1280, "height": 720,
+             "vcodec": "avc1", "acodec": "none"},
+        ]}
+        with pytest.raises(JobError) as caught:
+            await h.run()
+        assert caught.value.code == JobErrorCode.INVALID_VARIANT
+        assert h.adapters.calls == ["probe"]
+        facts = await h.facts()
+        assert facts[2] == 0 and facts[5] is None and facts[6] == []
+    finally:
+        await h.engine.dispose()
+
+
+@pytest.mark.anyio
+async def test_retry_reuses_persisted_profile_and_resolver(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    h = Harness(tmp_path)
+    try:
+        await h.seed("video", 1080)
+        resolved: list[tuple[CollectionProfile | None, str]] = []
+        real_resolve = child_runner.resolve_native_child
+
+        def spy(source: dict[str, Any], *, mode: str,
+                profile: CollectionProfile | None = None) -> Any:
+            plan = real_resolve(source, mode=mode, profile=profile)
+            resolved.append((profile, plan.selected.format_id))
+            return plan
+
+        monkeypatch.setattr(child_runner, "resolve_native_child", spy)
+        real_download = h.adapters.download
+        selectors: list[str] = []
+
+        async def download(**kwargs: Any) -> list[str]:
+            selectors.append(kwargs["format_selector"])
+            if len(selectors) == 1:
+                raise JobError(JobErrorCode.NETWORK_ERROR)
+            return await real_download(**kwargs)
+
+        h.adapters.download = download  # type: ignore[method-assign]
+        with pytest.raises(JobError):
+            await h.run()
+        # Caller settlement, then the real collection retry reset and a claim.
+        async with h.sessions() as session:
+            await session.execute(update(JobItem).where(JobItem.id == "child-2").values(
+                status="failed", error_code="network_error"))
+            await session.execute(update(DownloadJob).values(status="failed"))
+            await session.commit()
+        async with h.sessions() as session:
+            assert await stage_collection_retry(session, job_id="parent", owner_id="owner")
+            await session.commit()
+        async with h.sessions() as session:
+            await session.execute(update(DownloadJob).values(status="analyzing"))
+            await session.commit()
+        assert await h.run() == ChildResult.COMPLETED
+        expected = CollectionProfile(max_height=1080)
+        assert resolved == [(expected, "low"), (expected, "low")]
+        assert selectors == ["low", "low", "audio"]
+        async with h.sessions() as session:
+            record = await session.get(DownloadJob, "parent")
+            assert record is not None
+            assert CollectionProfile.model_validate_json(
+                record.collection_profile_json or "") == expected
     finally:
         await h.engine.dispose()
 

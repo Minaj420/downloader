@@ -4,7 +4,7 @@ import pytest
 
 from app.domain.jobs import CollectionProfile, JobError, JobErrorCode
 from app.services.analysis_normalizer import normalize_source_formats
-from app.services.collection_profile_resolver import resolve_native_child
+from app.services.collection_profile_resolver import NativeChildPlan, resolve_native_child
 from tests.yt_dlp_samples import muxed_and_video_only_payload, single_video_payload
 
 
@@ -83,11 +83,102 @@ def test_muxed_fallback_without_audio_companion() -> None:
     assert plan.companion is None
 
 
-def test_unknown_height_excluded_only_when_ceiling_exists() -> None:
+def capped(source: dict[str, Any], cap: int) -> NativeChildPlan:
+    return resolve_native_child(source, mode="video", profile=CollectionProfile(max_height=cap))
+
+
+def test_oversized_width_only_stream_falls_back_to_best_available() -> None:
     source = {"formats": [stream("unknown", width=4096)]}
-    assert resolve_native_child(source, mode="video").selected.height is None
+    uncapped = resolve_native_child(source, mode="video")
+    assert uncapped.selected.height is None
+    assert capped(source, 1080) == uncapped
+
+
+@pytest.mark.parametrize("formats, cap, expected", [
+    # Portrait short edge is the width: 1080x1920 fits a 1080 ceiling.
+    ([stream("portrait", width=1080, height=1920),
+      stream("tall", width=2160, height=3840)], 1080, "portrait"),
+    # 2160x3840 does not fit 1440 while a qualifying lower source exists.
+    ([stream("low", width=1080, height=1920),
+      stream("tall", width=2160, height=3840)], 1440, "low"),
+    ([stream("landscape", width=1920, height=1080),
+      stream("uhd", width=3840, height=2160)], 1080, "landscape"),
+    ([stream("landscape", width=1920, height=1080),
+      stream("uhd", width=3840, height=2160)], 2160, "uhd"),
+    # One known dimension decides; height-only and width-only both count.
+    ([stream("height-only", height=720),
+      stream("uhd", width=3840, height=2160)], 1080, "height-only"),
+    ([stream("width-only", width=720),
+      stream("uhd", width=3840, height=2160)], 1080, "width-only"),
+    # Unknown dimensions never prove a fit when a qualifying competitor exists.
+    ([stream("clear", width=640, height=360),
+      stream("unknown")], 1080, "clear"),
+])
+def test_short_edge_ceiling_prefers_fitting_candidates(
+    formats: list[dict[str, Any]], cap: int, expected: str,
+) -> None:
+    plan = capped({"formats": formats}, cap)
+    assert plan.selected.format_id == expected
+
+
+def test_fitting_candidates_keep_existing_rank_tuple() -> None:
+    source = {"formats": [
+        stream("slow", width=1080, height=1920, fps=30),
+        stream("fast", width=1080, height=1920, fps=60),
+        stream("narrow", width=720, height=1920, fps=120),
+        stream("tall", width=2160, height=3840, fps=60),
+    ]}
+    assert capped(source, 1080).selected.format_id == "fast"
+
+
+def test_equally_ranked_fitting_streams_use_later_extractor_order() -> None:
+    source = {"formats": [
+        stream("earlier", width=1920, height=1080, fps=30),
+        stream("later", width=1920, height=1080, fps=30),
+        stream("over-cap", width=3840, height=2160, fps=60),
+    ]}
+    assert capped(source, 1080).selected.format_id == "later"
+    source["formats"][:2] = source["formats"][1::-1]
+    assert capped(source, 1080).selected.format_id == "earlier"
+
+
+@pytest.mark.parametrize("formats", [
+    [stream("unknown")],
+    [stream("unknown"), stream("big", width=3840, height=2160)],
+    [stream("width-big", width=4096), stream("height-big", height=1440)],
+])
+def test_no_fit_uses_exact_uncapped_best_available(formats: list[dict[str, Any]]) -> None:
+    source = {"formats": formats}
+    assert capped(source, 1080) == resolve_native_child(source, mode="video")
+
+
+def test_video_only_without_audio_never_qualifies_even_when_it_fits() -> None:
+    source = {"formats": [
+        stream("small-silent", width=640, height=360, acodec="none"),
+        stream("big-muxed", width=3840, height=2160),
+    ]}
+    plan = capped(source, 1080)
+    assert plan.selected.format_id == "big-muxed"
+    assert plan.companion is None
+    assert plan == resolve_native_child(source, mode="video")
+
+
+def test_fitting_video_only_carries_companion() -> None:
+    source = {"formats": [
+        stream("small-v", width=1280, height=720, acodec="none"),
+        stream("big-v", width=3840, height=2160, acodec="none"),
+        stream("a", vcodec="none", acodec="aac", ext="m4a", abr=128),
+    ]}
+    plan = capped(source, 1080)
+    assert plan.selected.format_id == "small-v"
+    assert plan.companion is not None and plan.companion.format_id == "a"
+
+
+@pytest.mark.parametrize("cap", [None, 480, 2160])
+def test_no_eligible_video_still_invalid_variant(cap: int | None) -> None:
+    source = {"formats": [stream("silent", width=640, height=360, acodec="none")]}
     with pytest.raises(JobError) as exc:
-        resolve_native_child(source, mode="video", profile=CollectionProfile(max_height=1080))
+        resolve_native_child(source, mode="video", profile=CollectionProfile(max_height=cap))
     assert exc.value.code == JobErrorCode.INVALID_VARIANT
 
 
@@ -119,11 +210,11 @@ def test_invalid_label_height_is_unknown_and_cannot_prove_ceiling(
     assert formats[0].height is None
     assert formats[0].width == width
     assert normalize_source_formats(source["formats"]) == formats
-    assert resolve_native_child(source, mode="video").selected.height is None
+    uncapped = resolve_native_child(source, mode="video")
+    assert uncapped.selected.height is None
     profile = CollectionProfile(max_height=1080)
-    with pytest.raises(JobError) as exc:
-        resolve_native_child(source, mode="video", profile=profile)
-    assert exc.value.code == JobErrorCode.INVALID_VARIANT
+    # No proven fit: same pool and ranking as uncapped Best Available.
+    assert resolve_native_child(source, mode="video", profile=profile) == uncapped
     source["formats"].insert(0, stream("clear", resolution="1280x720"))
     plan = resolve_native_child(source, mode="video", profile=profile)
     assert plan.selected.format_id == "clear"
@@ -154,17 +245,23 @@ def test_explicit_height_outranks_label_fallback(label: str) -> None:
     formats = normalize_source_formats(source["formats"])
     assert formats[0].height == 1440
     assert formats[0].label == "1440p"
-    with pytest.raises(JobError) as exc:
-        resolve_native_child(source, mode="video", profile=CollectionProfile(max_height=1080))
-    assert exc.value.code == JobErrorCode.INVALID_VARIANT
+    plan = capped(source, 1080)
+    assert plan.selected.format_id == "explicit"  # over-cap Best Available fallback
+    assert plan == resolve_native_child(source, mode="video")
+    source["formats"].append(stream("clear", height=720, resolution=label))
+    assert capped(source, 1080).selected.format_id == "clear"
 
 
 @pytest.mark.parametrize("height", [True, 1080.5, float("inf"), float("nan"), -1])
 def test_malformed_height_cannot_prove_ceiling(height: object) -> None:
     source = {"formats": [stream("bad", height=height)]}
-    with pytest.raises(JobError) as exc:
-        resolve_native_child(source, mode="video", profile=CollectionProfile(max_height=1080))
-    assert exc.value.code == JobErrorCode.INVALID_VARIANT
+    assert capped(source, 1080) == resolve_native_child(source, mode="video")
+    # A qualifying competitor wins over the higher-ranked unknown stream.
+    source["formats"].insert(0, stream("clear", height=480, width=854))
+    assert resolve_native_child(source, mode="video").selected.format_id == "clear"
+    source["formats"].append(stream("big", height=2160, width=3840))
+    assert resolve_native_child(source, mode="video").selected.format_id == "big"
+    assert capped(source, 1080).selected.format_id == "clear"
 
 
 @pytest.mark.parametrize("field, attribute", [
@@ -240,16 +337,14 @@ def test_huge_source_numbers_never_poison_sibling_streams_or_ceiling() -> None:
     assert plan.companion is None
 
 
-def test_huge_only_stream_with_ceiling_uses_existing_invalid_variant() -> None:
+def test_huge_only_stream_with_ceiling_falls_back_to_best_available() -> None:
     source = {"formats": [stream("huge", height=_HUGE)]}
     formats = normalize_source_formats(source["formats"])
     assert len(formats) == 1
     assert formats[0].height is None
-    with pytest.raises(JobError) as exc:
-        resolve_native_child(
-            source, mode="video", profile=CollectionProfile(max_height=1080)
-        )
-    assert exc.value.code == JobErrorCode.INVALID_VARIANT
+    plan = capped(source, 1080)
+    assert plan.selected.format_id == "huge"
+    assert plan == resolve_native_child(source, mode="video")
 
 
 @pytest.mark.parametrize("source, mode, code", [
@@ -280,11 +375,10 @@ def test_unsupported_or_malformed_profile_rejected(profile: CollectionProfile) -
     assert exc.value.code == JobErrorCode.INVALID_PROFILE
 
 
-def test_ceiling_below_all_real_formats_fails() -> None:
-    with pytest.raises(JobError) as exc:
-        resolve_native_child(single_video_payload(), mode="video",
-                             profile=CollectionProfile(max_height=144))
-    assert exc.value.code == JobErrorCode.INVALID_VARIANT
+def test_ceiling_below_all_real_formats_falls_back_to_best_available() -> None:
+    plan = capped(single_video_payload(), 144)
+    assert plan == resolve_native_child(single_video_payload(), mode="video")
+    assert plan.selected.format_id == "248" and plan.companion is not None
 
 
 def test_false_and_missing_has_drm_preserved_in_source_order() -> None:

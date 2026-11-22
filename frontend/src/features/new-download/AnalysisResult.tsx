@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { NormalizedAnalysis, NormalizedFormat } from "../../api/analysis";
 import type { CollectionMode, OutputMediaKind, OutputProfile } from "../../api/jobs";
 import { formatFileSize, formatDuration } from "./format";
@@ -15,6 +16,8 @@ interface AnalysisResultProps {
   /** Media kind the output choice applies to; null hides the output group. */
   outputKind: OutputMediaKind | null;
   outputProfile: OutputProfile;
+  /** Optional collection control placed after Audio / Video, before Output format. */
+  collectionQualityControl?: ReactNode;
   isCreatingJob: boolean;
   /** A pending re-analysis must not post the stale snapshot. */
   isAnalyzing: boolean;
@@ -62,6 +65,7 @@ export function AnalysisResult({
   collectionMode,
   outputKind,
   outputProfile,
+  collectionQualityControl,
   isCreatingJob,
   isAnalyzing,
   onSelectVariant,
@@ -224,6 +228,7 @@ export function AnalysisResult({
                   Video
                 </label>
               </fieldset>
+              {collectionQualityControl}
               {outputKind != null && (
                 <OutputProfileSelect
                   kind={outputKind}

@@ -22,8 +22,11 @@ def resolve_native_child(
     """Dimensions/FPS first for video; extractor preference breaks remaining ties.
 
     yt-dlp orders source formats worst-to-best. Audio follows that source
-    preference, not cross-codec bitrate arithmetic. A ceiling requires known
-    height. Video-only streams require an actual audio-only companion.
+    preference, not cross-codec bitrate arithmetic. Video-only streams require
+    an actual audio-only companion. ``max_height`` is a short-edge ceiling
+    preference: eligible streams whose smallest known positive dimension fits
+    are preferred; with no known dimension a stream never proves a fit. When
+    none fits, the uncapped Best Available choice is used even above the cap.
     """
     try:
         preference = CollectionProfile.model_validate(
@@ -52,17 +55,25 @@ def resolve_native_child(
         return NativeChildPlan(audio)
     candidates = [
         (index, fmt) for index, fmt in enumerate(formats)
-        if (fmt.kind == MediaFormatKind.MUXED or (
+        if fmt.kind == MediaFormatKind.MUXED or (
             fmt.kind == MediaFormatKind.VIDEO_ONLY and audio is not None
-        )) and (preference.max_height is None or (
-            fmt.height is not None and fmt.height <= preference.max_height
-        ))
+        )
     ]
     if not candidates:
         raise JobError(JobErrorCode.INVALID_VARIANT)
-    _, selected = max(candidates, key=lambda item: (
+    cap = preference.max_height
+    fitting = [] if cap is None else [
+        item for item in candidates if _fits_short_edge(item[1], cap)
+    ]
+    _, selected = max(fitting or candidates, key=lambda item: (
         item[1].height or 0, item[1].width or 0, item[1].fps or 0, item[0]
     ))
     return NativeChildPlan(
         selected, audio if selected.kind == MediaFormatKind.VIDEO_ONLY else None
     )
+
+
+def _fits_short_edge(fmt: NormalizedFormat, cap: int) -> bool:
+    """Smallest known positive dimension within ``cap``; unknown never fits."""
+    known = [value for value in (fmt.height, fmt.width) if value is not None and value > 0]
+    return bool(known) and min(known) <= cap

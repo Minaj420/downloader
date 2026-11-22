@@ -1218,6 +1218,211 @@ describe("NewDownloadPage", () => {
     });
   });
 
+  describe("collection video quality", () => {
+    const baseCollection = collectionResult.collection as NonNullable<
+      NormalizedAnalysis["collection"]
+    >;
+    const windowResult: NormalizedAnalysis = {
+      ...collectionResult,
+      collection: {
+        ...baseCollection,
+        total_items: 2,
+        truncated: false,
+        preview_items: [],
+        items: ["a", "b"].map((key, index) => ({
+          item_id: `item-${key}`,
+          source_order: index,
+          selectable: true,
+          unavailable_reason: null,
+          source_id: `t${key}`,
+          url: `https://soundcloud.com/artist/track-${key}`,
+          title: `Track ${key.toUpperCase()}`,
+          duration_seconds: null,
+          position: index + 1,
+        })),
+        selection_scope: "analysis_window",
+        analyzed_items: 2,
+        selectable_items: 2,
+        total_items_known: true,
+        selection_truncated: false,
+      },
+    };
+    const qualityGroup = () => screen.getByRole("group", { name: "Video quality" });
+    const queryQualityGroup = () => screen.queryByRole("group", { name: "Video quality" });
+    const qualityRadio = (name: string) => within(qualityGroup()).getByRole("radio", { name });
+    const createBodies = (fetchMock: ReturnType<typeof stubFetch>) =>
+      fetchMock.mock.calls
+        .filter(([url, init]) => url === "/api/v1/jobs" && init?.method === "POST")
+        .map(([, init]) => JSON.parse(String(init?.body)) as Record<string, unknown>);
+
+    function collectionHandler() {
+      stubEventSource();
+      return stubFetch((url, init) => {
+        if (url === "/api/v1/health") return Promise.resolve(jsonResponse({ status: "ok", database: "ok" }));
+        if (url === "/api/v1/analysis") return Promise.resolve(jsonResponse(windowResult));
+        if (url === "/api/v1/jobs" && init?.method === "POST") return Promise.resolve(jsonResponse(queuedJob));
+        return Promise.reject(new Error(`Unexpected fetch: ${url} ${init?.method ?? "GET"}`));
+      });
+    }
+
+    async function analyzeWindow(user: ReturnType<typeof userEvent.setup>) {
+      await fillAndSubmit(user, "https://soundcloud.com/artist/sets/test-album");
+      await screen.findByRole("radio", { name: "Video" });
+    }
+
+    async function download(user: ReturnType<typeof userEvent.setup>) {
+      await user.click(screen.getByRole("button", { name: "Download" }));
+      await screen.findByText("Queued");
+    }
+
+    it("offers the fixed ceilings only for collection video, defaulting to Best Available", async () => {
+      collectionHandler();
+      const { user } = await renderNewDownload();
+      await analyzeWindow(user);
+
+      expect(queryQualityGroup()).not.toBeInTheDocument();
+      await user.click(screen.getByRole("radio", { name: "Audio" }));
+      expect(queryQualityGroup()).not.toBeInTheDocument();
+      await user.click(screen.getByRole("radio", { name: "Video" }));
+
+      expect(
+        within(qualityGroup())
+          .getAllByRole("radio")
+          .map((radio) => radio.closest("label")?.textContent),
+      ).toEqual([
+        "Best Available",
+        "Up to 2160p",
+        "Up to 1440p",
+        "Up to 1080p",
+        "Up to 720p",
+        "Up to 480p",
+      ]);
+      expect(qualityRadio("Best Available")).toBeChecked();
+      expect(screen.getByText(/Best Available source is used instead/)).toBeInTheDocument();
+      expect(screen.getByText(/shorter side/)).toBeInTheDocument();
+      // The output format stays a separate control; Download stays available.
+      expect(screen.getByRole("group", { name: "Output format" })).not.toContainElement(qualityGroup());
+      expect(screen.getByRole("radio", { name: "Original" })).toBeChecked();
+      expect(screen.getByRole("button", { name: "Download" })).toBeEnabled();
+    });
+
+    it("places the quality group in the collection output section between mode and output format", async () => {
+      collectionHandler();
+      const { user } = await renderNewDownload();
+      await analyzeWindow(user);
+      await user.click(screen.getByRole("radio", { name: "Video" }));
+
+      const modeGroup = screen.getByRole("group", { name: "Audio / Video" });
+      const quality = qualityGroup();
+      const output = screen.getByRole("group", { name: "Output format" });
+      const downloadButton = screen.getByRole("button", { name: "Download" });
+      const follows = (a: Element, b: Element) =>
+        Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+      expect(follows(modeGroup, quality)).toBe(true);
+      expect(follows(quality, output)).toBe(true);
+      expect(follows(output, downloadButton)).toBe(true);
+      // Same collection output section, distinct from the mode and output groups.
+      const section = modeGroup.closest("section");
+      expect(section).not.toBeNull();
+      expect(section).toContainElement(quality);
+      expect(section).toContainElement(output);
+      expect(modeGroup).not.toContainElement(quality);
+      expect(quality).not.toContainElement(output);
+      expect(within(section as HTMLElement).getByRole("heading", { name: "Collection output" }))
+        .toBeInTheDocument();
+    });
+
+    it("never offers a ceiling for a single source", async () => {
+      jobFlowHandler();
+      const { user } = await renderNewDownload();
+      await analyzeSingleResult(user);
+      expect(queryQualityGroup()).not.toBeInTheDocument();
+    });
+
+    it("posts the selected ceiling as max_height", async () => {
+      const fetchMock = collectionHandler();
+      const { user } = await renderNewDownload();
+      await analyzeWindow(user);
+
+      await user.click(screen.getByRole("radio", { name: "Video" }));
+      await user.click(qualityRadio("Up to 1080p"));
+      expect(qualityRadio("Up to 1080p")).toBeChecked();
+      await download(user);
+
+      expect(createBodies(fetchMock)).toEqual([{
+        analysis_id: windowResult.analysis_id,
+        item_ids: ["item-a", "item-b"],
+        collection_mode: "video",
+        collection_profile: { kind: "original_best_available", max_height: 1080 },
+        output_profile: "original",
+        destination: "app_library",
+      }]);
+    });
+
+    it("omits max_height for Best Available", async () => {
+      const fetchMock = collectionHandler();
+      const { user } = await renderNewDownload();
+      await analyzeWindow(user);
+
+      await user.click(screen.getByRole("radio", { name: "Video" }));
+      await user.click(qualityRadio("Up to 720p"));
+      await user.click(qualityRadio("Best Available"));
+      await download(user);
+
+      expect(createBodies(fetchMock)[0]?.collection_profile).toEqual({
+        kind: "original_best_available",
+      });
+    });
+
+    it("clears the ceiling on a switch to audio and never posts it for audio", async () => {
+      const fetchMock = collectionHandler();
+      const { user } = await renderNewDownload();
+      await analyzeWindow(user);
+
+      await user.click(screen.getByRole("radio", { name: "Video" }));
+      await user.click(qualityRadio("Up to 720p"));
+      await user.click(screen.getByRole("radio", { name: "Audio" }));
+      expect(queryQualityGroup()).not.toBeInTheDocument();
+      await user.click(screen.getByRole("radio", { name: "Video" }));
+      expect(qualityRadio("Best Available")).toBeChecked();
+      expect(qualityRadio("Up to 720p")).not.toBeChecked();
+      await user.click(qualityRadio("Up to 480p"));
+      await user.click(screen.getByRole("radio", { name: "Audio" }));
+      await download(user);
+
+      const [body] = createBodies(fetchMock);
+      expect(body?.collection_mode).toBe("audio");
+      expect(body?.collection_profile).toEqual({ kind: "original_best_available" });
+    });
+
+    it("resets the ceiling on every new analysis, including a repeated analysis id", async () => {
+      const fetchMock = collectionHandler();
+      const { user } = await renderNewDownload();
+      await analyzeWindow(user);
+
+      await user.click(screen.getByRole("radio", { name: "Video" }));
+      await user.click(qualityRadio("Up to 2160p"));
+      await user.click(screen.getByRole("button", { name: "Analyze" }));
+      await waitFor(() => expect(queryQualityGroup()).not.toBeInTheDocument());
+      await waitFor(() =>
+        expect(fetchMock.mock.calls.filter(([url]) => url === "/api/v1/analysis")).toHaveLength(2),
+      );
+      await waitFor(() => {
+        const video = screen.getByRole("radio", { name: "Video" });
+        expect(video).not.toBeChecked();
+        expect(video).toBeEnabled();
+      });
+      await user.click(screen.getByRole("radio", { name: "Video" }));
+      expect(qualityRadio("Best Available")).toBeChecked();
+      expect(qualityRadio("Up to 2160p")).not.toBeChecked();
+      await download(user);
+
+      expect(createBodies(fetchMock)[0]?.collection_profile).toEqual({
+        kind: "original_best_available",
+      });
+    });
+  });
+
   it("updates active job progress from SSE", async () => {
     jobFlowHandler();
     const { user } = await renderNewDownload();
