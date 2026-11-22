@@ -98,7 +98,7 @@ yüklenir; mevcut oturum reload olmuş sayılmaz.
    tek otomatik commit olur: görevde gerçekten değişen dosyalar (STATE değiştiyse o da) tek tek
    stage edilir; worker STATE/git yazmaz. Göreve özel açık git yasağına uyulur.
    Komut: `git commit -m <başlık> -m <gövde>`. Başlık `tür(iş-kodu): açıklama`
-   (örn. `feat(M6.5a): ...`, `chore(WF-S1): ...`). Gövde tek `-m` argümanında satır
+   (örn. `feat(M6.5a): ...`, `chore(WF-S1): ...`). Başlık ve gövde İngilizce yazılır. Gövde tek `-m` argümanında satır
    sonlarıyla verilir (her satıra ayrı `-m` yok); en fazla 5 fiziksel satır, her satır en
    fazla 72 karakter, sırayla tek konu: ne değişti / gerekçe / kontroller / review sonucu /
    kalan sınır. Model eşleşme ayrıntısı yalnız eşleşmeme durumunda yazılır; başarılı eşleşme
@@ -357,7 +357,7 @@ tarafından çağrılır; model bu geçişi kendiliğinden başlatmaz. Ardından
 
 **Roller.** lead: Claude Code ana oturumu. danışman ve implementer: değişmez (adapter, Opus/Sonnet).
 reviewer: Sonnet kodunu Opus `scripts/claude-review.sh` ile inceler; **Opus kodu bu modda
-review edilmez**, commit gövdesinde "GPT review bekliyor" yazılır ve kullanıcıya bildirilir.
+review edilmez**, commit gövdesinde "GPT review pending" yazılır ve kullanıcıya bildirilir.
 STATE'te iş başına review/hash listesi yok. Luna/checker yoktur; lead hedefli kontrolleri
 ve milestone gate'lerini kendisi çalıştırır. Diğer tüm kurallar (Opus görüşü, tek yazıcı, bir review
 düzeltme turu, “Uygulayıcı: ...” duyurusu, otomatik commit, push yalnız kullanıcı) aynen geçerlidir.

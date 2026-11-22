@@ -129,7 +129,8 @@ Sınırların:
   tek commit et. STATE'i yalnız gerçek durum değiştiyse güncelle; yalnız değişen
   görev dosyalarını tek tek `git add -- <dosya>` ile stage et.
   Başlık `tür(iş-kodu): açıklama` biçiminde; kısa iş/kontrol/review gövdesiyle
-  `git commit -m <başlık> -m <gövde>` kullan. Push yalnız açık kullanıcı talebiyle;
+  `git commit -m <başlık> -m <gövde>` kullan; commit mesajı İngilizce (WORKFLOW adım 8).
+  Push yalnız açık kullanıcı talebiyle;
   amend veya geçmişi değiştiren işlem yok.
 - Göreve özel açık git yasağına uy; STATE lead'e aittir ve worker dokunmaz. Config değişikliği sonrası
   OpenCode'u yeniden başlatmayı bildir; çalışan reviewer'ın modeli değişti deme.

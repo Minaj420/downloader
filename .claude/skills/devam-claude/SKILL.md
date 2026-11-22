@@ -32,7 +32,7 @@ Kurallar `docs/WORKFLOW.md`'dedir; "Geçici Claude-only modu" bölümü bu skill
   Luna/checker yoktur: milestone gate'lerini de sen çalıştırırsın.
 - Review (GPT reviewer yoktur):
   - Sonnet kodu: `scripts/claude-review.sh '<odak>' --log` ile salt-okunur Opus review.
-  - Opus kodu: bu modda review yapılmaz; commit gövdesinde "GPT review bekliyor"
+  - Opus kodu: bu modda review yapılmaz; commit gövdesinde "GPT review pending"
     belirt ve kullanıcıya bildir. STATE'te iş başına ayrı review satırı oluşturma.
   - En fazla bir düzeltme turu (istisnalar ve sınıf/etki analizi kuralları: WORKFLOW adım 6);
     aynı modelle `--resume`, `--model` açıkça yeniden iletilir.
@@ -40,7 +40,8 @@ Kurallar `docs/WORKFLOW.md`'dedir; "Geçici Claude-only modu" bölümü bu skill
 - WORKFLOW'un commit ve STATE kurallarını uygula: STATE'i yalnız gerçek durum değiştiyse
   güncelle; ilk review başlangıcını ilk işle aynı commit'te kaydet. Yalnız değişen görev
   dosyalarını tek tek `git add -- <dosya>` ile stage et; `tür(iş-kodu): açıklama`
-  başlığı ve kısa iş/kontrol/review gövdesiyle `git commit -m <başlık> -m <gövde>` kullan.
+  başlığı ve kısa iş/kontrol/review gövdesiyle `git commit -m <başlık> -m <gövde>` kullan;
+  commit mesajı İngilizce (WORKFLOW adım 8).
   Commit sonrasında kendi hash'ini STATE'e ekleme; commit listesi tutma.
   Push, amend, geçmiş değiştirme yok; push yalnız kullanıcı isterse ve kullanıcı yapar.
 - Kota/kimlik/izin hatasında tekrar veya sessiz model fallback yok.
