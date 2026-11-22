@@ -36,11 +36,11 @@ from app.repositories import jobs as job_repo
 from app.services import job_runner
 from app.services.job_runner import (
     _REMUX_FALLBACK_SAVED,
-    _REMUX_FALLBACK_SKIPPED,
     RunnerDeps,
     run_download_job,
 )
 from app.services.storage_service import MediaFileMissingError, StorageService
+from app.utils.filenames import conflict_media_filenames
 from tests.conftest import FakeAnalyzer, build_application
 from tests.fake_binaries import fake_ffmpeg_fail, fake_ffmpeg_record, fake_ytdlp_ok
 from tests.test_collection_repository import factory
@@ -295,8 +295,9 @@ async def test_mp4_muxed_conversion_publishes_video_with_plan_catalog(
         tmp_path, formats, "m", "mp4", prepare=measured(VideoDimensions(1080, 1920)),
     )
     record = facts.record
-    assert (record.status, record.final_path) == ("completed", f"video/{TITLE}.mp4")
-    assert (run.library / "video" / f"{TITLE}.mp4").read_bytes() == b"converted"
+    # Portrait 1080x1920: the filename carries the measured short edge.
+    assert (record.status, record.final_path) == ("completed", f"video/{TITLE} (1080p).mp4")
+    assert (run.library / "video" / f"{TITLE} (1080p).mp4").read_bytes() == b"converted"
     assert run.media.calls == ["download:raw-m", "convert:mp4", "probe"]
     assert_converted(run.media, "media.mp4", "mp4", copy_audio, copy_video)
     # The measured staged output (the converted file) is probed, before Finalizing.
@@ -438,18 +439,49 @@ async def test_original_video_resolution_is_measured_short_edge_or_unknown(
 
 
 @pytest.mark.anyio
-async def test_skipped_existing_video_gets_no_measured_resolution(tmp_path: Path) -> None:
+@pytest.mark.parametrize("dimensions,name", [
+    (VideoDimensions(1280, 720), f"{TITLE} (720p).mp4"),
+    (VideoDimensions(1080, 1920), f"{TITLE} (1080p).mp4"),  # portrait: short edge
+    (None, f"{TITLE}.mp4"),  # unmeasured: no suffix
+])
+async def test_single_video_filename_carries_measured_short_edge(
+    tmp_path: Path, dimensions: VideoDimensions | None, name: str,
+) -> None:
+    formats = [fmt("m", MUXED, video="h264", audio="aac")]
+    run, facts = await execute_run(tmp_path, formats, "m", None, prepare=measured(dimensions))
+    assert (facts.record.status, facts.record.final_path) == ("completed", f"video/{name}")
+    assert (run.library / "video" / name).read_bytes() == b"source"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("existing,published", [
+    ([f"{TITLE} (1080p).mp4"], f"{TITLE} (1080p) (2).mp4"),
+    ([f"{TITLE} (1080p).mp4", f"{TITLE} (1080p) (2).mp4"], f"{TITLE} (1080p) (3).mp4"),
+    # A historical suffix-less file is kept (no backfill) and is no conflict.
+    ([f"{TITLE}.mp4"], f"{TITLE} (1080p).mp4"),
+    # A different measured resolution is a different name.
+    ([f"{TITLE} (720p).mp4"], f"{TITLE} (1080p).mp4"),
+])
+async def test_name_conflict_publishes_new_measured_file_and_keeps_existing(
+    tmp_path: Path, existing: list[str], published: str,
+) -> None:
     def prepare(run: SingleRun) -> None:
         measured(VideoDimensions(1920, 1080))(run)
         (run.library / "video").mkdir(parents=True, exist_ok=True)
-        (run.library / "video" / f"{TITLE}.mp4").write_bytes(b"existing")
+        for name in existing:
+            (run.library / "video" / name).write_bytes(b"existing")
 
     formats = [fmt("m", MUXED, video="h264", audio="aac")]
     run, facts = await execute_run(tmp_path, formats, "m", None, prepare=prepare)
-    assert facts.record.status == "completed"
-    assert (run.library / "video" / f"{TITLE}.mp4").read_bytes() == b"existing"
+    assert (facts.record.status, facts.record.final_path) == (
+        "completed", f"video/{published}")
+    assert (run.library / "video" / published).read_bytes() == b"source"
+    for name in existing:
+        assert (run.library / "video" / name).read_bytes() == b"existing"
     [item] = facts.items
-    assert item.resolution is None  # the kept file was never measured
+    assert item.resolution == "1080p"  # the new file is the measured one
+    assert facts.messages == ["Download started", "Finalizing", "Saved to App Library"]
+    assert facts.warnings == []
 
 
 @pytest.mark.anyio
@@ -522,7 +554,6 @@ async def test_probe_cancellation_error_propagates_and_keeps_staged_media(
 # --- Original WebM/Opus remux (M6.5b) ----------------------------------------------
 
 REMUX_STATUS = "Post-processing (remuxing audio to .opus)"
-SKIPPED = "A file with this name already exists — kept the existing copy"
 OPUS_AUDIO = [fmt("a", AUDIO, audio="opus", bitrate=160.0)]
 
 
@@ -749,7 +780,7 @@ async def test_remux_fallback_warning_requires_committed_completion(
 
 
 @pytest.mark.anyio
-async def test_remux_fallback_skip_existing_keeps_file_without_saved_claim(
+async def test_remux_fallback_name_conflict_saves_numbered_original_with_warning(
     tmp_path: Path,
 ) -> None:
     def prepare(run: SingleRun) -> None:
@@ -758,16 +789,19 @@ async def test_remux_fallback_skip_existing_keeps_file_without_saved_claim(
 
     run, facts = await execute_run(tmp_path, OPUS_AUDIO, "a", None, prepare=prepare)
     assert (facts.record.status, facts.record.final_path) == (
-        "completed", f"audio/{TITLE}.webm")
-    assert run.published_files() == [run.library / "audio" / f"{TITLE}.webm"]
+        "completed", f"audio/{TITLE} (2).webm")
+    assert run.published_files() == sorted([
+        run.library / "audio" / f"{TITLE}.webm", run.library / "audio" / f"{TITLE} (2).webm",
+    ])
     assert (run.library / "audio" / f"{TITLE}.webm").read_bytes() == b"existing"
+    assert (run.library / "audio" / f"{TITLE} (2).webm").read_bytes() != b"existing"
+    # The new original really was saved: the remux warning is kept unchanged.
     assert facts.messages == [
-        "Download started", REMUX_STATUS, "Finalizing", SKIPPED, _REMUX_FALLBACK_SKIPPED]
-    assert "saved" not in _REMUX_FALLBACK_SKIPPED.lower()
-    assert "kept the existing copy" in _REMUX_FALLBACK_SKIPPED
-    assert "disk or permission problem inside FFmpeg" in _REMUX_FALLBACK_SKIPPED
-    assert [warning.message for warning in facts.warnings] == [SKIPPED, _REMUX_FALLBACK_SKIPPED]
-    assert warning_events(run) == [SKIPPED, _REMUX_FALLBACK_SKIPPED]
+        "Download started", REMUX_STATUS, "Finalizing", "Saved to App Library",
+        _REMUX_FALLBACK_SAVED]
+    assert "disk or permission problem inside FFmpeg" in _REMUX_FALLBACK_SAVED
+    assert [warning.message for warning in facts.warnings] == [_REMUX_FALLBACK_SAVED]
+    assert warning_events(run) == [_REMUX_FALLBACK_SAVED]
     [item] = facts.items
     assert (item.format, item.codec, item.bitrate) == ("webm", "opus", 160.0)
     assert not (run.staging / "job").exists()
@@ -891,11 +925,11 @@ async def test_cancelled_conversion_retry_reuses_staging_and_cleans_on_success(
     assert not (run.staging / "job").exists()
 
 
-# --- Skip Existing --------------------------------------------------------------------
+# --- Name conflicts ---------------------------------------------------------------------
 
 
 @pytest.mark.anyio
-async def test_skip_existing_with_conversion_keeps_file_and_nulls_codec_and_bitrate(
+async def test_name_conflict_with_conversion_publishes_numbered_file_with_its_facts(
     tmp_path: Path,
 ) -> None:
     def prepare(run: SingleRun) -> None:
@@ -903,32 +937,80 @@ async def test_skip_existing_with_conversion_keeps_file_and_nulls_codec_and_bitr
 
     formats = [fmt("a", AUDIO, audio="mp3", bitrate=192.0)]
     run, facts = await execute_run(tmp_path, formats, "a", "mp3", prepare=prepare)
-    assert (facts.record.status, facts.record.final_path) == ("completed", f"audio/{TITLE}.mp3")
+    assert (facts.record.status, facts.record.final_path) == (
+        "completed", f"audio/{TITLE} (2).mp3")
     assert (run.library / "audio" / f"{TITLE}.mp3").read_bytes() == b"existing"
+    assert (run.library / "audio" / f"{TITLE} (2).mp3").read_bytes() == b"converted"
     assert run.media.calls == ["download:raw-a", "convert:mp3"]
     assert facts.messages == [
-        "Download started", "Converting to MP3", "Finalizing",
-        "A file with this name already exists — kept the existing copy",
+        "Download started", "Converting to MP3", "Finalizing", "Saved to App Library",
     ]
+    assert facts.warnings == []
     [item] = facts.items
     [media_file] = facts.files
+    # The new file's real facts: a pure stream copy keeps the source bitrate.
     assert (item.media_type, item.format, item.codec, item.bitrate) == (
-        "audio", "mp3", None, None)
-    assert (media_file.path, media_file.size_bytes) == (f"audio/{TITLE}.mp3", len(b"existing"))
+        "audio", "mp3", "mp3", 192.0)
+    assert (media_file.path, media_file.size_bytes) == (
+        f"audio/{TITLE} (2).mp3", len(b"converted"))
     assert not (run.staging / "job").exists()
 
 
 @pytest.mark.anyio
-async def test_skip_existing_original_keeps_source_codec_and_bitrate(tmp_path: Path) -> None:
+async def test_name_conflict_original_audio_publishes_numbered_file(tmp_path: Path) -> None:
     def prepare(run: SingleRun) -> None:
         (run.library / "audio" / f"{TITLE}.mp4").write_bytes(b"existing")
 
     formats = [fmt("a", AUDIO, audio="opus", bitrate=160.0)]
     run, facts = await execute_run(tmp_path, formats, "a", None, prepare=prepare)
-    assert facts.record.status == "completed"
+    assert (facts.record.status, facts.record.final_path) == (
+        "completed", f"audio/{TITLE} (2).mp4")
     assert (run.library / "audio" / f"{TITLE}.mp4").read_bytes() == b"existing"
+    assert (run.library / "audio" / f"{TITLE} (2).mp4").read_bytes() == b"source"
     [item] = facts.items
-    assert (item.codec, item.bitrate) == ("opus", 160.0)
+    assert (item.codec, item.bitrate, item.resolution) == ("opus", 160.0, None)
+
+
+@pytest.mark.anyio
+async def test_target_swap_right_after_publish_creates_no_catalog_and_keeps_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_link = os.link
+
+    def link_then_replace(src: Any, dst: Any, **kwargs: Any) -> None:
+        real_link(src, dst, **kwargs)
+        if not str(dst).startswith("."):  # the published name, not the hidden temp
+            published = tmp_path / "library" / "video" / str(dst)
+            published.unlink()
+            published.write_bytes(b"impostor")
+
+    monkeypatch.setattr(os, "link", link_then_replace)
+    formats = [fmt("m", MUXED, video="h264", audio="aac")]
+    run, facts = await execute_run(tmp_path, formats, "m", None)
+    assert (facts.record.status, facts.record.error_code, facts.record.final_path) == (
+        "failed", "internal_error", None)
+    assert (facts.items, facts.files) == ([], [])  # the wrong inode is never catalogued
+    assert (run.staging / "job" / "media.mp4").read_bytes() == b"source"  # not deleted
+    assert "Saved to App Library" not in facts.messages
+
+
+@pytest.mark.anyio
+async def test_counter_exhaustion_fails_disk_write_and_keeps_staged_media(
+    tmp_path: Path,
+) -> None:
+    names = conflict_media_filenames(TITLE, "mp4")
+
+    def prepare(run: SingleRun) -> None:
+        for name in names:
+            (run.library / "audio" / name).write_bytes(b"existing")
+
+    formats = [fmt("a", AUDIO, audio="opus", bitrate=160.0)]
+    run, facts = await execute_run(tmp_path, formats, "a", None, prepare=prepare)
+    assert (facts.record.status, facts.record.error_code, facts.record.final_path) == (
+        "failed", "disk_write_failed", None)
+    assert (facts.items, facts.files) == ([], [])
+    assert sorted(p.name for p in (run.library / "audio").iterdir()) == sorted(names)
+    assert (run.staging / "job" / "media.mp4").read_bytes() == b"source"
 
 
 # --- failed / restart-recovery retry keeps the stored profile --------------------------

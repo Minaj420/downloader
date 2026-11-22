@@ -31,6 +31,7 @@ from app.services.library_service import LibraryService, stage_media_catalog_ref
 from app.services.storage_service import (
     MediaFileMissingError,
     MediaFileTargetChangedError,
+    PlacementResult,
     PreparedMediaFile,
     StorageService,
 )
@@ -258,9 +259,9 @@ class TestLibraryCatalogCreation:
 
             final = wait_for_job(client, job["id"], statuses={"completed", "failed"})
 
-        # Existing completion behaviour is unchanged.
+        # The filename carries the same measured short edge as the catalog.
         assert final["status"] == "completed", final
-        assert final["final_path"] == "video/Test Video.mp4"
+        assert final["final_path"] == "video/Test Video (720p).mp4"
 
         item = _fetch_one(
             settings,
@@ -321,7 +322,7 @@ class TestLibraryCatalogCreation:
         assert media is not None
         assert media[0] == item_id
         assert media[1] == "app_library"
-        assert media[2] == "video/Test Video.mp4"
+        assert media[2] == "video/Test Video (720p).mp4"
         assert media[3] is None  # no display-path mapping configured for the App Library
         assert media[4] == len(b"fake media")
         assert media[5] is None
@@ -432,14 +433,15 @@ class TestLibraryCatalogCreation:
         assert path == "video/Test Video.mkv"
         assert size_bytes == len(b"merged-media")
 
-    def test_skip_existing_still_creates_catalog_for_placed_path(
+    def test_name_conflict_publishes_numbered_file_and_catalogs_it(
         self, app_factory: Any, settings: Settings
     ) -> None:
-        """No catalog dedup rule exists for skip-existing conflicts yet.
+        """A name conflict never reuses or overwrites the existing file.
 
-        The narrowest behaviour preserving current completion semantics: the
-        successful download still gets its own logical item and a physical
-        row pointing at the existing file, with the existing file's size.
+        The existing (unmeasured-name) file stays byte-for-byte; the new
+        download is published at the next free ``(2)`` name and its own
+        catalog row points at that new file with the new file's size.
+        No ffprobe here, so the video name carries no resolution suffix.
         """
         binaries = app_factory.binaries
         (settings.library_dir / "video").mkdir(parents=True, exist_ok=True)
@@ -457,14 +459,18 @@ class TestLibraryCatalogCreation:
         assert final["status"] == "completed", final
         assert existing.read_text() == "original"
 
+        numbered = settings.library_dir / "video" / "Test Video (2).mp4"
+        assert numbered.is_file()
+        assert final["final_path"] == "video/Test Video (2).mp4"
+
         assert _row_count(settings, "library_items") == 1
-        skipped_row = _fetch_one(
+        placed_row = _fetch_one(
             settings, "SELECT path, size_bytes FROM media_files"
         )
-        assert skipped_row is not None
-        path, size_bytes = skipped_row
-        assert path == "video/Test Video.mp4"
-        assert size_bytes == len(b"original")
+        assert placed_row is not None
+        path, size_bytes = placed_row
+        assert path == "video/Test Video (2).mp4"
+        assert size_bytes == numbered.stat().st_size
 
     def test_catalog_source_id_null_when_source_has_no_id(
         self, app_factory: Any, settings: Settings
@@ -755,11 +761,24 @@ class TestCompletionTransaction:
 
         monkeypatch.setattr(job_repo, "stage_job_update_if_status", hooked_stage)
 
+        async def historical_shared_place_final(
+            self: StorageService, source: Path, **_: Any
+        ) -> PlacementResult:
+            # Fixture for the real pre-3b-1 state: Skip Existing returned
+            # the already catalogued file as this job's placement. Today's
+            # placement publishes a new numbered file instead, but shared
+            # historical references must still be protected.
+            return TestConcurrentDeleteWriteProtocol._historical_shared_placement(
+                settings, "video/Test Video.mp4"
+            )
+
+        monkeypatch.setattr(StorageService, "place_final", historical_shared_place_final)
+
         with app_factory(
             yt_dlp=fake_ytdlp_ok(binaries), ffmpeg=str(binaries / "ffmpeg-missing")
         ) as client:
             # A pre-existing catalogued copy at the exact path the job's
-            # skip-existing placement will observe.
+            # historical skip-existing placement observed.
             media_file = settings.library_dir / "video" / "Test Video.mp4"
             media_file.parent.mkdir(parents=True, exist_ok=True)
             media_file.write_text("real media bytes")
@@ -822,6 +841,28 @@ class TestConcurrentDeleteWriteProtocol:
     committed first blocks the delete as a shared reference without
     mutation, and unrelated paths keep flowing.
     """
+
+    @staticmethod
+    def _historical_shared_placement(
+        settings: Settings, relative_path: str
+    ) -> PlacementResult:
+        """The real pre-3b-1 state: a writer referencing an existing file.
+
+        Before numbered conflict names, Skip Existing returned the already
+        present file as the placement, so two logical Library rows could
+        share one physical file. New placements never do that any more,
+        but such historical rows still exist; this fixture reproduces the
+        old placement observation (lexical path plus the identity of the
+        file present at it) without going through today's placement.
+        """
+        target = settings.library_dir / relative_path
+        target_stat = target.stat()
+        return PlacementResult(
+            final_path=target,
+            relative_path=relative_path,
+            size_bytes=target_stat.st_size,
+            identity=(target_stat.st_dev, target_stat.st_ino),
+        )
 
     @staticmethod
     def _writer_rows(path: str, size_bytes: int) -> tuple[LibraryItem, MediaFile]:
@@ -924,14 +965,11 @@ class TestConcurrentDeleteWriteProtocol:
             assert await asyncio.to_thread(delete_in_flight.wait, 5)
 
             # The writer finalizes now and observes the still-existing
-            # file: a real skip-existing placement captures its identity.
-            source = self._write_source(
-                settings, "Test Video.mp4", "real media bytes"
+            # file: a historical skip-existing placement captured its
+            # identity (fixture for the pre-3b-1 shared-file state).
+            placement = self._historical_shared_placement(
+                settings, "video/Test Video.mp4"
             )
-            placement = await storage.place_final(
-                source, media_kind="video", title="Test Video"
-            )
-            assert placement.skipped_existing is True
             item, writer_media = self._writer_rows(
                 placement.relative_path, placement.size_bytes
             )
@@ -995,8 +1033,11 @@ class TestConcurrentDeleteWriteProtocol:
         real_fs_delete = PreparedMediaFile.delete
 
         def gated_fs_delete(self: PreparedMediaFile) -> Path:
-            delete_in_flight.set()
-            assert allow_unlink.wait(timeout=5)
+            # Only the Library Delete File is gated; the writer's own staged
+            # source unlink (placement also uses a pinned handle) is not.
+            if self.final_name == "Test Video.mp4":
+                delete_in_flight.set()
+                assert allow_unlink.wait(timeout=5)
             return real_fs_delete(self)
 
         monkeypatch.setattr(PreparedMediaFile, "delete", gated_fs_delete)
@@ -1011,9 +1052,9 @@ class TestConcurrentDeleteWriteProtocol:
 
             source = self._write_source(settings, "Other.mp4", "other media")
             placement = await storage.place_final(
-                source, media_kind="video", title="Other"
+                source, media_kind="video", title="Other", staging_key="protocol-src"
             )
-            assert placement.skipped_existing is False
+            assert placement.relative_path == "video/Other.mp4"
             item, writer_media = self._writer_rows(
                 placement.relative_path, placement.size_bytes
             )
@@ -1069,13 +1110,10 @@ class TestConcurrentDeleteWriteProtocol:
         service = LibraryService(session_factory, storage)
 
         async def main() -> DeleteMediaFileOutcome:
-            source = self._write_source(
-                settings, "Test Video.mp4", "real media bytes"
+            # Historical shared-file writer (pre-3b-1 Skip Existing).
+            placement = self._historical_shared_placement(
+                settings, "video/Test Video.mp4"
             )
-            placement = await storage.place_final(
-                source, media_kind="video", title="Test Video"
-            )
-            assert placement.skipped_existing is True
             item, writer_media = self._writer_rows(
                 placement.relative_path, placement.size_bytes
             )
@@ -1120,13 +1158,9 @@ class TestConcurrentDeleteWriteProtocol:
         storage.initialize_delete_roots()
 
         async def main() -> None:
-            source = self._write_source(
-                settings, "Test Video.mp4", "real media bytes"
+            placement = self._historical_shared_placement(
+                settings, "video/Test Video.mp4"
             )
-            placement = await storage.place_final(
-                source, media_kind="video", title="Test Video"
-            )
-            assert placement.skipped_existing is True
             # Replace the observed file with a different inode.
             media_file.unlink()
             media_file.write_text("replacement media")

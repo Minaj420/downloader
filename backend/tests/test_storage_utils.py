@@ -7,6 +7,7 @@ import threading
 import time
 import unicodedata
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,7 @@ from app.services.storage_service import (
     MediaFileMissingError,
     MediaFileNotRegularError,
     MediaFileTargetChangedError,
+    PlacementCancelled,
     ResolvedMediaFile,
     StorageDeleteFailedError,
     StoragePathError,
@@ -23,6 +25,8 @@ from app.services.storage_service import (
     StorageTargetError,
 )
 from app.utils.filenames import (
+    MAX_CONFLICT_COUNTER,
+    conflict_media_filenames,
     sanitize_filename,
     sanitize_media_filename,
     sanitize_path_segment,
@@ -234,6 +238,65 @@ class TestSanitizePathSegment:
         assert sanitize_filename("x" * 200) == "x" * 150
         assert sanitize_media_filename("Album.mp3") == "Album.mp3"
         assert sanitize_media_filename("x" * 200 + ".flac") == "x" * 145 + ".flac"
+
+
+class TestConflictMediaFilenames:
+    def test_ordered_candidates_from_one_to_999(self) -> None:
+        names = conflict_media_filenames("Title", "mp4", qualifier=" (720p)")
+        assert MAX_CONFLICT_COUNTER == 999
+        assert len(names) == 999
+        assert names[:3] == ["Title (720p).mp4", "Title (720p) (2).mp4", "Title (720p) (3).mp4"]
+        assert names[-1] == "Title (720p) (999).mp4"
+        assert len(set(names)) == 999
+
+    def test_audio_and_unmeasured_names_have_no_qualifier(self) -> None:
+        assert conflict_media_filenames("Title", "m4a")[:2] == ["Title.m4a", "Title (2).m4a"]
+
+    def test_prefix_keeps_collection_order(self) -> None:
+        names = conflict_media_filenames("Title", "mp4", prefix="07 - ", qualifier=" (1080p)")
+        assert names[:2] == ["07 - Title (1080p).mp4", "07 - Title (1080p) (2).mp4"]
+
+    @pytest.mark.parametrize("prefix,qualifier,extension", [
+        ("", "", "mp4"), ("", " (2160p)", "webm"), ("12345 - ", " (720p)", "mp4"),
+        ("", "", "longextxx"),
+    ])
+    def test_long_unicode_body_is_cut_once_within_150_bytes(
+        self, prefix: str, qualifier: str, extension: str
+    ) -> None:
+        title = "Şarkı ğüé 🎵 日本語 " * 20
+        names = conflict_media_filenames(title, extension, prefix=prefix, qualifier=qualifier)
+        head = names[0].removesuffix(f"{qualifier}.{extension}")
+        assert head.startswith(prefix)
+        budget = 150 - len(f"{prefix}{qualifier} (999).{extension}".encode())
+        # The widest counter is reserved up front: the body never shrinks later.
+        assert len(head.removeprefix(prefix).encode()) <= budget
+        assert len(head.removeprefix(prefix).encode()) > budget - 8
+        for counter, name in enumerate(names, start=1):
+            suffix = "" if counter == 1 else f" ({counter})"
+            assert name == f"{head}{qualifier}{suffix}.{extension}"
+            assert len(name.encode()) <= 150
+            name.encode().decode("utf-8")  # valid UTF-8, no split character
+
+    @pytest.mark.parametrize("title", ["", "   ", "\x00\x01", ".", "..", "...", " . "])
+    def test_unusable_title_falls_back(self, title: str) -> None:
+        assert conflict_media_filenames(title, "mp4", prefix="07 - ")[:2] == [
+            "07 - download.mp4", "07 - download (2).mp4",
+        ]
+
+    @pytest.mark.parametrize("title", ["../../etc/passwd", "a/b\\c", "/abs", "x\x00y"])
+    def test_path_shaped_titles_stay_single_segment(self, title: str) -> None:
+        for name in conflict_media_filenames(title, "mp4", max_counter=3):
+            assert "/" not in name and "\\" not in name and "\x00" not in name
+            assert name not in {".", ".."}
+
+    @pytest.mark.parametrize("max_counter", [0, -1, True, 2.0])
+    def test_invalid_max_counter_rejected(self, max_counter: Any) -> None:
+        with pytest.raises(ValueError):
+            conflict_media_filenames("Title", "mp4", max_counter=max_counter)
+
+    def test_fixed_parts_without_room_for_title_rejected(self) -> None:
+        with pytest.raises(ValueError):
+            conflict_media_filenames("Title", "mp4", prefix="x" * 150)
 
 
 class TestEnsureWithinRoot:
@@ -1398,7 +1461,11 @@ class TestMediaFileDeletion:
 
 
 class TestStorageFinalization:
-    def test_concurrent_placements_never_overwrite_target(
+    _RACE_NAMES = {
+        "Same Title.mp4", "Same Title (2).mp4", "Same Title (3).mp4", "Same Title (4).mp4",
+    }
+
+    def test_concurrent_placements_publish_separate_numbered_paths(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         storage = StorageService(tmp_path / "staging", tmp_path / "library")
@@ -1409,22 +1476,30 @@ class TestStorageFinalization:
             source.write_text(f"media-{index}")
             sources.append(source)
         target = tmp_path / "library" / "video" / "Same Title.mp4"
-        self._synchronize_target_checks(monkeypatch, target, len(sources))
+        # Every racer attempts the same first name at the same moment.
+        self._synchronize_first_link(monkeypatch, target, len(sources))
 
         async def place_all():
             return await asyncio.gather(
                 *(
-                    storage.place_final(source, media_kind="video", title="Same Title")
-                    for source in sources
+                    storage.place_final(
+                        source, media_kind="video", title="Same Title",
+                        staging_key=str(index),
+                    )
+                    for index, source in enumerate(sources)
                 )
             )
 
         results = asyncio.run(place_all())
-        assert sum(not result.skipped_existing for result in results) == 1
-        assert sum(result.skipped_existing for result in results) == 3
-        assert target.read_text() in {f"media-{index}" for index in range(4)}
+        assert {result.final_path.name for result in results} == self._RACE_NAMES
+        contents = {result.final_path.read_text() for result in results}
+        assert contents == {f"media-{index}" for index in range(4)}
+        for result in results:
+            placed = result.final_path.stat()
+            assert result.identity == (placed.st_dev, placed.st_ino)
+        assert not any(source.exists() for source in sources)
 
-    def test_concurrent_cross_filesystem_copies_never_overwrite_target(
+    def test_concurrent_cross_filesystem_copies_publish_separate_paths(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         storage = StorageService(tmp_path / "staging", tmp_path / "library")
@@ -1434,30 +1509,41 @@ class TestStorageFinalization:
             source = storage.job_staging_dir(str(index)) / "media.mp4"
             source.write_text(f"media-{index}")
             sources.append(source)
-        source_paths = {source.resolve() for source in sources}
-        real_link = os.link
         target = tmp_path / "library" / "video" / "Same Title.mp4"
-        self._synchronize_target_checks(monkeypatch, target, len(sources))
+        real_link = os.link
+        barrier = threading.Barrier(len(sources))
+        waited: set[str] = set()
+        lock = threading.Lock()
 
-        def cross_device_sources(src: Path, dst: Path) -> None:
-            if Path(src).resolve() in source_paths:
+        def cross_device_sources(src: Any, dst: Any, **kwargs: Any) -> None:
+            if not _is_temp(src):
                 raise OSError(errno.EXDEV, "cross-device link")
-            real_link(src, dst)
+            # Every temporary copy races for the same first name.
+            with lock:
+                first = str(dst) == target.name and str(src) not in waited
+                if first:
+                    waited.add(str(src))
+            if first:
+                barrier.wait(timeout=2)
+            real_link(src, dst, **kwargs)
 
         monkeypatch.setattr(os, "link", cross_device_sources)
 
         async def place_all():
             return await asyncio.gather(
                 *(
-                    storage.place_final(source, media_kind="video", title="Same Title")
-                    for source in sources
+                    storage.place_final(
+                        source, media_kind="video", title="Same Title",
+                        staging_key=str(index),
+                    )
+                    for index, source in enumerate(sources)
                 )
             )
 
         results = asyncio.run(place_all())
-        assert sum(not result.skipped_existing for result in results) == 1
-        assert sum(result.skipped_existing for result in results) == 3
-        assert target.read_text() in {f"media-{index}" for index in range(4)}
+        assert {result.final_path.name for result in results} == self._RACE_NAMES
+        contents = {result.final_path.read_text() for result in results}
+        assert contents == {f"media-{index}" for index in range(4)}
         assert not list(target.parent.glob("*.part"))
 
     def test_cross_filesystem_copy_is_hidden_and_does_not_block_event_loop(
@@ -1468,34 +1554,30 @@ class TestStorageFinalization:
         source = storage.job_staging_dir("job") / "media.mp4"
         source.write_text("media")
         target = tmp_path / "library" / "video" / "Title.mp4"
-        real_link = os.link
-        real_copy2 = shutil.copy2
+        real_copy = shutil.copyfileobj
         copy_started = threading.Event()
         allow_copy = threading.Event()
 
-        def cross_device_link(src: Path, dst: Path) -> None:
-            if Path(src) == source:
-                raise OSError(errno.EXDEV, "cross-device link")
-            real_link(src, dst)
-
-        def blocked_copy(src: Path, dst: Path) -> str:
+        def blocked_copy(original: Any, copied: Any) -> None:
             copy_started.set()
             assert allow_copy.wait(timeout=2)
-            return str(real_copy2(src, dst))
+            real_copy(original, copied)
 
-        monkeypatch.setattr(os, "link", cross_device_link)
-        monkeypatch.setattr(shutil, "copy2", blocked_copy)
+        monkeypatch.setattr(os, "link", _exdev_for_source(os.link))
+        monkeypatch.setattr(shutil, "copyfileobj", blocked_copy)
 
         async def run() -> None:
             placement_task = asyncio.create_task(
-                storage.place_final(source, media_kind="video", title="Title")
+                storage.place_final(
+                    source, media_kind="video", title="Title", staging_key="job",
+                )
             )
             assert await asyncio.to_thread(copy_started.wait, 2)
             await asyncio.wait_for(asyncio.sleep(0), timeout=0.1)
             assert not target.exists()
             allow_copy.set()
             result = await placement_task
-            assert not result.skipped_existing
+            assert result.final_path.name == target.name
 
         asyncio.run(run())
 
@@ -1512,18 +1594,20 @@ class TestStorageFinalization:
         source.write_text("media")
         target = tmp_path / "library" / "video" / "Title.mp4"
 
-        def cross_device_link(_src: Path, _dst: Path) -> None:
+        def cross_device_link(*_args: Any, **_kwargs: Any) -> None:
             raise OSError(errno.EXDEV, "cross-device link")
 
-        def failed_copy(_src: Path, dst: Path) -> None:
-            Path(dst).write_text("partial")
+        def failed_copy(_original: Any, copied: Any) -> None:
+            copied.write(b"partial")
             raise OSError("copy failed")
 
         monkeypatch.setattr(os, "link", cross_device_link)
-        monkeypatch.setattr(shutil, "copy2", failed_copy)
+        monkeypatch.setattr(shutil, "copyfileobj", failed_copy)
 
         with pytest.raises(OSError, match="copy failed"):
-            asyncio.run(storage.place_final(source, media_kind="video", title="Title"))
+            asyncio.run(storage.place_final(
+                source, media_kind="video", title="Title", staging_key="job",
+            ))
 
         assert source.read_text() == "media"
         assert not target.exists()
@@ -1537,33 +1621,29 @@ class TestStorageFinalization:
         source = storage.job_staging_dir("job") / "media.mp4"
         source.write_text("media")
         target = tmp_path / "library" / "video" / "Title.mp4"
-        real_link = os.link
-        real_copy2 = shutil.copy2
+        real_copy = shutil.copyfileobj
         copy_started = threading.Event()
         allow_copy = threading.Event()
 
-        def cross_device_link(src: Path, dst: Path) -> None:
-            if Path(src) == source:
-                raise OSError(errno.EXDEV, "cross-device link")
-            real_link(src, dst)
-
-        def blocked_copy(src: Path, dst: Path) -> str:
+        def blocked_copy(original: Any, copied: Any) -> None:
             copy_started.set()
             assert allow_copy.wait(timeout=2)
-            return str(real_copy2(src, dst))
+            real_copy(original, copied)
 
-        monkeypatch.setattr(os, "link", cross_device_link)
-        monkeypatch.setattr(shutil, "copy2", blocked_copy)
+        monkeypatch.setattr(os, "link", _exdev_for_source(os.link))
+        monkeypatch.setattr(shutil, "copyfileobj", blocked_copy)
 
         async def run() -> None:
             placement_task = asyncio.create_task(
-                storage.place_final(source, media_kind="video", title="Title")
+                storage.place_final(
+                    source, media_kind="video", title="Title", staging_key="job",
+                )
             )
             assert await asyncio.to_thread(copy_started.wait, 2)
             placement_task.cancel()
             allow_copy.set()
             result = await asyncio.wait_for(placement_task, timeout=2)
-            assert not result.skipped_existing
+            assert result.final_path.name == target.name
 
         asyncio.run(run())
 
@@ -1579,23 +1659,583 @@ class TestStorageFinalization:
         source.write_text("media")
 
         result = asyncio.run(
-            storage.place_final(source, media_kind="video", title="x" * 200)
+            storage.place_final(
+                source, media_kind="video", title="x" * 200, staging_key="job",
+            )
         )
 
-        assert result.final_path.name == "x" * 140 + ".longextxx"
+        # 150 bytes minus ".longextxx" and the reserved widest " (999)".
+        assert result.final_path.name == "x" * 134 + ".longextxx"
         assert result.final_path.read_text() == "media"
 
     @staticmethod
-    def _synchronize_target_checks(
+    def _storage(tmp_path: Path) -> StorageService:
+        storage = StorageService(tmp_path / "staging", tmp_path / "library")
+        storage.ensure_layout()
+        return storage
+
+    @staticmethod
+    def _source(storage: StorageService, content: str = "new", suffix: str = ".mp4") -> Path:
+        source = storage.job_staging_dir("job") / f"media{suffix}"
+        source.write_text(content)
+        return source
+
+    @pytest.mark.parametrize("short_edge,name", [
+        (720, "Title (720p).mp4"), (1080, "Title (1080p).mp4"), (None, "Title.mp4"),
+    ])
+    def test_video_name_carries_measured_short_edge_or_nothing(
+        self, tmp_path: Path, short_edge: int | None, name: str
+    ) -> None:
+        storage = self._storage(tmp_path)
+        source = self._source(storage)
+        result = asyncio.run(storage.place_final(
+            source, media_kind="video", title="Title", video_short_edge=short_edge,
+        ))
+        assert result.relative_path == f"video/{name}"
+        assert result.final_path.read_text() == "new"
+        assert not source.exists()
+
+    @pytest.mark.parametrize("media_kind,short_edge,existing,expected", [
+        ("video", 720, ["Title (720p).mp4"], "Title (720p) (2).mp4"),
+        ("video", 720, ["Title (720p).mp4", "Title (720p) (2).mp4"], "Title (720p) (3).mp4"),
+        ("video", None, ["Title.mp4"], "Title (2).mp4"),
+        ("audio", None, ["Title.m4a"], "Title (2).m4a"),
+        # A historical suffix-less file is kept and is no conflict for 720p.
+        ("video", 720, ["Title.mp4"], "Title (720p).mp4"),
+        # A different measured resolution is a different name.
+        ("video", 720, ["Title (1080p).mp4"], "Title (720p).mp4"),
+    ])
+    def test_conflict_publishes_next_free_number_and_keeps_existing(
+        self, tmp_path: Path, media_kind: str, short_edge: int | None,
+        existing: list[str], expected: str,
+    ) -> None:
+        storage = self._storage(tmp_path)
+        suffix = ".m4a" if media_kind == "audio" else ".mp4"
+        folder = tmp_path / "library" / media_kind
+        for name in existing:
+            (folder / name).write_text(f"old {name}")
+        source = self._source(storage, suffix=suffix)
+        result = asyncio.run(storage.place_final(
+            source, media_kind=media_kind, title="Title", video_short_edge=short_edge,
+        ))
+        assert result.relative_path == f"{media_kind}/{expected}"
+        assert result.final_path.read_text() == "new"
+        placed = result.final_path.stat()
+        assert result.identity == (placed.st_dev, placed.st_ino)
+        assert result.size_bytes == len("new")
+        for name in existing:
+            assert (folder / name).read_text() == f"old {name}"
+        assert not source.exists()
+
+    def test_same_request_twice_publishes_numbered_copy(self, tmp_path: Path) -> None:
+        # Approved interim behaviour before 3b-2 "Already exists".
+        storage = self._storage(tmp_path)
+        first = asyncio.run(storage.place_final(
+            self._source(storage, "one"), media_kind="video", title="T", video_short_edge=720,
+        ))
+        second = asyncio.run(storage.place_final(
+            self._source(storage, "two"), media_kind="video", title="T", video_short_edge=720,
+        ))
+        assert (first.final_path.name, second.final_path.name) == (
+            "T (720p).mp4", "T (720p) (2).mp4")
+        assert (first.final_path.read_text(), second.final_path.read_text()) == ("one", "two")
+
+    def test_long_unicode_title_shares_body_across_numbers(self, tmp_path: Path) -> None:
+        storage = self._storage(tmp_path)
+        title = "Şarkı ğüé 🎵 " * 30
+        results = [
+            asyncio.run(storage.place_final(
+                self._source(storage, str(index)), media_kind="video", title=title,
+                video_short_edge=720,
+            ))
+            for index in range(3)
+        ]
+        names = [result.final_path.name for result in results]
+        body = names[0].removesuffix(" (720p).mp4")
+        assert names == [
+            f"{body} (720p).mp4", f"{body} (720p) (2).mp4", f"{body} (720p) (3).mp4",
+        ]
+        assert body.startswith("Şarkı")
+        for name in names:
+            assert len(name.encode()) <= 150
+            assert unicodedata.is_normalized("NFC", name)
+
+    @pytest.mark.parametrize("kind", ["file", "symlink", "dangling", "outside", "directory"])
+    def test_any_occupied_leaf_is_skipped_never_followed(
+        self, tmp_path: Path, kind: str
+    ) -> None:
+        storage = self._storage(tmp_path)
+        folder = tmp_path / "library" / "video"
+        occupied = folder / "Title (720p).mp4"
+        inside = folder / "inside.mp4"
+        inside.write_text("inside")
+        outside = tmp_path / "outside.mp4"
+        outside.write_text("outside")
+        if kind == "file":
+            occupied.write_text("old")
+        elif kind == "symlink":
+            occupied.symlink_to(inside)
+        elif kind == "dangling":
+            occupied.symlink_to(folder / "missing.mp4")
+        elif kind == "outside":
+            occupied.symlink_to(outside)
+        else:
+            occupied.mkdir()
+        source = self._source(storage)
+        result = asyncio.run(storage.place_final(
+            source, media_kind="video", title="Title", video_short_edge=720,
+        ))
+        assert result.final_path.parent == folder.resolve()
+        assert result.final_path.name == "Title (720p) (2).mp4"
+        assert not result.final_path.is_symlink()
+        assert result.final_path.read_text() == "new"
+        assert inside.read_text() == "inside"
+        assert outside.read_text() == "outside"
+        assert not (folder / "missing.mp4").exists()
+        assert sorted(p.name for p in tmp_path.iterdir()) == [
+            "library", "outside.mp4", "staging",
+        ]
+        if kind == "file":
+            assert occupied.read_text() == "old"
+        elif kind == "directory":
+            assert occupied.is_dir() and not list(occupied.iterdir())
+        else:
+            assert occupied.is_symlink()
+
+    @pytest.mark.parametrize("cross_filesystem", [False, True])
+    def test_counter_exhaustion_fails_without_touching_anything(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cross_filesystem: bool
+    ) -> None:
+        storage = self._storage(tmp_path)
+        folder = tmp_path / "library" / "video"
+        names = conflict_media_filenames("Title", "mp4", qualifier=" (720p)")
+        assert len(names) == 999 and names[-1] == "Title (720p) (999).mp4"
+        for name in names:
+            (folder / name).write_text("old")
+        source = self._source(storage)
+        if cross_filesystem:
+            monkeypatch.setattr(os, "link", _exdev_for_source(os.link))
+        with pytest.raises(FileExistsError):
+            asyncio.run(storage.place_final(
+                source, media_kind="video", title="Title", video_short_edge=720,
+                staging_key="job",
+            ))
+        assert source.read_text() == "new"
+        assert sorted(p.name for p in folder.iterdir()) == sorted(names)
+        assert all((folder / name).read_text() == "old" for name in names)
+
+    def test_last_counter_999_is_still_published(self, tmp_path: Path) -> None:
+        storage = self._storage(tmp_path)
+        folder = tmp_path / "library" / "audio"
+        names = conflict_media_filenames("Title", "m4a")
+        for name in names[:-1]:
+            (folder / name).write_text("old")
+        result = asyncio.run(storage.place_final(
+            self._source(storage, suffix=".m4a"), media_kind="audio", title="Title",
+        ))
+        assert result.final_path.name == "Title (999).m4a"
+        assert result.final_path.read_text() == "new"
+
+    def test_exdev_copies_once_and_continues_at_same_candidate(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        storage = self._storage(tmp_path)
+        folder = tmp_path / "library" / "video"
+        (folder / "Title (720p).mp4").write_text("old")
+        source = self._source(storage)
+        real_link, real_copy = os.link, shutil.copyfileobj
+        attempts: list[tuple[str, str]] = []
+        copies: list[int] = []
+
+        def cross_device(src: Any, dst: Any, **kwargs: Any) -> None:
+            attempts.append((str(src), str(dst)))
+            if not _is_temp(src):
+                raise OSError(errno.EXDEV, "cross-device link")
+            real_link(src, dst, **kwargs)
+
+        def counted_copy(original: Any, copied: Any) -> None:
+            copies.append(1)
+            # A racer takes the first two names while the copy is in flight.
+            (folder / "Title (720p) (2).mp4").write_text("racer")
+            real_copy(original, copied)
+
+        monkeypatch.setattr(os, "link", cross_device)
+        monkeypatch.setattr(shutil, "copyfileobj", counted_copy)
+        result = asyncio.run(storage.place_final(
+            source, media_kind="video", title="Title", video_short_edge=720,
+            staging_key="job",
+        ))
+        assert result.final_path.name == "Title (720p) (3).mp4"
+        assert result.final_path.read_text() == "new"
+        assert len(copies) == 1
+        # One EXDEV on the source, then the single hidden copy walks the names.
+        assert attempts[0][0] == "media.mp4" and _is_temp(attempts[0][1])
+        assert [dst for _src, dst in attempts[1:]] == [
+            "Title (720p).mp4", "Title (720p) (2).mp4", "Title (720p) (3).mp4",
+        ]
+        assert len({src for src, _dst in attempts[1:]}) == 1
+        placed = result.final_path.stat()
+        assert result.identity == (placed.st_dev, placed.st_ino)
+        assert (folder / "Title (720p).mp4").read_text() == "old"
+        assert (folder / "Title (720p) (2).mp4").read_text() == "racer"
+        assert not source.exists()
+        assert not list(folder.glob("*.part"))
+
+    @pytest.mark.parametrize("cross_filesystem", [False, True])
+    def test_cancel_between_attempts_publishes_nothing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cross_filesystem: bool
+    ) -> None:
+        storage = self._storage(tmp_path)
+        folder = tmp_path / "library" / "video"
+        (folder / "Title.mp4").write_text("old")
+        source = self._source(storage)
+        cancelled = threading.Event()
+        guard_entries: list[bool] = []
+        real_link = os.link
+
+        class RecordingGuard:
+            def __enter__(self) -> None:
+                guard_entries.append(cancelled.is_set())
+
+            def __exit__(self, *_: object) -> None:
+                return None
+
+        def link_then_cancel(src: Any, dst: Any, **kwargs: Any) -> None:
+            if cross_filesystem and not _is_temp(src):
+                raise OSError(errno.EXDEV, "cross-device link")
+            try:
+                real_link(src, dst, **kwargs)
+            except FileExistsError:
+                # Cancellation arrives right after the first occupied name.
+                cancelled.set()
+                raise
+
+        monkeypatch.setattr(os, "link", link_then_cancel)
+        with pytest.raises(PlacementCancelled):
+            asyncio.run(storage.place_final(
+                source, media_kind="video", title="Title", staging_key="job",
+                cancel_requested=cancelled.is_set, publish_guard=RecordingGuard(),
+            ))
+        # Every attempt re-enters the guard; the second sees the cancel.
+        assert guard_entries[-1] is True and guard_entries[-2] is False
+        assert source.read_text() == "new"
+        assert sorted(p.name for p in folder.iterdir()) == ["Title.mp4"]
+        assert (folder / "Title.mp4").read_text() == "old"
+
+    @pytest.mark.parametrize("media_kind,value,error", [
+        ("video", 0, ValueError), ("video", -720, ValueError),
+        ("video", True, TypeError), ("video", 720.0, TypeError), ("video", "720", TypeError),
+        ("audio", 720, ValueError),
+    ])
+    def test_invalid_short_edge_rejected_without_mutation(
+        self, tmp_path: Path, media_kind: str, value: Any, error: type[Exception]
+    ) -> None:
+        storage = self._storage(tmp_path)
+        source = self._source(storage)
+        with pytest.raises(error):
+            asyncio.run(storage.place_final(
+                source, media_kind=media_kind, title="Title", video_short_edge=value,
+            ))
+        assert source.read_text() == "new"
+        assert not list((tmp_path / "library" / "video").iterdir())
+        assert not list((tmp_path / "library" / "audio").iterdir())
+
+    # --- review must-fix regressions: ownership, parent, published inode ---
+
+    def test_source_outside_own_staging_is_rejected_without_mutation(
+        self, tmp_path: Path
+    ) -> None:
+        storage = self._storage(tmp_path)
+        foreign = storage.job_staging_dir("other") / "media.mp4"
+        foreign.write_text("foreign")
+        with pytest.raises(StoragePathError):
+            asyncio.run(storage.place_final(
+                foreign, media_kind="video", title="Title", staging_key="job",
+            ))
+        assert foreign.read_text() == "foreign"
+        assert not list((tmp_path / "library" / "video").iterdir())
+
+    @pytest.mark.parametrize("cross_filesystem", [False, True])
+    def test_source_swap_after_first_conflict_never_publishes_or_deletes(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cross_filesystem: bool
+    ) -> None:
+        storage = self._storage(tmp_path)
+        folder = tmp_path / "library" / "video"
+        (folder / "Title.mp4").write_text("old")
+        source = self._source(storage)
+        real_link = os.link
+
+        def swap_on_conflict(src: Any, dst: Any, **kwargs: Any) -> None:
+            if cross_filesystem and not _is_temp(src):
+                raise OSError(errno.EXDEV, "cross-device link")
+            try:
+                real_link(src, dst, **kwargs)
+            except FileExistsError:
+                source.rename(source.with_suffix(".saved"))
+                source.write_text("replacement")
+                raise
+
+        monkeypatch.setattr(os, "link", swap_on_conflict)
+        with pytest.raises(MediaFileTargetChangedError):
+            asyncio.run(storage.place_final(
+                source, media_kind="video", title="Title", staging_key="job",
+            ))
+        assert source.read_text() == "replacement"  # the new source: untouched
+        assert source.with_suffix(".saved").read_text() == "new"
+        assert sorted(p.name for p in folder.iterdir()) == ["Title.mp4"]  # temp cleaned
+
+    def test_source_swap_before_hidden_link_never_publishes(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        storage = self._storage(tmp_path)
+        folder = tmp_path / "library" / "video"
+        source = self._source(storage)
+        real_link = os.link
+
+        def swap_then_link(src: Any, dst: Any, **kwargs: Any) -> None:
+            if not _is_temp(src):  # the staging leaf is swapped right before
+                source.rename(source.with_suffix(".saved"))
+                source.write_text("replacement")
+            real_link(src, dst, **kwargs)
+
+        monkeypatch.setattr(os, "link", swap_then_link)
+        with pytest.raises(MediaFileTargetChangedError):
+            asyncio.run(storage.place_final(
+                source, media_kind="video", title="Title", staging_key="job",
+            ))
+        assert source.read_text() == "replacement"
+        assert not list(folder.iterdir())
+
+    def test_parent_swap_after_first_conflict_fails_closed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        storage = self._storage(tmp_path)
+        folder = tmp_path / "library" / "video"
+        (folder / "Title.mp4").write_text("old")
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        source = self._source(storage)
+        real_link = os.link
+
+        def swap_parent_on_conflict(src: Any, dst: Any, **kwargs: Any) -> None:
+            try:
+                real_link(src, dst, **kwargs)
+            except FileExistsError:
+                folder.rename(tmp_path / "library" / "moved")
+                folder.symlink_to(outside, target_is_directory=True)
+                raise
+
+        monkeypatch.setattr(os, "link", swap_parent_on_conflict)
+        with pytest.raises(StoragePathError):
+            asyncio.run(storage.place_final(
+                source, media_kind="video", title="Title", staging_key="job",
+            ))
+        assert not list(outside.iterdir())  # no write or cleanup outside the root
+        moved = tmp_path / "library" / "moved"
+        assert [p.name for p in moved.iterdir() if not p.name.startswith(".")] == [
+            "Title.mp4"]
+        assert source.read_text() == "new"
+
+    def test_symlinked_media_directory_is_rejected(self, tmp_path: Path) -> None:
+        storage = self._storage(tmp_path)
+        folder = tmp_path / "library" / "video"
+        real = tmp_path / "library" / "real-video"
+        folder.rmdir()
+        real.mkdir()
+        folder.symlink_to(real, target_is_directory=True)  # even inside the root
+        source = self._source(storage)
+        with pytest.raises(StoragePathError):
+            asyncio.run(storage.place_final(
+                source, media_kind="video", title="Title", staging_key="job",
+            ))
+        assert not list(real.iterdir())
+        assert source.read_text() == "new"
+
+    @pytest.mark.parametrize("cross_filesystem", [False, True])
+    def test_target_swap_right_after_link_fails_closed_and_keeps_source(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cross_filesystem: bool
+    ) -> None:
+        storage = self._storage(tmp_path)
+        folder = tmp_path / "library" / "video"
+        source = self._source(storage)
+        real_link = os.link
+
+        def link_then_replace(src: Any, dst: Any, **kwargs: Any) -> None:
+            if cross_filesystem and not _is_temp(src):
+                raise OSError(errno.EXDEV, "cross-device link")
+            real_link(src, dst, **kwargs)
+            if not _is_temp(dst):
+                (folder / dst).unlink()
+                (folder / dst).write_text("impostor")
+
+        monkeypatch.setattr(os, "link", link_then_replace)
+        with pytest.raises(MediaFileTargetChangedError):
+            asyncio.run(storage.place_final(
+                source, media_kind="video", title="Title", staging_key="job",
+            ))
+        assert source.read_text() == "new"  # never deleted early
+        assert (folder / "Title.mp4").read_text() == "impostor"  # never auto-deleted
+
+    @pytest.mark.parametrize("change", ["vanished", "replaced"])
+    @pytest.mark.parametrize("cross_filesystem", [False, True])
+    def test_target_change_at_gate_exit_with_same_root_keeps_source(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        change: str, cross_filesystem: bool,
+    ) -> None:
+        """Root stays; the visible target changes only when the gate is released."""
+        storage = self._storage(tmp_path)
+        folder = tmp_path / "library" / "video"
+        source = self._source(storage)
+        real_link = os.link
+        published: list[str] = []
+
+        def link(src: Any, dst: Any, **kwargs: Any) -> None:
+            if cross_filesystem and not _is_temp(src):
+                raise OSError(errno.EXDEV, "cross-device link")
+            real_link(src, dst, **kwargs)
+            if not _is_temp(dst):
+                published.append(str(dst))
+
+        class Guard:
+            def __enter__(self) -> None:
+                return None
+
+            def __exit__(self, *_: object) -> None:
+                if published:  # in-gate checks passed; now change the target
+                    target = folder / published[0]
+                    target.unlink()
+                    if change == "replaced":
+                        target.write_text("impostor")
+
+        monkeypatch.setattr(os, "link", link)
+        with pytest.raises(MediaFileTargetChangedError):
+            asyncio.run(storage.place_final(
+                source, media_kind="video", title="Title", staging_key="job",
+                publish_guard=Guard(),
+            ))
+        assert published == ["Title.mp4"]
+        assert source.read_text() == "new"  # staged source kept
+        if change == "replaced":
+            assert (folder / "Title.mp4").read_text() == "impostor"  # never deleted
+            assert sorted(p.name for p in folder.iterdir()) == ["Title.mp4"]
+        else:
+            assert not list(folder.iterdir())  # nothing recreated; temp cleaned
+
+    @pytest.mark.parametrize("moment,swap,startup", [
+        ("copy", "moved", False),
+        ("copy", "replaced", True),
+        ("eexist", "moved", True),
+        ("eexist", "replaced", False),
+        ("after_link", "moved", True),
+        ("gate_exit", "replaced", False),
+    ])
+    def test_root_swap_during_placement_fails_closed_and_keeps_staging(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        moment: str, swap: str, startup: bool,
+    ) -> None:
+        """The held root fd never publishes/unlinks after the root changed.
+
+        The App Library root is moved (or moved and replaced by a real
+        directory) while the EXDEV copy runs, between ``EEXIST`` attempts,
+        right after the visible link, or when the gate is released. The
+        startup snapshot or the placement-start fallback capture is replayed,
+        never re-captured.
+        """
+        storage = self._storage(tmp_path)
+        if startup:
+            storage.initialize_delete_roots()
+        library = tmp_path / "library"
+        old = tmp_path / "old-library"
+        if moment == "eexist":
+            (library / "video" / "Title.mp4").write_text("old")
+        source = self._source(storage)
+        real_link, real_copy = os.link, shutil.copyfileobj
+        published: list[str] = []
+
+        def swap_root() -> None:
+            library.rename(old)
+            if swap == "replaced":
+                (library / "video").mkdir(parents=True)
+
+        def copy(original: Any, copied: Any) -> None:
+            if moment == "copy":
+                swap_root()  # while the cross-filesystem copy is running
+            real_copy(original, copied)
+
+        def link(src: Any, dst: Any, **kwargs: Any) -> None:
+            if not _is_temp(src):
+                raise OSError(errno.EXDEV, "cross-device link")
+            try:
+                real_link(src, dst, **kwargs)
+            except FileExistsError:
+                if moment == "eexist":
+                    swap_root()  # between two visible-name attempts
+                raise
+            published.append(str(dst))
+            if moment == "after_link":
+                swap_root()
+
+        class Guard:
+            def __enter__(self) -> None:
+                return None
+
+            def __exit__(self, *_: object) -> None:
+                if moment == "gate_exit" and published and not old.exists():
+                    swap_root()
+
+        monkeypatch.setattr(os, "link", link)
+        monkeypatch.setattr(shutil, "copyfileobj", copy)
+        fd_dir = Path("/proc/self/fd")
+        open_fds = len(list(fd_dir.iterdir())) if fd_dir.is_dir() else None
+        with pytest.raises((StoragePathError, StorageTargetError)):
+            asyncio.run(storage.place_final(
+                source, media_kind="video", title="Title", staging_key="job",
+                publish_guard=Guard(),
+            ))
+        assert source.read_text() == "new"  # staged bytes kept, never unlinked
+        if open_fds is not None:
+            assert len(list(fd_dir.iterdir())) == open_fds  # no leaked descriptor
+        if swap == "replaced":
+            assert not list((library / "video").iterdir())  # new root untouched
+        else:
+            assert not library.exists()
+        visible = sorted(p.name for p in (old / "video").iterdir() if not _is_temp(p.name))
+        if moment in {"after_link", "gate_exit"}:
+            # Published before the change: kept, never rolled back.
+            assert published == ["Title.mp4"] and visible == ["Title.mp4"]
+            assert (old / "video" / "Title.mp4").read_text() == "new"
+        else:
+            # No visible name was ever published after the change.
+            assert published == []
+            assert visible == (["Title.mp4"] if moment == "eexist" else [])
+            if moment == "eexist":
+                assert (old / "video" / "Title.mp4").read_text() == "old"
+        # Our own temp is still removed fd-relative in the held directory.
+        assert not list((old / "video").glob("*.part"))
+
+    @staticmethod
+    def _synchronize_first_link(
         monkeypatch: pytest.MonkeyPatch, target: Path, participants: int
     ) -> None:
         barrier = threading.Barrier(participants)
-        real_exists = Path.exists
+        real_link = os.link
 
-        def synchronized_exists(path: Path) -> bool:
-            exists = real_exists(path)
-            if path == target:
+        def synchronized_link(src: Any, dst: Any, **kwargs: Any) -> None:
+            if str(dst) == target.name:
                 barrier.wait(timeout=2)
-            return exists
+            real_link(src, dst, **kwargs)
 
-        monkeypatch.setattr(Path, "exists", synchronized_exists)
+        monkeypatch.setattr(os, "link", synchronized_link)
+
+
+def _is_temp(name: Any) -> bool:
+    """Hidden ``.<name>.<rand>.part`` temps; anything else is a source/target."""
+    return str(name).startswith(".")
+
+
+def _exdev_for_source(real_link: Callable[..., None]) -> Callable[..., None]:
+    def link(src: Any, dst: Any, **kwargs: Any) -> None:
+        if not _is_temp(src):  # the staged source leaf itself
+            raise OSError(errno.EXDEV, "cross-device link")
+        real_link(src, dst, **kwargs)
+    return link

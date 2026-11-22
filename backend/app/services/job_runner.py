@@ -102,10 +102,6 @@ _REMUX_UNCERTAINTY = (
 _REMUX_FALLBACK_SAVED = (
     "Opus packaging failed — saved the original WebM file. " + _REMUX_UNCERTAINTY
 )
-_REMUX_FALLBACK_SKIPPED = (
-    "Opus packaging failed — a file with this name already exists, kept the "
-    "existing copy. " + _REMUX_UNCERTAINTY
-)
 
 _DETAIL_LIMIT = 4_000
 _TERMINATION_GRACE_SECONDS = 5.0
@@ -172,24 +168,21 @@ def build_app_library_catalog(
     file size read inside the storage boundary.
 
     For a converted download the codec comes from the plan and the bitrate
-    only survives a pure stream copy; when an existing file was kept
-    (Skip Existing) its content is unknown, so both stay null.
+    only survives a pure stream copy. The placement is always the newly
+    published file (never an existing one), so these facts describe it.
 
     A video's resolution is the measured short-edge label of the staged
-    output (``dimensions``), never the analysis label; unknown or a kept
-    existing file (never measured) stays null.
+    output (``dimensions``), never the analysis label; unknown stays null.
     """
     now = datetime.now(UTC)
     audio = selected.kind == "audio_only"
     if audio:
         resolution = selected.resolution_label
     else:
-        resolution = None if placement.skipped_existing or dimensions is None else dimensions.label
+        resolution = None if dimensions is None else dimensions.label
     if plan is None:
         codec = selected.audio_codec if audio else selected.video_codec
         bitrate = selected.bitrate_kbps
-    elif placement.skipped_existing:
-        codec = bitrate = None
     else:
         codec = plan.output_codec
         bitrate = selected.bitrate_kbps if plan.keep_source_bitrate else None
@@ -414,14 +407,12 @@ class _JobExecution:
             title=record.title,
             cancel_requested=self._cancel_event.is_set,
             publish_guard=self._cancel_gate,
+            # The filename carries the same measured short edge as the catalog.
+            video_short_edge=None if dimensions is None else dimensions.short_edge,
+            # Ownership: the source must stay this job's own staged file.
+            staging_key=self._job_id,
         )
-        if placement.skipped_existing:
-            await self._activity(
-                "A file with this name already exists — kept the existing copy",
-                level="warning",
-            )
-        else:
-            await self._activity("Saved to App Library")
+        await self._activity("Saved to App Library")
 
         await self._complete(
             record, normalized, selected, placement, plan,
@@ -577,11 +568,7 @@ class _JobExecution:
                     job_id=self._job_id,
                     level="warning",
                     event_type="job",
-                    message=(
-                        _REMUX_FALLBACK_SKIPPED
-                        if placement.skipped_existing
-                        else _REMUX_FALLBACK_SAVED
-                    ),
+                    message=_REMUX_FALLBACK_SAVED,
                 )
             await session.commit()
         if warning is not None:

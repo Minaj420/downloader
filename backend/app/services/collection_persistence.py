@@ -443,10 +443,9 @@ async def stage_child_completion(
     Placement must already be finalized by StorageService. Losing CAS never
     builds/inserts catalog rows; stable identity collision raises, never upserts.
     A converted output takes its codec from ``plan`` and keeps the source
-    bitrate only for a pure stream copy; a kept existing file (Skip Existing)
-    has unknown content, so both stay null. A video's resolution is the measured
-    short-edge label (``dimensions``), never the analysis label; unknown or a
-    kept existing file (never measured) stays null.
+    bitrate only for a pure stream copy. The placement is always the newly
+    published file. A video's resolution is the measured short-edge label
+    (``dimensions``), never the analysis label; unknown stays null.
     """
     now = datetime.now(UTC)
     won = await jobs._stage_collection_child_cas(
@@ -467,12 +466,10 @@ async def stage_child_completion(
     if audio:
         resolution = selected.resolution_label
     else:
-        resolution = None if placement.skipped_existing or dimensions is None else dimensions.label
+        resolution = None if dimensions is None else dimensions.label
     if plan is None:
         codec = selected.audio_codec if audio else selected.video_codec
         bitrate = selected.bitrate_kbps
-    elif placement.skipped_existing:
-        codec = bitrate = None
     else:
         codec = plan.output_codec
         bitrate = selected.bitrate_kbps if plan.keep_source_bitrate else None

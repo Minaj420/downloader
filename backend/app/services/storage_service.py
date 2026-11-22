@@ -1,8 +1,13 @@
 """Storage boundary: staging layout and finalization into the App Library.
 
 All filesystem behaviour for downloads lives here (ARCHITECTURE.md §28–30).
-Filename conflicts default to Skip Existing (PRODUCT_SPEC.md §16): the
-existing file is never overwritten.
+An existing entry is never overwritten (PRODUCT_SPEC.md §15–16): a video
+name carries the measured short edge (``Title (720p).ext``) and any name
+collision publishes the next free ``(2)``, ``(3)`` … ``(999)`` candidate,
+chosen only by atomic ``link`` ``EEXIST`` results, never by a prior
+existence check. Publication is descriptor-relative to a verified media
+directory, from a pinned source, and the published inode is verified
+against the expected identity before the source is unlinked.
 
 Catalogued media deletion (PRODUCT_SPEC.md §21 "Delete File",
 ARCHITECTURE.md §37–38) also lives here: physical targets are reached
@@ -21,9 +26,9 @@ a ``media_files`` row.
 import asyncio
 import errno
 import os
+import secrets
 import shutil
 import stat
-import tempfile
 from collections.abc import Callable, Sequence
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
@@ -32,7 +37,7 @@ from typing import Any
 
 from app.domain.library import MediaStorageType
 from app.utils.filenames import (
-    sanitize_filename,
+    conflict_media_filenames,
     sanitize_media_filename,
     sanitize_path_segment,
 )
@@ -41,9 +46,13 @@ from app.utils.paths import ensure_within_root
 
 @dataclass(slots=True)
 class PlacementResult:
+    # Always the newly published file: placement never reports an
+    # existing entry as its result.
     final_path: Path
     relative_path: str
-    skipped_existing: bool
+    # Size and identity come from the published inode itself (pinned source
+    # or temporary copy fd), never from re-reading the target path; the
+    # target was verified no-follow against them right after the link.
     size_bytes: int
     # (st_dev, st_ino) of the file actually present at the target,
     # captured inside the storage boundary. The catalog write that
@@ -215,6 +224,72 @@ class PreparedMediaFile:
         return self.resolved_path
 
 
+@dataclass(slots=True)
+class _PublishDir:
+    """Verified flat publish directory held as ``root_fd`` + ``fd``.
+
+    ``root_steps``/``root_identity`` are the App Library root snapshot taken
+    once — at startup, or by the fallback capture when placement began —
+    and are never re-captured or re-resolved during the operation.
+
+    ``verify`` replays ``root_steps`` with the existing no-follow,
+    alias-aware walker (``replay_root``), requires the replayed root to
+    still be ``root_identity`` and ``name`` below it to still be the
+    directory ``fd`` was opened on. A root or media directory that was
+    moved, renamed or replaced therefore fails closed instead of letting a
+    held descriptor publish outside the configured location. Replay errors
+    keep their typed storage errors and never leak descriptors.
+    ``verify_local`` only re-checks ``name`` under the held ``root_fd``
+    (used for best-effort cleanup of our own temp through ``fd``).
+    The stat→operation micro-window inherent to POSIX remains (same as
+    ``PreparedMediaFile``).
+    """
+
+    root_fd: int
+    fd: int
+    name: str
+    path: Path
+    identity: tuple[int, int]
+    root_steps: tuple[_RootStep, ...]
+    root_identity: tuple[int, int]
+    replay_root: Callable[[tuple[_RootStep, ...]], int]
+    _closed: bool = False
+
+    def verify(self) -> None:
+        fresh = self.replay_root(self.root_steps)
+        try:
+            root = os.fstat(fresh)
+            if (root.st_dev, root.st_ino) != self.root_identity:
+                raise StoragePathError("App Library root changed during placement")
+            self._check_entry(fresh)
+        finally:
+            try:
+                os.close(fresh)
+            except OSError:
+                pass
+
+    def verify_local(self) -> None:
+        self._check_entry(self.root_fd)
+
+    def _check_entry(self, root_fd: int) -> None:
+        try:
+            entry = os.stat(self.name, dir_fd=root_fd, follow_symlinks=False)
+        except FileNotFoundError as exc:
+            raise StoragePathError(f"publish directory vanished: {self.name!r}") from exc
+        if not stat.S_ISDIR(entry.st_mode) or (entry.st_dev, entry.st_ino) != self.identity:
+            raise StoragePathError(f"publish directory changed: {self.name!r}")
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        for fd in (self.fd, self.root_fd):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+
 class StorageService:
     def __init__(
         self,
@@ -303,6 +378,42 @@ class StorageService:
         candidate = self._library_root.joinpath(media_kind, *segments, safe_filename)
         return ensure_within_root(self._library_root, candidate)
 
+    @staticmethod
+    def _validate_video_short_edge(value: int | None, media_kind: str) -> None:
+        if value is None:
+            return
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise TypeError(f"video_short_edge must be an int: {value!r}")
+        if value <= 0:
+            raise ValueError(f"video_short_edge must be positive: {value!r}")
+        if media_kind != "video":
+            raise ValueError(f"video_short_edge is only for video: {media_kind!r}")
+
+    @staticmethod
+    def _candidate_names(
+        media_kind: str,
+        title: str,
+        extension: str,
+        *,
+        source_order: int | None = None,
+        video_short_edge: int | None = None,
+    ) -> list[str]:
+        """Ordered flat no-clobber leaf names ``[NN - ]Title[ (Np)][ (n)].ext``.
+
+        Names are single segments published only relative to the verified
+        ``media_kind`` directory descriptor (``_open_publish_dir``); a leaf
+        is never resolved or followed, so an existing leaf symlink (normal,
+        dangling or escaping) or directory is just an occupied candidate
+        (``EEXIST``).
+        """
+        if media_kind not in {"audio", "video"}:
+            raise ValueError(f"unsupported media kind: {media_kind}")
+        prefix = "" if source_order is None else f"{source_order:02d} - "
+        qualifier = "" if video_short_edge is None else f" ({video_short_edge}p)"
+        return conflict_media_filenames(
+            title, extension, prefix=prefix, qualifier=qualifier
+        )
+
     async def place_final(
         self,
         source: Path,
@@ -311,21 +422,42 @@ class StorageService:
         title: str,
         cancel_requested: Callable[[], bool] | None = None,
         publish_guard: AbstractContextManager[Any] | None = None,
+        video_short_edge: int | None = None,
+        staging_key: str | None = None,
     ) -> PlacementResult:
         """Move finalized media off the event loop without overwriting a target.
 
-        ``publish_guard`` linearizes the atomic publish against an external
-        cancellation signal: the cancel side sets its event while holding the
-        same guard, so either cancellation is observed before the file becomes
-        visible or the publish has already happened.
+        ``staging_key`` is the runner's own staging key: the source must be a
+        regular file inside that staging directory, pinned with the same
+        no-follow descriptor walk as child placement, and re-verified before
+        every publish attempt and before its unlink. The job runner always
+        passes it. ``None`` only pins the given leaf (no ownership check) for
+        legacy direct callers; production code must not rely on it.
+
+        ``video_short_edge`` (video only) is the measured short edge of the
+        staged file; it names the output ``Title (720p).ext``. ``None``
+        (unmeasured, or audio) adds no qualifier. A collision publishes the
+        next free numbered candidate; exhaustion raises ``OSError``.
+
+        ``publish_guard`` linearizes each atomic publish attempt against an
+        external cancellation signal: the cancel side sets its event while
+        holding the same guard, so either cancellation is observed before the
+        file becomes visible or the publish has already happened.
         """
+        if staging_key is not None:
+            staging_key = self._validated_job_id(staging_key)
+        self._validate_video_short_edge(video_short_edge, media_kind)
         extension = source.suffix.lstrip(".") or "bin"
-        target = self.final_target(media_kind, f"{title}.{extension}")
+        names = self._candidate_names(
+            media_kind, title, extension, video_short_edge=video_short_edge
+        )
         operation = asyncio.create_task(
             asyncio.to_thread(
                 self._place_final_sync,
                 source,
-                target,
+                staging_key,
+                media_kind,
+                names,
                 cancel_requested or (lambda: False),
                 publish_guard,
             )
@@ -350,6 +482,7 @@ class StorageService:
         cancel_requested: Callable[[], bool] | None = None,
         publish_guard: AbstractContextManager[Any] | None = None,
         source_order: int | None = None,
+        video_short_edge: int | None = None,
     ) -> PlacementResult:
         """Place only a regular output owned by the backend child's staging key.
 
@@ -357,14 +490,20 @@ class StorageService:
         it prefixes the filename as ``NN - Title.ext`` with at least two
         digits, never truncated or compacted (PRODUCT_SPEC.md §15). With
         ``None`` the flat ``Title.ext`` target is unchanged.
+        ``video_short_edge`` (video only) adds the measured ``(720p)``
+        qualifier; a collision publishes the next free numbered candidate.
 
         Source parents and file are pinned with no-follow descriptors. Always
         copy from the pinned file (also on the same filesystem): portable POSIX
         has no descriptor-based hard-link primitive. Never reopen the adapter
-        path for copying. Publication retains the single placement cancel gate
-        and skip-existing/catalog identity semantics. The worker owns all fds
-        and temporary files; repeated waiter cancellation drains it as single
-        placement does, rather than orphaning cleanup.
+        path for copying; the temporary copy is made once, descriptor-relative
+        in the verified target directory, and reused for every candidate.
+        Every publish attempt retains the placement cancel gate and the
+        pinned-source recheck; the catalog identity/size are the temporary
+        copy's own inode facts, verified no-follow at the target after link.
+        The worker owns all fds and temporary files; repeated waiter
+        cancellation drains it as single placement does, rather than
+        orphaning cleanup.
 
         Parent-name swaps cannot redirect reads/unlinks. Detectable leaf swaps
         fail closed before publication and unlink. As with PreparedMediaFile,
@@ -380,11 +519,12 @@ class StorageService:
                 raise ValueError(f"source_order must be positive: {source_order!r}")
             if media_kind != "video":
                 raise ValueError(f"source_order is only for video: {media_kind!r}")
+        self._validate_video_short_edge(video_short_edge, media_kind)
         operation = asyncio.create_task(asyncio.to_thread(
             self._place_child_final_sync,
             child_staging_key, adapter_output_path, media_kind, title,
             cancel_requested or (lambda: False), publish_guard,
-            source_order=source_order,
+            source_order=source_order, video_short_edge=video_short_edge,
         ))
         while True:
             try:
@@ -483,116 +623,350 @@ class StorageService:
         if (entry.st_dev, entry.st_ino) != source.identity:
             raise MediaFileTargetChangedError(str(source.resolved_path))
 
+    def _pin_unowned_source(self, source: Path) -> PreparedMediaFile:
+        """Legacy pin for a caller-trusted path (no staging ownership check).
+
+        The leaf is opened ``O_NOFOLLOW | O_NONBLOCK`` relative to its parent
+        descriptor and must be a regular file; publication still rechecks
+        and unlinks it descriptor-relative under the same identity rules.
+        """
+        if not source.name or source.name in {".", ".."}:
+            raise StoragePathError("source must name a file")
+        try:
+            parent_fd = os.open(source.parent, os.O_RDONLY | os.O_DIRECTORY)
+        except OSError as exc:
+            raise _component_open_error(str(source.parent), exc) from exc
+        pinned_fd: int | None = None
+        try:
+            try:
+                pinned_fd = os.open(
+                    source.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                    dir_fd=parent_fd,
+                )
+            except OSError as exc:
+                raise _final_open_error(source.name, exc) from exc
+            entry = os.fstat(pinned_fd)
+            if not stat.S_ISREG(entry.st_mode):
+                raise MediaFileNotRegularError(str(source))
+            return PreparedMediaFile(
+                parent_fd, pinned_fd, source.name, source, (entry.st_dev, entry.st_ino)
+            )
+        except BaseException:
+            if pinned_fd is not None:
+                os.close(pinned_fd)
+            os.close(parent_fd)
+            raise
+
+    def _open_publish_dir(self, media_kind: str) -> _PublishDir:
+        """Open the flat ``media_kind`` directory through a verified root fd.
+
+        The App Library root is the startup-captured delete root when
+        available (identity re-checked), otherwise captured now with the
+        same alias-aware no-follow walk. ``media_kind`` itself must be a
+        real directory opened ``O_NOFOLLOW`` (a symlinked media directory,
+        even one pointing inside the root, is rejected fail-closed). All
+        temporary files, links and cleanup are relative to this descriptor;
+        no target path is ever re-resolved. The root steps and identity used
+        here are kept for ``_PublishDir.verify`` replays.
+        """
+        app_library = MediaStorageType.APP_LIBRARY.value
+        captured = self._delete_roots.get(app_library)
+        if captured is not None:
+            root_fd, root_path = self._open_validated_root(app_library)
+            root_steps, root_identity = captured.steps, captured.identity
+        else:
+            self._library_root.mkdir(parents=True, exist_ok=True)
+            root_path = self._library_root.resolve()
+            root_fd, root_steps = self._capture_root_descriptor(
+                self._library_root, root_path
+            )
+            try:
+                root_stat = os.fstat(root_fd)
+            except BaseException:
+                os.close(root_fd)
+                raise
+            root_identity = (root_stat.st_dev, root_stat.st_ino)
+        try:
+            try:
+                os.mkdir(media_kind, 0o755, dir_fd=root_fd)
+            except FileExistsError:
+                pass
+            try:
+                fd = os.open(
+                    media_kind, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                    dir_fd=root_fd,
+                )
+            except OSError as exc:
+                if exc.errno in (errno.ELOOP, errno.ENOTDIR):
+                    raise StoragePathError(
+                        f"publish directory is not a real directory: {media_kind!r}"
+                    ) from exc
+                raise
+            try:
+                entry = os.fstat(fd)
+            except BaseException:
+                os.close(fd)
+                raise
+            return _PublishDir(
+                root_fd, fd, media_kind, root_path / media_kind,
+                (entry.st_dev, entry.st_ino), root_steps, root_identity,
+                self._open_root_descriptor,
+            )
+        except BaseException:
+            os.close(root_fd)
+            raise
+
+    @staticmethod
+    def _temp_name(first: str) -> str:
+        return f".{first}.{secrets.token_hex(8)}.part"
+
+    @staticmethod
+    def _entry_identity(name: str, dir_fd: int) -> tuple[int, int] | None:
+        """No-follow regular-file identity of ``name``; ``None`` otherwise."""
+        try:
+            entry = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return None
+        if not stat.S_ISREG(entry.st_mode):
+            return None
+        return (entry.st_dev, entry.st_ino)
+
+    def _link_source_to_temp(
+        self, source: PreparedMediaFile, publish: _PublishDir, first: str,
+    ) -> tuple[str, tuple[int, int] | None]:
+        """Hard-link the pinned source name to a hidden temp; ``EXDEV`` raises.
+
+        Returns the temp name and the identity it actually got. The caller
+        must compare it with the pinned identity: a staging swap between pin
+        and link is detected before anything becomes visible.
+        """
+        for _ in range(16):
+            name = self._temp_name(first)
+            try:
+                os.link(
+                    source.final_name, name, src_dir_fd=source._parent_fd,
+                    dst_dir_fd=publish.fd, follow_symlinks=False,
+                )
+            except FileExistsError:
+                continue
+            return name, self._entry_identity(name, publish.fd)
+        raise FileExistsError(errno.EEXIST, "no free temporary name")
+
+    def _copy_source_to_temp(
+        self, source: PreparedMediaFile, publish: _PublishDir, first: str,
+        on_created: Callable[[str, tuple[int, int]], None],
+    ) -> tuple[int, int]:
+        """Copy the pinned source fd into a hidden temp; returns ``(dev, ino)``.
+
+        The temp is created ``O_CREAT | O_EXCL | O_NOFOLLOW`` relative to the
+        verified directory; ``on_created`` registers it for cleanup before
+        any byte is copied. The adapter path is never reopened.
+        """
+        for _ in range(16):
+            name = self._temp_name(first)
+            try:
+                fd = os.open(
+                    name,
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+                    0o600, dir_fd=publish.fd,
+                )
+            except FileExistsError:
+                continue
+            break
+        else:
+            raise FileExistsError(errno.EEXIST, "no free temporary name")
+        # fdopen owns the descriptor even when copying fails.
+        with os.fdopen(fd, "wb") as copied:
+            created = os.fstat(copied.fileno())
+            identity = (created.st_dev, created.st_ino)
+            on_created(name, identity)
+            with os.fdopen(os.dup(source._pinned_fd), "rb") as original:
+                shutil.copyfileobj(original, copied)
+            copied.flush()
+            if os.fstat(copied.fileno()).st_size != os.fstat(source._pinned_fd).st_size:
+                raise OSError("output copy size mismatch")
+            os.fchmod(copied.fileno(), 0o644)
+            os.fsync(copied.fileno())
+        return identity
+
+    @staticmethod
+    def _cleanup_temp(
+        publish: _PublishDir, name: str, identity: tuple[int, int]
+    ) -> None:
+        """Remove our own temp name, never through a changed directory.
+
+        Best effort and descriptor-relative to the held directory the temp
+        was created in: skipped when that directory no longer is the media
+        entry under the held root descriptor or the name no longer holds the
+        inode we created. The root is not replayed here, so cleanup never
+        reaches a new root or a published name (no rollback unlink).
+        """
+        try:
+            publish.verify_local()
+            if StorageService._entry_identity(name, publish.fd) == identity:
+                os.unlink(name, dir_fd=publish.fd)
+        except (OSError, StoragePathError):
+            pass
+
+    def _publish_pinned(
+        self,
+        source: PreparedMediaFile,
+        media_kind: str,
+        names: Sequence[str],
+        cancel_requested: Callable[[], bool],
+        publish_guard: AbstractContextManager[Any] | None,
+        *,
+        allow_link: bool,
+    ) -> PlacementResult:
+        """Publish a pinned source at the first free name, never clobbering.
+
+        A hidden temp holding exactly one known inode is prepared first:
+        with ``allow_link`` a hard link of the pinned source name (verified
+        to be the pinned inode), else — or on ``EXDEV`` — one copy from the
+        pinned descriptor. That inode's ``(st_dev, st_ino)`` and size are the
+        catalog facts. Each attempt holds the publish guard and re-checks
+        cancellation, the publish directory (root snapshot replay), the
+        pinned source entry and the temp before an atomic descriptor-relative
+        ``link``; only ``EEXIST`` advances. After a link the target is
+        verified no-follow against the expected inode and, after the gate,
+        the root/media directory is replayed again before the source is
+        unlinked; a mismatch fails
+        closed (no catalog facts, source kept; the published name is left,
+        never auto-deleted). Exhaustion raises ``FileExistsError``.
+        """
+        publish = self._open_publish_dir(media_kind)
+        temp: tuple[str, tuple[int, int]] | None = None
+
+        def register(name: str, identity: tuple[int, int]) -> None:
+            nonlocal temp
+            temp = (name, identity)
+
+        try:
+            self._raise_if_cancelled(cancel_requested)
+            publish.verify()
+            expected: tuple[int, int] | None = None
+            size = os.fstat(source._pinned_fd).st_size
+            if allow_link:
+                try:
+                    name, linked = self._link_source_to_temp(source, publish, names[0])
+                except OSError as exc:
+                    if exc.errno != errno.EXDEV:
+                        raise
+                else:
+                    if linked is not None:
+                        register(name, linked)
+                    if linked != source.identity:
+                        # Staging leaf swapped between pin and link: the new
+                        # inode is never published (temp removed) nor deleted.
+                        raise MediaFileTargetChangedError(str(source.resolved_path))
+                    expected = source.identity
+            if expected is None:
+                expected = self._copy_source_to_temp(source, publish, names[0], register)
+            assert temp is not None
+            temp_name = temp[0]
+            published = self._link_temp_first_free(
+                source, publish, temp_name, expected, names,
+                cancel_requested, publish_guard,
+            )
+            # After the gate: the root/media directory must still be the
+            # verified one right before the staged source is unlinked. On a
+            # change the published name and the source both stay.
+            publish.verify()
+            # The visible target must still hold the expected inode (no-follow)
+            # after the gate too; vanished/replaced keeps the staged source.
+            if self._entry_identity(published, publish.fd) != expected:
+                raise MediaFileTargetChangedError(str(publish.path / published))
+            source.delete()  # descriptor-relative identity recheck + unlink
+            return PlacementResult(
+                final_path=publish.path / published,
+                relative_path=f"{media_kind}/{published}",
+                size_bytes=size,
+                identity=expected,
+            )
+        finally:
+            if temp is not None:
+                self._cleanup_temp(publish, *temp)
+            publish.close()
+
+    def _link_temp_first_free(
+        self,
+        source: PreparedMediaFile,
+        publish: _PublishDir,
+        temp_name: str,
+        expected: tuple[int, int],
+        names: Sequence[str],
+        cancel_requested: Callable[[], bool],
+        publish_guard: AbstractContextManager[Any] | None,
+    ) -> str:
+        guard = publish_guard if publish_guard is not None else nullcontext()
+        for name in names:
+            with guard:
+                self._raise_if_cancelled(cancel_requested)
+                publish.verify()
+                self._check_child_entry(source)
+                if self._entry_identity(temp_name, publish.fd) != expected:
+                    raise MediaFileTargetChangedError(temp_name)
+                try:
+                    os.link(
+                        temp_name, name, src_dir_fd=publish.fd,
+                        dst_dir_fd=publish.fd, follow_symlinks=False,
+                    )
+                except FileExistsError:
+                    continue
+                # Verify what is actually at the published name, no-follow.
+                if self._entry_identity(name, publish.fd) != expected:
+                    raise MediaFileTargetChangedError(str(publish.path / name))
+                # The root replay happens before the source unlink, after
+                # the gate (``_publish_pinned``).
+                return name
+        raise FileExistsError(
+            errno.EEXIST, f"no free filename among {len(names)} candidates"
+        )
+
     def _place_child_final_sync(
         self, key: str, output: Path, media_kind: str, title: str,
         cancel_requested: Callable[[], bool],
         publish_guard: AbstractContextManager[Any] | None,
         source_order: int | None = None,
+        video_short_edge: int | None = None,
     ) -> PlacementResult:
         source = self._prepare_child_output(key, output)
         try:
             extension = output.suffix.lstrip(".") or "bin"
-            # Clean the title first so a control-only title still yields
-            # "NN - download.ext"; final_target applies the shared extension,
-            # byte budget and root checks to the combined name.
-            name = title if source_order is None else (
-                f"{source_order:02d} - {sanitize_filename(title)}"
+            names = self._candidate_names(
+                media_kind, title, extension,
+                source_order=source_order, video_short_edge=video_short_edge,
             )
-            target = self.final_target(media_kind, f"{name}.{extension}")
-            self._raise_if_cancelled(cancel_requested)
-            if target.exists():
-                return self._placement_result(target, skipped_existing=True)
-            target.parent.mkdir(parents=True, exist_ok=True)
-            fd, name = tempfile.mkstemp(
-                prefix=f".{target.name}.", suffix=".part", dir=target.parent
+            # Always copy from the pinned fd (no portable fd hard link).
+            return self._publish_pinned(
+                source, media_kind, names, cancel_requested, publish_guard,
+                allow_link=False,
             )
-            temporary = Path(name)
-            try:
-                # fdopen owns the mkstemp descriptor even when copying fails.
-                with os.fdopen(fd, "wb") as copied:
-                    with os.fdopen(os.dup(source._pinned_fd), "rb") as original:
-                        shutil.copyfileobj(original, copied)
-                    copied.flush()
-                    if os.fstat(copied.fileno()).st_size != os.fstat(
-                        source._pinned_fd
-                    ).st_size:
-                        raise OSError("child output copy size mismatch")
-                    os.fchmod(copied.fileno(), 0o644)
-                    os.fsync(copied.fileno())
-                guard = publish_guard if publish_guard is not None else nullcontext()
-                with guard:
-                    self._raise_if_cancelled(cancel_requested)
-                    self._check_child_entry(source)
-                    try:
-                        os.link(temporary, target)
-                    except FileExistsError:
-                        return self._placement_result(target, skipped_existing=True)
-                source.delete()  # descriptor-relative identity recheck + unlink
-                return self._placement_result(target, skipped_existing=False)
-            finally:
-                temporary.unlink(missing_ok=True)
         finally:
             source.close()
 
     def _place_final_sync(
         self,
-        source: Path,
-        target: Path,
+        source_path: Path,
+        staging_key: str | None,
+        media_kind: str,
+        names: Sequence[str],
         cancel_requested: Callable[[], bool],
         publish_guard: AbstractContextManager[Any] | None = None,
     ) -> PlacementResult:
-        guard = publish_guard if publish_guard is not None else nullcontext()
-        self._raise_if_cancelled(cancel_requested)
-        if target.exists():
-            return self._placement_result(target, skipped_existing=True)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        cross_filesystem = False
-        with guard:
-            self._raise_if_cancelled(cancel_requested)
-            try:
-                os.link(source, target)
-            except FileExistsError:
-                return self._placement_result(target, skipped_existing=True)
-            except OSError as exc:
-                if exc.errno != errno.EXDEV:
-                    raise
-                cross_filesystem = True
-        if cross_filesystem:
-            return self._copy_across_filesystems(
-                source, target, cancel_requested, publish_guard
-            )
-        source.unlink()
-        return self._placement_result(target, skipped_existing=False)
-
-    def _copy_across_filesystems(
-        self,
-        source: Path,
-        target: Path,
-        cancel_requested: Callable[[], bool],
-        publish_guard: AbstractContextManager[Any] | None = None,
-    ) -> PlacementResult:
-        guard = publish_guard if publish_guard is not None else nullcontext()
-        file_descriptor, temporary_name = tempfile.mkstemp(
-            prefix=f".{target.name}.", suffix=".part", dir=target.parent
+        source = (
+            self._pin_unowned_source(source_path) if staging_key is None
+            else self._prepare_child_output(staging_key, source_path)
         )
-        os.close(file_descriptor)
-        temporary_path = Path(temporary_name)
         try:
-            shutil.copy2(source, temporary_path)
-            if temporary_path.stat().st_size != source.stat().st_size:
-                raise OSError("cross-filesystem copy size mismatch")
-            with temporary_path.open("rb") as copied_file:
-                os.fsync(copied_file.fileno())
-            with guard:
-                self._raise_if_cancelled(cancel_requested)
-                try:
-                    os.link(temporary_path, target)
-                except FileExistsError:
-                    return self._placement_result(target, skipped_existing=True)
-            source.unlink()
-            return self._placement_result(target, skipped_existing=False)
+            # Same filesystem: link the verified source inode; EXDEV: one copy
+            # from the pinned descriptor.
+            return self._publish_pinned(
+                source, media_kind, names, cancel_requested, publish_guard,
+                allow_link=True,
+            )
         finally:
-            temporary_path.unlink(missing_ok=True)
+            source.close()
 
     @staticmethod
     def _raise_if_cancelled(cancel_requested: Callable[[], bool]) -> None:
@@ -994,21 +1368,3 @@ class StorageService:
             return prepared.resolved_path
         finally:
             prepared.close()
-
-    def _placement_result(
-        self, target: Path, *, skipped_existing: bool
-    ) -> PlacementResult:
-        # The placed file is verified inside the storage boundary so callers
-        # never stat library paths themselves (ARCHITECTURE.md §37); the
-        # captured identity is what the catalog-write protocol re-verifies.
-        target_stat = target.stat()
-        return PlacementResult(
-            final_path=target,
-            relative_path=self._relative(target),
-            skipped_existing=skipped_existing,
-            size_bytes=target_stat.st_size,
-            identity=(target_stat.st_dev, target_stat.st_ino),
-        )
-
-    def _relative(self, path: Path) -> str:
-        return path.resolve().relative_to(self._library_root.resolve()).as_posix()

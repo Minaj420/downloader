@@ -528,7 +528,9 @@ class TestJobExecution:
             assert by_raw["251"].startswith("audio-alt-webm-opus-")
             assert by_raw["620"].startswith("audio-alt-ogg-opus-")
 
-            for variant in variants:
+            # The second same-named output is published next to the first.
+            expected_paths = ["audio/Test Video.mp4", "audio/Test Video (2).mp4"]
+            for variant, expected_path in zip(variants, expected_paths, strict=True):
                 job = create_job(
                     client, analysis, variant_id=variant["variant_id"]
                 ).json()
@@ -536,7 +538,7 @@ class TestJobExecution:
                     client, job["id"], statuses={"completed", "failed"}
                 )
                 assert final["status"] == "completed", final
-                assert final["final_path"] == "audio/Test Video.mp4"
+                assert final["final_path"] == expected_path
 
     def test_long_codec_collision_ids_stay_bounded_and_selectable(
         self, app_factory: Any
@@ -584,7 +586,9 @@ class TestJobExecution:
             assert by_raw["web-1"].startswith("audio-alt-webm-")
             assert by_raw["ogg-1"].startswith("audio-alt-ogg-")
 
-            for variant in variants:
+            # The second same-named output is published next to the first.
+            expected_paths = ["audio/Test Video.mp4", "audio/Test Video (2).mp4"]
+            for variant, expected_path in zip(variants, expected_paths, strict=True):
                 job = create_job(
                     client, analysis, variant_id=variant["variant_id"]
                 ).json()
@@ -593,7 +597,7 @@ class TestJobExecution:
                 )
                 assert final["status"] == "completed", final
                 assert final["variant_id"] == variant["variant_id"]
-                assert final["final_path"] == "audio/Test Video.mp4"
+                assert final["final_path"] == expected_path
 
     def test_oversized_single_audio_codec_routes_to_bounded_id(
         self, app_factory: Any
@@ -912,11 +916,12 @@ class TestJobExecution:
             final = wait_for_job(client, job["id"], statuses={"completed", "failed"})
             assert final["status"] == "completed", final
             safe_name = final["final_path"].rsplit("/", 1)[-1]
-            assert safe_name == "T" * 146 + ".mp4"
+            # 150 bytes minus ".mp4" and the reserved widest " (999)" counter.
+            assert safe_name == "T" * 140 + ".mp4"
             assert len(safe_name.encode("utf-8")) <= 150
             assert (settings.library_dir / "video" / safe_name).is_file()
 
-    def test_existing_final_file_is_skipped_not_overwritten(
+    def test_existing_final_file_is_kept_and_new_file_numbered(
         self, app_factory: Any, settings: Settings
     ) -> None:
         binaries = app_factory.binaries
@@ -933,8 +938,12 @@ class TestJobExecution:
             assert final["status"] == "completed", final
             existing = settings.library_dir / "video" / "Test Video.mp4"
             assert existing.read_text() == "original"
+            # No ffprobe here: unmeasured, so no resolution suffix; (2) only.
+            assert final["final_path"] == "video/Test Video (2).mp4"
+            assert (settings.library_dir / "video" / "Test Video (2).mp4").is_file()
             messages = _activity_messages(settings, job["id"])
-            assert any("already exists" in message for message in messages)
+            assert "Saved to App Library" in messages
+            assert not any("already exists" in message for message in messages)
 
 
 class TestQueueConcurrency:
@@ -1136,22 +1145,24 @@ class TestCancellation:
     ) -> None:
         binaries = app_factory.binaries
         real_link = os.link
-        real_copy2 = shutil.copy2
+        real_copy = shutil.copyfileobj
         copy_started = threading.Event()
         allow_copy = threading.Event()
 
-        def cross_device_link(src: Path, dst: Path) -> None:
-            if Path(src).is_relative_to(settings.staging_dir):
+        def cross_device_link(src: Any, dst: Any, **kwargs: Any) -> None:
+            # EXDEV only for staging → hidden temp (different directory
+            # descriptors); temp → visible name is the real dir_fd link.
+            if kwargs.get("src_dir_fd") != kwargs.get("dst_dir_fd"):
                 raise OSError(errno.EXDEV, "cross-device link")
-            real_link(src, dst)
+            real_link(src, dst, **kwargs)
 
-        def blocked_copy(src: Path, dst: Path) -> str:
+        def blocked_copy(original: Any, copied: Any) -> None:
             copy_started.set()
             assert allow_copy.wait(timeout=5)
-            return str(real_copy2(src, dst))
+            real_copy(original, copied)
 
         monkeypatch.setattr(os, "link", cross_device_link)
-        monkeypatch.setattr(shutil, "copy2", blocked_copy)
+        monkeypatch.setattr(shutil, "copyfileobj", blocked_copy)
 
         with app_factory(
             yt_dlp=fake_ytdlp_ok(binaries), ffmpeg=str(binaries / "ffmpeg-missing")
@@ -1461,11 +1472,10 @@ class TestCancellation:
         real_link = os.link
         published = threading.Event()
 
-        def hooked_link(src, dst):
-            result = real_link(src, dst)
-            if Path(dst).name == "Test Video.mp4":
+        def hooked_link(src: Any, dst: Any, **kwargs: Any) -> None:
+            real_link(src, dst, **kwargs)
+            if str(dst) == "Test Video.mp4":  # the visible name, not the hidden temp
                 published.set()
-            return result
 
         monkeypatch.setattr(os, "link", hooked_link)
         with app_factory(

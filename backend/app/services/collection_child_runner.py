@@ -41,7 +41,6 @@ from app.services.conversion_plan import plan_conversion, resolve_output_profile
 from app.services.job_runner import (
     _FFMPEG_KIND_TO_JOB_CODE,
     _REMUX_FALLBACK_SAVED,
-    _REMUX_FALLBACK_SKIPPED,
     _YT_DLP_KIND_TO_JOB_CODE,
 )
 from app.services.prepared_media import OriginalRemux, measure_final_dimensions, prepare_media
@@ -315,6 +314,9 @@ class _ChildExecution:
                     ), publish_guard=self.cancel_gate,
                     source_order=(child.source_order
                                   if parent.collection_mode == "video" else None),
+                    # Same measured short edge as the catalog; unmeasured: no suffix.
+                    video_short_edge=(None if dimensions is None
+                                      else dimensions.short_edge),
                 )
             finally:
                 self.placing = False
@@ -338,8 +340,7 @@ class _ChildExecution:
                         # Fixed shared text only; the child link lives in details.
                         warning = await activity.add_activity_event(
                             session, job_id=self.job_id, level="warning", event_type="job",
-                            message=(_REMUX_FALLBACK_SKIPPED if placement.skipped_existing
-                                     else _REMUX_FALLBACK_SAVED),
+                            message=_REMUX_FALLBACK_SAVED,
                             details={"child_id": child.id},
                         )
                     await session.commit()

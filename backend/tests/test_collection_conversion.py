@@ -305,13 +305,14 @@ async def test_cancel_while_conversion_returns_successfully_creates_nothing(
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("output,existing,expected", [
-    ("mp3", "Track.mp3", (None, None)),
-    ("opus", "Track.opus", (None, None)),
-    (None, "Track.mp4", ("aac", 128)),  # Original: unchanged catalog facts
+@pytest.mark.parametrize("output,existing,numbered,expected", [
+    ("mp3", "Track.mp3", "Track (2).mp3", ("mp3", None)),
+    ("opus", "Track.opus", "Track (2).opus", ("opus", 128)),  # stream copy keeps bitrate
+    (None, "Track.mp4", "Track (2).mp4", ("aac", 128)),  # Original: source facts
 ])
-async def test_skip_existing_keeps_copy_and_converted_facts_are_unknown(
-    tmp_path: Path, output: str | None, existing: str, expected: tuple[Any, Any],
+async def test_name_conflict_publishes_numbered_copy_with_its_own_facts(
+    tmp_path: Path, output: str | None, existing: str, numbered: str,
+    expected: tuple[Any, Any],
 ) -> None:
     h = Harness(tmp_path)
     try:
@@ -322,9 +323,12 @@ async def test_skip_existing_keeps_copy_and_converted_facts_are_unknown(
         kept.write_bytes(b"existing")
         assert await h.run() == ChildResult.COMPLETED
         item, copies = await catalog(h)
-        assert item is not None and [c.path for c in copies] == [f"audio/{existing}"]
+        # The catalog row describes the newly published file, never the old one.
+        assert item is not None and [c.path for c in copies] == [f"audio/{numbered}"]
         assert (item.codec, item.bitrate) == expected
-        assert kept.read_bytes() == b"existing" and published(h) == [kept]
+        new = h.storage.library_root / "audio" / numbered
+        assert kept.read_bytes() == b"existing" and published(h) == sorted([kept, new])
+        assert new.read_bytes() != b"existing"
     finally:
         await h.engine.dispose()
 

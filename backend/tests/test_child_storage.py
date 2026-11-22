@@ -17,6 +17,7 @@ from app.services.storage_service import (
     StoragePathError,
     StorageService,
 )
+from app.utils.filenames import conflict_media_filenames
 
 
 @pytest.fixture
@@ -56,7 +57,6 @@ def test_valid_nested_output_and_catalog_identity(storage: StorageService) -> No
     assert result.final_path.read_bytes() == b"child content"
     assert result.relative_path == "video/Title.mp4"
     assert result.size_bytes == 13
-    assert not result.skipped_existing
     assert not source.exists()
     assert storage.verify_media_file(
         "app_library", result.relative_path, result.identity,
@@ -317,8 +317,8 @@ def test_swap_after_publish_prevents_replacement_unlink(
     source = output(storage)
     real_link = os.link
 
-    def publish_then_swap(src: Path, dst: Path) -> None:
-        real_link(src, dst)
+    def publish_then_swap(src: Any, dst: Any, **kwargs: Any) -> None:
+        real_link(src, dst, **kwargs)
         source.rename(source.with_suffix(".saved"))
         source.write_bytes(b"replacement")
 
@@ -331,7 +331,7 @@ def test_swap_after_publish_prevents_replacement_unlink(
 
 
 @pytest.mark.parametrize("racing", [False, True])
-def test_skip_existing_retains_source_and_identity(
+def test_existing_target_publishes_next_number_and_keeps_existing(
     storage: StorageService, monkeypatch: pytest.MonkeyPatch, racing: bool,
 ) -> None:
     source = output(storage)
@@ -339,18 +339,24 @@ def test_skip_existing_retains_source_and_identity(
     if racing:
         real_link = os.link
 
-        def raced_link(src: Path, dst: Path) -> None:
-            dst.write_bytes(b"existing")
-            real_link(src, dst)
+        def raced_link(src: Any, dst: Any, **kwargs: Any) -> None:
+            if str(dst) == target.name and not target.exists():
+                target.write_bytes(b"existing")  # a racer wins the first name
+            real_link(src, dst, **kwargs)
 
         monkeypatch.setattr(os, "link", raced_link)
     else:
         target.write_bytes(b"existing")
     result = place(storage, source)
-    assert result.skipped_existing
+    assert result.relative_path == "video/Title (2).mp4"
+    assert result.final_path.read_bytes() == b"child content"
     assert target.read_bytes() == b"existing"
-    assert source.read_bytes() == b"child content"
-    assert result.identity == (target.stat().st_dev, target.stat().st_ino)
+    assert not source.exists()
+    placed = result.final_path.stat()
+    assert result.identity == (placed.st_dev, placed.st_ino)
+    assert storage.verify_media_file(
+        "app_library", result.relative_path, result.identity,
+    ) == result.final_path
     assert_no_temp(storage)
 
 
@@ -359,14 +365,15 @@ def test_child_copy_does_not_link_source_across_filesystems(
 ) -> None:
     source = output(storage)
     real_link = os.link
-    links: list[Path] = []
+    links: list[str] = []
 
-    def cross_device(src: Path, dst: Path) -> None:
-        if src == source:
+    def cross_device(src: Any, dst: Any, **kwargs: Any) -> None:
+        if not str(src).startswith("."):
             raise OSError(errno.EXDEV, "cross device")
-        links.append(src)
-        assert src.parent == dst.parent
-        real_link(src, dst)
+        links.append(str(src))
+        # Temp and target share the one verified directory descriptor.
+        assert kwargs["src_dir_fd"] == kwargs["dst_dir_fd"]
+        real_link(src, dst, **kwargs)
 
     monkeypatch.setattr(os, "link", cross_device)
     assert place(storage, source).final_path.read_bytes() == b"child content"
@@ -509,7 +516,7 @@ def test_explicit_order_prefixes_video_filename(
     result = place_ordered(storage, source, order)
     assert result.relative_path == f"video/{name}"
     assert result.final_path.read_bytes() == b"child content"
-    assert not result.skipped_existing and not source.exists()
+    assert not source.exists()
     assert_no_temp(storage)
 
 
@@ -561,19 +568,268 @@ def test_same_title_different_orders_are_separate_files(storage: StorageService)
     second = place_ordered(storage, output(storage), 9)
     assert (first.relative_path, second.relative_path) == (
         "video/02 - Title.mp4", "video/09 - Title.mp4")
-    assert not first.skipped_existing and not second.skipped_existing
+    assert first.final_path.read_bytes() == second.final_path.read_bytes() == b"child content"
 
 
-def test_existing_prefixed_target_is_skipped_unchanged(storage: StorageService) -> None:
+def test_existing_prefixed_target_gets_numbered_sibling(storage: StorageService) -> None:
     target = storage.final_target("video", "07 - Title.mp4")
     target.write_bytes(b"existing")
     source = output(storage)
     result = place_ordered(storage, source, 7)
-    assert result.skipped_existing and result.final_path == target
+    assert result.relative_path == "video/07 - Title (2).mp4"
+    assert result.final_path.read_bytes() == b"child content"
     assert target.read_bytes() == b"existing"
-    assert source.read_bytes() == b"child content"
-    assert result.identity == (target.stat().st_dev, target.stat().st_ino)
+    assert not source.exists()
+    placed = result.final_path.stat()
+    assert result.identity == (placed.st_dev, placed.st_ino)
     assert_no_temp(storage)
+
+
+def place_named(
+    storage: StorageService, source: Path, *, order: int | None = None,
+    short_edge: Any = None, media_kind: str = "video", title: str = "Title",
+    **kwargs: Any,
+) -> Any:
+    return asyncio.run(storage.place_child_final(
+        "child", source, media_kind=media_kind, title=title, source_order=order,
+        video_short_edge=short_edge, **kwargs,
+    ))
+
+
+def audio_output(storage: StorageService) -> Path:
+    source = storage.job_staging_dir("child") / "output.m4a"
+    source.write_bytes(b"child audio")
+    return source
+
+
+@pytest.mark.parametrize("order,short_edge,name", [
+    (7, 720, "07 - Title (720p).mp4"),
+    (12, 1080, "12 - Title (1080p).mp4"),
+    (None, 720, "Title (720p).mp4"),
+    (7, None, "07 - Title.mp4"),
+])
+def test_child_video_name_carries_order_and_measured_short_edge(
+    storage: StorageService, order: int | None, short_edge: int | None, name: str,
+) -> None:
+    source = output(storage)
+    result = place_named(storage, source, order=order, short_edge=short_edge)
+    assert result.relative_path == f"video/{name}"
+    assert result.final_path.read_bytes() == b"child content"
+    assert not source.exists()
+    assert_no_temp(storage)
+
+
+@pytest.mark.parametrize("media_kind,order,short_edge,existing,expected", [
+    ("video", 7, 720, ["07 - Title (720p).mp4"], "07 - Title (720p) (2).mp4"),
+    ("video", 7, 720, ["07 - Title.mp4"], "07 - Title (720p).mp4"),
+    ("video", 7, 720, ["07 - Title (1080p).mp4"], "07 - Title (720p).mp4"),
+    ("audio", None, None, ["Title.m4a", "Title (2).m4a"], "Title (3).m4a"),
+])
+def test_child_conflict_publishes_next_number_and_keeps_existing(
+    storage: StorageService, media_kind: str, order: int | None,
+    short_edge: int | None, existing: list[str], expected: str,
+) -> None:
+    folder = storage.library_root / media_kind
+    for name in existing:
+        (folder / name).write_bytes(b"old")
+    source = audio_output(storage) if media_kind == "audio" else output(storage)
+    content = source.read_bytes()
+    result = place_named(
+        storage, source, order=order, short_edge=short_edge, media_kind=media_kind,
+    )
+    assert result.relative_path == f"{media_kind}/{expected}"
+    assert result.final_path.read_bytes() == content
+    assert all((folder / name).read_bytes() == b"old" for name in existing)
+    assert not list(folder.glob("*.part"))
+
+
+@pytest.mark.parametrize("kind", ["symlink", "dangling", "outside", "directory"])
+def test_child_occupied_leaf_is_skipped_never_followed(
+    storage: StorageService, tmp_path: Path, kind: str,
+) -> None:
+    folder = storage.library_root / "video"
+    occupied = folder / "07 - Title (720p).mp4"
+    inside = folder / "inside.mp4"
+    inside.write_bytes(b"inside")
+    outside = tmp_path / "outside.mp4"
+    outside.write_bytes(b"outside")
+    if kind == "symlink":
+        occupied.symlink_to(inside)
+    elif kind == "dangling":
+        occupied.symlink_to(folder / "missing.mp4")
+    elif kind == "outside":
+        occupied.symlink_to(outside)
+    else:
+        occupied.mkdir()
+    result = place_named(storage, output(storage), order=7, short_edge=720)
+    assert result.final_path.name == "07 - Title (720p) (2).mp4"
+    assert result.final_path.parent == folder.resolve()
+    assert not result.final_path.is_symlink()
+    assert result.final_path.read_bytes() == b"child content"
+    assert inside.read_bytes() == b"inside"
+    assert outside.read_bytes() == b"outside"
+    assert not (folder / "missing.mp4").exists()
+    assert occupied.is_dir() if kind == "directory" else occupied.is_symlink()
+    assert_no_temp(storage)
+
+
+def test_child_temp_copy_is_made_once_and_rechecked_per_attempt(
+    storage: StorageService, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    folder = storage.library_root / "video"
+    (folder / "07 - Title (720p).mp4").write_bytes(b"old")
+    (folder / "07 - Title (720p) (2).mp4").write_bytes(b"old")
+    source = output(storage)
+    real_copy, real_link = shutil.copyfileobj, os.link
+    real_check = StorageService._check_child_entry
+    events: list[str] = []
+
+    def counted_copy(original: Any, copied: Any) -> None:
+        events.append("copy")
+        real_copy(original, copied)
+
+    def recorded_check(prepared: Any) -> None:
+        events.append("check")
+        real_check(prepared)
+
+    def recorded_link(src: Any, dst: Any, **kwargs: Any) -> None:
+        events.append(f"link:{str(src).startswith('.')}:{dst}")
+        real_link(src, dst, **kwargs)
+
+    monkeypatch.setattr(shutil, "copyfileobj", counted_copy)
+    monkeypatch.setattr(StorageService, "_check_child_entry", staticmethod(recorded_check))
+    monkeypatch.setattr(os, "link", recorded_link)
+    result = place_named(storage, source, order=7, short_edge=720)
+    assert result.final_path.name == "07 - Title (720p) (3).mp4"
+    assert events == [
+        "copy",
+        "check", "link:True:07 - Title (720p).mp4",
+        "check", "link:True:07 - Title (720p) (2).mp4",
+        "check", "link:True:07 - Title (720p) (3).mp4",
+    ]
+    assert not source.exists()
+    assert_no_temp(storage)
+
+
+def test_child_source_swap_between_attempts_fails_closed(
+    storage: StorageService, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (storage.library_root / "video" / "Title.mp4").write_bytes(b"old")
+    source = output(storage)
+    real_link = os.link
+
+    def swap_on_conflict(src: Any, dst: Any, **kwargs: Any) -> None:
+        try:
+            real_link(src, dst, **kwargs)
+        except FileExistsError:
+            source.rename(source.with_suffix(".saved"))
+            source.write_bytes(b"replacement")
+            raise
+
+    monkeypatch.setattr(os, "link", swap_on_conflict)
+    with pytest.raises(MediaFileTargetChangedError):
+        place(storage, source)
+    assert source.read_bytes() == b"replacement"
+    assert sorted(p.name for p in (storage.library_root / "video").iterdir()) == ["Title.mp4"]
+    assert_no_temp(storage)
+
+
+def test_child_cancel_between_attempts_publishes_nothing(
+    storage: StorageService, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (storage.library_root / "video" / "Title.mp4").write_bytes(b"old")
+    source = output(storage)
+    cancelled = threading.Event()
+    real_link = os.link
+
+    def link_then_cancel(src: Any, dst: Any, **kwargs: Any) -> None:
+        try:
+            real_link(src, dst, **kwargs)
+        except FileExistsError:
+            cancelled.set()
+            raise
+
+    monkeypatch.setattr(os, "link", link_then_cancel)
+    with pytest.raises(PlacementCancelled):
+        place(storage, source, cancel_requested=cancelled.is_set,
+              publish_guard=threading.Lock())
+    assert source.read_bytes() == b"child content"
+    assert sorted(p.name for p in (storage.library_root / "video").iterdir()) == ["Title.mp4"]
+
+
+def test_child_parent_swap_after_first_conflict_fails_closed(
+    storage: StorageService, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    folder = storage.library_root / "video"
+    (folder / "Title.mp4").write_bytes(b"old")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    source = output(storage)
+    real_link = os.link
+
+    def swap_parent_on_conflict(src: Any, dst: Any, **kwargs: Any) -> None:
+        try:
+            real_link(src, dst, **kwargs)
+        except FileExistsError:
+            folder.rename(storage.library_root / "moved")
+            folder.symlink_to(outside, target_is_directory=True)
+            raise
+
+    monkeypatch.setattr(os, "link", swap_parent_on_conflict)
+    with pytest.raises(StoragePathError):
+        place(storage, source)
+    assert not list(outside.iterdir())  # no write or cleanup outside the root
+    assert source.read_bytes() == b"child content"
+
+
+def test_child_target_swap_right_after_link_fails_closed(
+    storage: StorageService, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    folder = storage.library_root / "video"
+    source = output(storage)
+    real_link = os.link
+
+    def link_then_replace(src: Any, dst: Any, **kwargs: Any) -> None:
+        real_link(src, dst, **kwargs)
+        (folder / dst).unlink()
+        (folder / dst).write_bytes(b"impostor")
+
+    monkeypatch.setattr(os, "link", link_then_replace)
+    with pytest.raises(MediaFileTargetChangedError):
+        place(storage, source)
+    assert source.read_bytes() == b"child content"
+    assert (folder / "Title.mp4").read_bytes() == b"impostor"
+    assert_no_temp(storage)
+
+
+def test_child_counter_exhaustion_keeps_source_and_existing(
+    storage: StorageService,
+) -> None:
+    folder = storage.library_root / "video"
+    names = conflict_media_filenames("Title", "mp4", prefix="07 - ", qualifier=" (720p)")
+    for name in names:
+        (folder / name).write_bytes(b"old")
+    source = output(storage)
+    with pytest.raises(FileExistsError):
+        place_named(storage, source, order=7, short_edge=720)
+    assert source.read_bytes() == b"child content"
+    assert sorted(p.name for p in folder.iterdir()) == sorted(names)
+    assert_no_temp(storage)
+
+
+@pytest.mark.parametrize("media_kind,value,error", [
+    ("video", 0, ValueError), ("video", -1, ValueError), ("video", True, TypeError),
+    ("video", 720.0, TypeError), ("audio", 720, ValueError),
+])
+def test_child_invalid_short_edge_rejected_without_mutation(
+    storage: StorageService, media_kind: str, value: Any, error: type[Exception],
+) -> None:
+    source = output(storage)
+    with pytest.raises(error):
+        place_named(storage, source, short_edge=value, media_kind=media_kind)
+    assert source.read_bytes() == b"child content"
+    assert not list((storage.library_root / "video").iterdir())
+    assert not list((storage.library_root / "audio").iterdir())
 
 
 def test_copy_failure_closes_descriptors_and_removes_temp(

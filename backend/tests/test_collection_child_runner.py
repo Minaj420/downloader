@@ -28,7 +28,7 @@ from app.services.collection_persistence import (
     CollectionCancelRequestOutcome,
     stage_collection_cancel_request,
 )
-from app.services.job_runner import _REMUX_FALLBACK_SAVED, _REMUX_FALLBACK_SKIPPED
+from app.services.job_runner import _REMUX_FALLBACK_SAVED
 from app.services.storage_service import StorageService
 from tests.test_collection_repository import child, factory, parent
 from tests.test_prepared_media import source
@@ -372,9 +372,9 @@ async def test_caller_cancel_linearizes_publish_and_drains_owned_helpers(
         if phase == "copy":
             pause()
 
-    def link(src: Path, dst: Path) -> None:
-        real_link(src, dst)
-        if phase == "published":
+    def link(src: Any, dst: Any, **kwargs: Any) -> None:
+        real_link(src, dst, **kwargs)
+        if phase == "published" and not str(dst).startswith("."):
             pause()  # Target visible; storage still owns the publish gate.
 
     async def loop_turn() -> None:
@@ -539,8 +539,37 @@ async def test_video_child_catalog_resolution_is_measured_short_edge_or_unknown(
         assert await h.run() == ChildResult.COMPLETED
         [probed] = h.adapters.probed
         assert probed.name.startswith("merged-")  # the staged final output
-        item = (await h.facts())[5]
+        item, copies = (await h.facts())[5:]
         assert item is not None and item.resolution == label
+        # Same measured short edge in the filename; collection order kept;
+        # unmeasured: no suffix.
+        qualifier = "" if label is None else f" ({label})"
+        assert [c.path for c in copies] == [f"video/02 - Track{qualifier}{probed.suffix}"]
+        assert (h.storage.library_root / copies[0].path).is_file()
+    finally:
+        await h.engine.dispose()
+
+
+@pytest.mark.anyio
+async def test_video_child_name_conflict_publishes_numbered_measured_file(
+    tmp_path: Path,
+) -> None:
+    h = Harness(tmp_path)
+    try:
+        await h.seed("video", 360)  # muxed: the download is the final output
+        h.adapters.dimensions = VideoDimensions(1280, 720)
+        folder = h.storage.library_root / "video"
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "02 - Track (720p).mp4").write_bytes(b"older 720p")
+        (folder / "02 - Track.mp4").write_bytes(b"legacy unmeasured")
+        assert await h.run() == ChildResult.COMPLETED
+        item, copies = (await h.facts())[5:]
+        assert item is not None and item.resolution == "720p"
+        assert [c.path for c in copies] == ["video/02 - Track (720p) (2).mp4"]
+        assert (folder / "02 - Track (720p) (2).mp4").read_bytes()
+        assert (folder / "02 - Track (720p).mp4").read_bytes() == b"older 720p"
+        assert (folder / "02 - Track.mp4").read_bytes() == b"legacy unmeasured"
+        assert await h.warnings() == []
     finally:
         await h.engine.dispose()
 
@@ -720,7 +749,7 @@ async def test_original_opus_child_remuxes_losslessly_without_warning(
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("existing", [False, True], ids=["saved", "skip_existing"])
+@pytest.mark.parametrize("existing", [False, True], ids=["saved", "name_conflict"])
 async def test_exit_status_publishes_original_webm_with_one_committed_warning(
     tmp_path: Path, existing: bool,
 ) -> None:
@@ -735,18 +764,20 @@ async def test_exit_status_publishes_original_webm_with_one_committed_warning(
         committed: list[ActivityEvent] = []
         assert await h.run(committed=committed) == ChildResult.COMPLETED
         assert h.adapters.calls == ["probe", "opus", "convert"]
+        # A conflict keeps the older file and publishes the new one at (2).
+        published = "audio/Track (2).webm" if existing else "audio/Track.webm"
         assert target.read_bytes() == (b"older" if existing else b"media")
+        assert (h.storage.library_root / published).read_bytes() == b"media"
         facts = await h.facts()
         assert facts[:5] == ("completed", "analyzing", 1, 1, 50)
         item, copies = facts[5:]
-        assert item.format == "webm" and [c.path for c in copies] == ["audio/Track.webm"]
+        assert item.format == "webm" and [c.path for c in copies] == [published]
         rows = await h.warnings()
-        message = _REMUX_FALLBACK_SKIPPED if existing else _REMUX_FALLBACK_SAVED
+        # The new original was really saved in both cases.
+        message = _REMUX_FALLBACK_SAVED
         assert [(r.job_id, r.event_type, r.message, json.loads(r.details_json or "null"))
                 for r in rows] == [("parent", "job", message, {"child_id": "child-2"})]
         assert "stderr" not in message and "/private" not in message
-        if existing:
-            assert "saved the original" not in message
         assert [e.id for e in committed] == [rows[0].id]
         assert not h.processes and not (tmp_path / "staging" / "child-2").exists()
     finally:

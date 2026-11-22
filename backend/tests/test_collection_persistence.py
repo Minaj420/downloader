@@ -1,6 +1,5 @@
 import asyncio
 import threading
-from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -578,18 +577,17 @@ def test_atomic_completion_identity_order_and_truthful_aggregates(tmp_path: Path
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("plan,skipped,expected", [
-    (None, False, ("opus", 128)),
-    (None, True, ("opus", 128)),
-    (ConversionPlan(True, False, "opus", True), False, ("opus", 128)),
-    (ConversionPlan(False, False, "mp3", False), False, ("mp3", None)),
-    (ConversionPlan(True, False, "opus", True), True, (None, None)),
-    (ConversionPlan(False, False, "flac", False), True, (None, None)),
+@pytest.mark.parametrize("plan,expected", [
+    (None, ("opus", 128)),
+    (ConversionPlan(True, False, "opus", True), ("opus", 128)),
+    (ConversionPlan(False, False, "mp3", False), ("mp3", None)),
+    (ConversionPlan(False, False, "flac", False), ("flac", None)),
 ])
 def test_completion_catalog_codec_bitrate_follow_output_plan(
-    tmp_path: Path, plan: ConversionPlan | None, skipped: bool,
+    tmp_path: Path, plan: ConversionPlan | None,
     expected: tuple[str | None, int | None],
 ) -> None:
+    # The placement is always the newly published file, so its facts are known.
     async def scenario() -> None:
         engine, sessions = factory(tmp_path)
         storage, placement = await placed(tmp_path)
@@ -601,8 +599,7 @@ def test_completion_catalog_codec_bitrate_follow_output_plan(
                 )
                 await session.commit()
             async with sessions() as session:
-                assert await complete(session, storage,
-                                      replace(placement, skipped_existing=skipped), plan=plan)
+                assert await complete(session, storage, placement, plan=plan)
                 await session.commit()
             async with sessions() as session:
                 entry = await session.get(LibraryItem, "child-2")
@@ -622,16 +619,15 @@ VIDEO_SELECTED = NormalizedFormat(
 )
 
 
-@pytest.mark.parametrize("selected,dimensions,skipped,expected", [
-    (VIDEO_SELECTED, VideoDimensions(1920, 1080), False, "1080p"),
-    (VIDEO_SELECTED, VideoDimensions(1080, 1920), False, "1080p"),
-    (VIDEO_SELECTED, None, False, None),  # unknown: never the analysis label
-    (VIDEO_SELECTED, VideoDimensions(1920, 1080), True, None),  # kept file: not measured
-    (SELECTED, VideoDimensions(1920, 1080), False, None),  # audio never gets video facts
+@pytest.mark.parametrize("selected,dimensions,expected", [
+    (VIDEO_SELECTED, VideoDimensions(1920, 1080), "1080p"),
+    (VIDEO_SELECTED, VideoDimensions(1080, 1920), "1080p"),
+    (VIDEO_SELECTED, None, None),  # unknown: never the analysis label
+    (SELECTED, VideoDimensions(1920, 1080), None),  # audio never gets video facts
 ])
 def test_completion_catalog_resolution_is_measured_short_edge_only(
     tmp_path: Path, selected: NormalizedFormat, dimensions: VideoDimensions | None,
-    skipped: bool, expected: str | None,
+    expected: str | None,
 ) -> None:
     async def scenario() -> None:
         engine, sessions = factory(tmp_path)
@@ -644,8 +640,7 @@ def test_completion_catalog_resolution_is_measured_short_edge_only(
                 )
                 await session.commit()
             async with sessions() as session:
-                assert await complete(session, storage,
-                                      replace(placement, skipped_existing=skipped),
+                assert await complete(session, storage, placement,
                                       selected=selected, dimensions=dimensions)
                 await session.commit()
             async with sessions() as session:
@@ -685,7 +680,7 @@ def test_completion_rolls_back_child_catalog_and_counters(
                 monkeypatch.setattr(jobs, "stage_collection_aggregates", fail_counter)
             async with sessions() as session:
                 broken = PlacementResult(placement.final_path, placement.relative_path,
-                                         False, None, placement.identity)  # type: ignore[arg-type]
+                                         None, placement.identity)  # type: ignore[arg-type]
                 expected = {"insert": IntegrityError, "identity_collision": IntegrityError,
                             "verify": MediaFileMissingError, "counter": RuntimeError}[failure]
                 with pytest.raises(expected):

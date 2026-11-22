@@ -179,8 +179,8 @@ async def test_storage_publication_gate_and_signal_thread_finish_before_settleme
         def __exit__(self, *args: Any) -> None:
             h.gate.release()
 
-    def link(src: Path, dst: Path) -> None:
-        real_link(src, dst)
+    def link(src: Any, dst: Any, **kwargs: Any) -> None:
+        real_link(src, dst, **kwargs)
         loop.call_soon_threadsafe(entered.set)
         assert release.wait(5)
 

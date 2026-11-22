@@ -12,6 +12,12 @@ name that exceeds the filesystem limit for multi-byte titles.
 
 ``sanitize_path_segment`` cleans one directory segment with the same
 rules and the same UTF-8 byte bound, without any extension handling.
+
+``conflict_media_filenames`` builds the ordered no-clobber candidates for
+one published media file (PRODUCT_SPEC.md §15–16): ``[NN - ]Title[ (720p)]
+[ (n)].ext``. The title is cleaned and cut exactly once, after reserving
+room for the prefix, the qualifier, the widest counter and the extension,
+so every candidate shares the same title body.
 """
 
 import unicodedata
@@ -21,6 +27,8 @@ _MAX_FILENAME_LENGTH = 150
 _MAX_MEDIA_FILENAME_BYTES = 150
 _MAX_PATH_SEGMENT_BYTES = 150
 _FALLBACK_FILENAME = "download"
+# Inclusive upper bound of the collision counter: "Title (999).ext".
+MAX_CONFLICT_COUNTER = 999
 
 
 def _clean_characters(name: str) -> str:
@@ -103,6 +111,55 @@ def sanitize_path_segment(
     cleaned = unicodedata.normalize("NFC", _clean_characters(name))
     fitted = _truncate_to_utf8_bytes(cleaned, max_bytes).rstrip(" .")
     return fitted or _truncate_to_utf8_bytes(_FALLBACK_FILENAME, max_bytes)
+
+
+def conflict_media_filenames(
+    title: str,
+    extension: str,
+    *,
+    prefix: str = "",
+    qualifier: str = "",
+    max_bytes: int = _MAX_MEDIA_FILENAME_BYTES,
+    max_counter: int = MAX_CONFLICT_COUNTER,
+) -> list[str]:
+    """Ordered collision candidates ``prefix + title + qualifier [ (n)] .ext``.
+
+    ``prefix`` (e.g. ``"07 - "``) and ``qualifier`` (e.g. ``" (720p)"``)
+    are backend-formatted from integers and are used verbatim. The
+    untrusted title is cleaned with the shared rules (deterministic
+    fallback when nothing usable remains) and cut once at a character
+    boundary to the budget left after reserving the prefix, qualifier,
+    ``.ext`` and the widest counter suffix ``" (max_counter)"``. Candidate
+    1 carries no counter; candidates 2..``max_counter`` add ``" (n)"``.
+    Every candidate fits ``max_bytes`` UTF-8 bytes and is a single
+    non-traversal path segment.
+    """
+    if isinstance(max_counter, bool) or not isinstance(max_counter, int) or max_counter < 1:
+        raise ValueError(f"max_counter must be a positive int: {max_counter!r}")
+    cleaned_extension = _clean_characters(extension)
+    fixed = len(f"{prefix}{qualifier} ({max_counter})".encode())
+    if cleaned_extension:
+        # Degenerate extensions are cut so that at least one title byte fits.
+        cleaned_extension = _truncate_to_utf8_bytes(
+            cleaned_extension, max_bytes - fixed - 2
+        )
+    suffix = f".{cleaned_extension}" if cleaned_extension else ""
+    title_budget = max_bytes - fixed - len(suffix.encode())
+    if title_budget < 1:
+        raise ValueError("filename prefix/qualifier leave no room for the title")
+    body = _clean_characters(title)
+    if body in {"", ".", ".."}:
+        body = _FALLBACK_FILENAME
+    fitted = _truncate_to_utf8_bytes(body, title_budget).rstrip(" .")
+    if not fitted:
+        fitted = _truncate_to_utf8_bytes(_FALLBACK_FILENAME, title_budget)
+    head = f"{prefix}{fitted}{qualifier}"
+    names = [f"{head}{suffix}"]
+    names.extend(f"{head} ({counter}){suffix}" for counter in range(2, max_counter + 1))
+    for name in names:
+        if name in {".", ".."} or "/" in name or "\x00" in name:
+            raise ValueError(f"unsafe media filename candidate: {name!r}")
+    return names
 
 
 def _split_extension(filename: str) -> tuple[str, str]:
