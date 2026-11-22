@@ -64,6 +64,8 @@ yüklenir; mevcut oturum reload olmuş sayılmaz.
    Belgelenmemiş/çelişkili ürün gereksiniminde dur; soru ve en basit seçeneği raporla.
    Bayat durum/uygulama ayrıntısı için onay isteme; ürün/kapsam/geri alınamaz kararları
    tek mesajda topla. Bağlı düşük riskli işler tek işte birleştirilebilir.
+   Yeni kalıcı alan ekleyen işte ilk talimat "Düzeltme öncesi etki analizi (KARAR)"
+   listesini de içerir.
 4. Lead her iş başında **“Uygulayıcı: Sonnet/Opus; gerekçe...”** der; küçük/büyük
    sınıfı ve kısa nedeni de tek satırda ekler ("Küçük iş yolu (KARAR)"). Varsayılan
    uygulayıcı aynı ince adapter üzerinden Sonnet'tir: sınırları net olağan muhakeme.
@@ -73,7 +75,7 @@ yüklenir; mevcut oturum reload olmuş sayılmaz.
    “Sonnet dene, başarısızsa kör Opus” zinciri yoktur; belirsiz ürün davranışı kullanıcı
    kararı gerektirir. fast-worker yalnız mevcut deseni birebir izleyen, net, geri
    alınabilir, hedefli testli mekanik/düşük riskli işlerde. Risk uygunsa küçük yol
-   varsayılandır; tek bağımsız çapraz model review, en fazla tek düzeltme turu (belge istisnası: adım 6) ve hedefli lead doğrulaması sürer.
+   varsayılandır; tek bağımsız çapraz model review, en fazla tek düzeltme turu (istisnalar: adım 6) ve hedefli lead doğrulaması sürer.
    Migration/kalıcı veri, transaction/concurrency/ownership, filesystem mutation,
    silme/veri kaybı, güvenlik/path-containment veya API/data contract varsa Luna durur.
    **Tek yazıcıyı lead yönetir; adapter kilit tutmaz.** Worker STATE yazmaz, git yazmaz.
@@ -82,11 +84,13 @@ yüklenir; mevcut oturum reload olmuş sayılmaz.
    koduna rutin reviewer değildir. GPT'nin riskli işlerinde (bu altyapı dahil)
    worker sonrası lead `scripts/claude-review.sh '<odak>'` ile Opus review başlatır.
    Danışman ve mevcut review wrapper hep Opus'tur; genel Sonnet review rolü yoktur.
-6. Bulgular: must-fix (doğruluk/veri/güvenlik/spec/önemli test eksiği), should-fix
-   (bloklamayan gerçek sorun), accepted-risk (düşük olasılık/etki), over-engineering
-   (gereksiz karmaşıklık). Reviewer yeni ürün kararı üretmez.
+6. Bulgular: must-fix (kapsamı "Review sınıf sınırı (KARAR)" listesidir), should-fix
+   (bloklamayan gerçek sorun), accepted-risk (düşük olasılık/etki; güvenli yönde kalan
+   sonuçlar dahil), over-engineering (gereksiz karmaşıklık). Reviewer yeni ürün kararı
+   üretmez. must-fix ile accepted-risk sınırı ve gerekçe şartı aynı bölümdedir.
    **En fazla bir review düzeltme turu**, mümkünse aynı Claude session; lead bu
-   politikayı yönetir, adapter tur saymaz. İstisna: yalnız belge (.md) değişikliği içeren, kod/test/config dosyalarına dokunmayan işlerde lead ikinci turu açabilir. Bu istisna kapsam içi işte kullanıcıya sormadan en fazla ikinci turdur; kod/test/config işinde tek tur kuralı geçerlidir. Must-fix sürerse dur.
+   politikayı yönetir, adapter tur saymaz. Her düzeltme turundan önce "Düzeltme öncesi
+   etki analizi (KARAR)" uygulanır. İstisna: yalnız belge (.md) değişikliği içeren, kod/test/config dosyalarına dokunmayan işlerde lead ikinci turu açabilir. Bu istisna kapsam içi işte kullanıcıya sormadan en fazla ikinci turdur; kod/test/config işinde tek tur kuralı geçerlidir. Kod işinde tek ek tur yalnız kullanıcı onayıyla: "Kullanıcı onaylı ek düzeltme turu (KARAR)". Must-fix sürerse dur; kod işinde kullanıcıya o bölüme göre sor.
 7. Lead yalnız hedefli kontrolleri kendi yeniden çalıştırır; worker PASS raporu yetmez.
 8. STATE yalnız gerçek devam durumu değişince iş commitinde güncellenir; hedef 1–2 satırdır,
    katı sınır değil (80 satır üst sınırı korunur); rutin ayrı kayıt yoktur. Karar kaydı yalnız yeni ürün/mimari karar içindir. Review (veya "Küçük iş yolu
@@ -108,6 +112,58 @@ yüklenir; mevcut oturum reload olmuş sayılmaz.
 Kota/provider/kimlik hatasında tekrar veya sessiz model fallback yok. İzin reddini
 başka rol/yolla aşma. Kapsam dışı ihtiyaç, beklenmeyen git değişikliği, etkileşimli
 onay ve çözülemeyen must-fix durma nedenidir.
+
+## Kullanıcı onaylı ek düzeltme turu (KARAR)
+
+Kullanıcı kararıdır; yetkili tek kaynak burasıdır. Varsayılan değişmez: iş başına tek
+review düzeltme turu. Adım 6'daki belge (.md) istisnası ayrı ve aynen geçerlidir; bu bölüm
+yalnız kod/test/config işleri içindir.
+
+1. Tek tur dolduğunda must-fix sürüyorsa lead dış ajan/elle taşıma önermez. Kullanıcıya sade
+   Türkçe ile kalan engeli, etkilenen yolları ve önerilen dar kapsamı gösterip tek seferlik
+   iç düzeltme turu için karar ister.
+2. Kullanıcı belirli bir kod işi için açıkça izin verirse o iş için bir ek tur açılır. Kapsam
+   yalnız kullanıcının onay mesajında belirtilen bulgulardır.
+3. Ek turdan sonra yeni must-fix çıkarsa düzeltmeye girişilmez; lead durur ve kullanıcıya
+   sorar. Zincirleme ek tur yoktur.
+4. Lead kod işinde ek turu kendiliğinden açamaz. Başka ajan/model seçmek veya işi yeniden
+   adlandırmak sınırı sıfırlamaz.
+5. Onay STATE.md'ye iş adı ve kapsamıyla tek kısa satır olarak yazılır (yalnız lead).
+
+## Review sınıf sınırı (KARAR)
+
+Kullanıcı kararıdır; yetkili tek kaynak burasıdır. Sınıflar ve adları (adım 6) değişmez; yalnız
+must-fix ile accepted-risk sınırı netleşir.
+
+- **must-fix yalnız şunlardır:** veri/dosya kaybı veya üzerine yazma; yanlış pozitif (farklı
+  içeriği aynı saymak, yanlış dosyayı sahiplenmek); containment/güvenlik ihlali (staging dışı
+  erişim, path traversal, shell injection vb.); transaction/iptal/eşzamanlılık bütünlüğü
+  ihlali; başarılı olması gereken işin başarısız olması; spec'teki açık bir davranışın
+  ihlali; kırık test veya tip/lint hatası; must-fix listesindeki bir riskin (veri/dosya
+  kaybı, üzerine yazma, yanlış pozitif, containment/güvenlik, transaction/iptal/eşzamanlılık)
+  davranışını doğrulayan test yoksa.
+- **should-fix (test eksiği):** yukarıdaki must-fix risklerine bağlı olmayan diğer test
+  eksikleri should-fix'tir; açıkça should-fix olarak yazılır, commit'i durdurmaz.
+- **accepted-risk:** güvenli yönde kalan sonuçlar (yanlış negatif, gereksiz kopya, bir
+  özelliğin devreye girmeyip varsayılan davranışa düşmesi) ve zararsız sonuçlu nadir köşe
+  vakaları. Commit'i durdurmaz; STATE.md'ye bilinen sınır olarak yazılır.
+  Accepted-risk örnekleri, bulgu must-fix ölçütlerinden hiçbirine girmiyorsa geçerlidir.
+- Reviewer her must-fix için tek cümleyle "tek kullanıcılı homelab için neden gerekli"
+  gerekçesi yazar.
+- Lead bir accepted-risk'i gerekçe göstermeden must-fix'e yükseltemez. Reviewer ile lead
+  anlaşamazsa karar kullanıcıya sade Türkçe ile sorulur.
+- Güvenlik veya veri bütünlüğünde şüphe varsa bulgu must-fix'tir; bu netleştirme o konuları
+  gevşetmek için kullanılamaz.
+
+## Düzeltme öncesi etki analizi (KARAR)
+
+Kullanıcı kararıdır; yetkili tek kaynak burasıdır. Lead bir düzeltme turunu (ilk tur veya
+kullanıcı onaylı ek tur) açmadan önce bulgunun dokunduğu kalıcı alanı, tabloyu veya API
+alanını okuyan/yazan tüm yolları çıkarır; dolaylı okuyanlar dahil (ORM ile otomatik yüklenen
+sütunlar, listeleme, detay, silme, migration). Uygulayıcıya giden düzeltme talimatı bu
+yolların listesini ve her biri için hedefli test beklentisini içerir. Yeni kalıcı alan
+ekleyen işte ilk uygulama talimatına da aynı liste konur. Bu madde yeni review turu veya onay
+adımı eklemez; yalnız turun kapsamını doğru belirler.
 
 ## İzin reddi sonrası devam (KARAR)
 

@@ -9,4 +9,5 @@ değişiklikleri salt-okunur incele. Kapsam:
 
 $ARGUMENTS
 
-Bulguları must-fix / should-fix / accepted-risk / over-engineering olarak sınıfla.
+Bulguları must-fix / should-fix / accepted-risk / over-engineering olarak sınıfla
+(sınır: `docs/WORKFLOW.md` “Review sınıf sınırı (KARAR)”).

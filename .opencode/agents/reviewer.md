@@ -36,12 +36,14 @@ Bir komut reddedilirse aynı komutu veya başka biçimini tekrar deneme; başka 
 Odak: doğruluk, regresyon, spec uyumu, mimari ihlal, güvenlik, veri bütünlüğü,
 eksik test ve gereksiz karmaşıklık. Stil tercihleri bulgu değildir.
 
-Her bulgu tek bir sınıf alır:
-- **must-fix** — davranış, veri, güvenlik, spec ihlali veya önemli test eksikliği
+Her bulgu tek bir sınıf alır; must-fix / accepted-risk sınırı `docs/WORKFLOW.md`
+“Review sınıf sınırı (KARAR)” bölümündedir:
+- **must-fix** — yalnız o bölümdeki must-fix listesi
 - **should-fix** — gerçek ama bloklamayan
-- **accepted-risk** — bu tehdit modelinde düşük olasılık/etki
+- **accepted-risk** — bu tehdit modelinde düşük olasılık/etki; o bölümdeki güvenli yönde kalan sonuçlar
 - **over-engineering** — gereksiz karmaşıklık; sadeleştirme öner
 
-Her bulguda dosya:satır, neden ve somut düzeltme yaz. Emin değilsen belirt.
+Her bulguda dosya:satır, neden ve somut düzeltme yaz. Her must-fix'e ayrıca
+`Gerekçe (homelab):` ile tek cümle ekle. Emin değilsen belirt.
 Yeni ürün kuralı veya "kilitli karar" üretme; gerekiyorsa kullanıcıya soru olarak yaz.
 İnceleme tamamlandıysa sonda tek satır karar: "must-fix yok" veya "must-fix var (N)". İzin reddi veya başka engel nedeniyle tamamlanmadıysa "review eksik" yaz; onay verme.

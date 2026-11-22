@@ -34,7 +34,8 @@ Kurallar `docs/WORKFLOW.md`'dedir; "Geçici Claude-only modu" bölümü bu skill
   - Sonnet kodu: `scripts/claude-review.sh '<odak>' --log` ile salt-okunur Opus review.
   - Opus kodu: bu modda review yapılmaz; commit gövdesinde "GPT review bekliyor"
     belirt ve kullanıcıya bildir. STATE'te iş başına ayrı review satırı oluşturma.
-  - En fazla bir düzeltme turu; aynı modelle `--resume`, `--model` açıkça yeniden iletilir.
+  - En fazla bir düzeltme turu (istisnalar ve sınıf/etki analizi kuralları: WORKFLOW adım 6);
+    aynı modelle `--resume`, `--model` açıkça yeniden iletilir.
   - Normale dönüşte başlangıç sınırından sonraki bütün commit'ler GPT review kapsamındadır.
 - WORKFLOW'un commit ve STATE kurallarını uygula: STATE'i yalnız gerçek durum değiştiyse
   güncelle; ilk review başlangıcını ilk işle aynı commit'te kaydet. Yalnız değişen görev

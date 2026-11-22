@@ -13,7 +13,8 @@ ona göre daralt:
 
 Milestone öncesi Opus görüşünü ve lead kararını görünür özetle; görüş yoksa açık
 kullanıcı onayı olmadan uygulama yok. Claude /devam'a yönlendirme. Tek yazıcı,
-bir review düzeltme turu, kota/kimlik/izin hatasında tekrar veya sessiz fallback yok.
+bir review düzeltme turu (istisnalar: WORKFLOW adım 6), kota/kimlik/izin hatasında
+tekrar veya sessiz fallback yok.
 Her iş başında “Uygulayıcı: Sonnet/Opus; gerekçe...” de. Varsayılan Sonnet;
 WORKFLOW'daki zor/belirsiz/yüksek etkili işlerde baştan açık `--model opus` seç;
 boyut/dosya sayısıyla seçme, kör Sonnet→Opus zinciri kurma. Luna yalnız mekanik

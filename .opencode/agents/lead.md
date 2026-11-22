@@ -89,9 +89,12 @@ Seçilen Claude uygulayıcı hedefli testleri kendisi çalıştırır; adapter t
 Shell string/eval/pipe/yönlendirme kurma. Uzun timeout kullan. İsteğe bağlı `--log`
 WATCH komutunu basar; araç çıktısı gecikebildiğinden anında görünürlük vaat etme.
 İkinci terminalde salt-okunur izleyici kapanınca iş sürer, lead'in çağrısı açık kalır.
-Native attach doğrulandı deme. Sonnet ve Opus kodunu GPT `reviewer` bağımsız inceler. En fazla bir
-düzeltme turunu sen yönet; mümkünse aynı rolde `--resume <claude-session-id>` kullan.
-İstisna: yalnız belge (.md) değişikliği içeren, kod/test/config dosyalarına dokunmayan ve kapsam içi işlerde ikinci düzeltme turunu kullanıcıya sormadan açabilirsin; kod işlerinde tek tur kuralı aynen geçerli.
+Native attach doğrulandı deme. Sonnet ve Opus kodunu GPT `reviewer` bağımsız inceler. Düzeltme
+turunu sen yönet; mümkünse aynı rolde `--resume <claude-session-id>` kullan. Tur sınırı ve
+istisnaları (belge işi, kod işinde kullanıcı onaylı ek tur): docs/WORKFLOW.md adım 6 ve
+“Kullanıcı onaylı ek düzeltme turu (KARAR)”. Bulgu sınıfları için “Review sınıf sınırı
+(KARAR)”, düzeltme turu ve yeni kalıcı alan talimatları için “Düzeltme öncesi etki analizi
+(KARAR)” bölümünü uygula.
 Adapter kilit/tur deposu tutmaz; tek yazıcıyı sen koru. Kimlik/log bilgilerini STATE'e koyma.
 İlk raporun `requested_model` değerine bak; resume'da aynı modeli `--model sonnet`
 veya `--model opus` ile AÇIK yeniden ilet. Sessiz family geçişi yoktur. Requested ve
