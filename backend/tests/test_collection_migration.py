@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import (
     CheckConstraint,
     DefaultClause,
@@ -25,6 +26,12 @@ def upgrade(database: Path, revision: str) -> None:
     config.set_main_option("script_location", str(MIGRATIONS_DIR))
     config.set_main_option("sqlalchemy.url", f"sqlite:///{database}")
     command.upgrade(config, revision)
+
+
+def _head() -> str | None:
+    config = Config()
+    config.set_main_option("script_location", str(MIGRATIONS_DIR))
+    return ScriptDirectory.from_config(config).get_current_head()
 
 
 def test_upgrade_0004_preserves_every_legacy_single_field(tmp_path: Path) -> None:
@@ -77,7 +84,7 @@ def test_upgrade_0004_preserves_every_legacy_single_field(tmp_path: Path) -> Non
         assert connection.scalar(text("SELECT count(*) FROM media_files")) == 0
         assert all(row["collection_cancel_requested_at"] is None for row in after)
         assert all(row["output_profile"] is None for row in after)
-        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0007"
+        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == _head()
     engine.dispose()
 
 

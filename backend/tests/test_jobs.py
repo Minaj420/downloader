@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.api.v1.events import _replay_backlog
@@ -2029,6 +2030,99 @@ class TestSse:
         # 251..253 exist in the DB yet are never emitted by the replay.
         assert ids == list(range(1, hwm + 1))
 
+    def test_activity_id_live_after_deleting_highest_ids_arrives_once(
+        self, app_factory: Any, settings: Settings
+    ) -> None:
+        """A connection whose replay mark predates the delete still gets the new id.
+
+        Without monotonic ids the new row would reuse a deleted id <= mark
+        and be silently dropped by the live-lane dedupe.
+        """
+        binaries = app_factory.binaries
+        with app_factory(
+            yt_dlp=fake_ytdlp_ok(binaries), ffmpeg=str(binaries / "ffmpeg-missing")
+        ) as client:
+            application = client.app
+
+        hwm = asyncio.run(_seed_activity_events(settings, 5))
+        assert hwm == 5
+
+        async def scenario() -> tuple[bytes, int]:
+            bus = application.state.event_bus
+            replayed = asyncio.Event()
+            committed: dict[str, int] = {}
+
+            def on_body(body: bytes) -> None:
+                if f"id: {hwm}\n".encode() in body:
+                    replayed.set()
+
+            async def clear_then_commit_new() -> None:
+                await asyncio.wait_for(replayed.wait(), timeout=10.0)
+                payload = await _delete_activity_and_commit_new(
+                    settings, delete_from_id=4, message="after clear live"
+                )
+                committed["id"] = payload["id"]
+                # Published only after commit, like every runner/service writer.
+                bus.publish(
+                    {"event": "activity.created", "id": payload["id"], "data": payload}
+                )
+
+            writer = asyncio.create_task(clear_then_commit_new())
+            try:
+                body = await _drive_sse_until(
+                    application,
+                    scope=_sse_scope(last_event_id=b"0"),
+                    on_body=on_body,
+                    done=lambda body: b"after clear live" in body,
+                )
+            finally:
+                if not writer.done():
+                    writer.cancel()
+            await writer
+            return body, committed["id"]
+
+        body, new_id = asyncio.run(scenario())
+
+        assert new_id > hwm
+        ids = _delivered_activity_ids(body)
+        assert ids == list(range(1, hwm + 1)) + [new_id]
+        with sqlite3.connect(settings.state_dir / "downloader.db") as connection:
+            remaining = [
+                row[0]
+                for row in connection.execute("SELECT id FROM activity_events ORDER BY id")
+            ]
+        assert remaining == [1, 2, 3, new_id]
+
+    def test_activity_id_reconnect_cursor_above_new_max_replays_new_event(
+        self, app_factory: Any, settings: Settings
+    ) -> None:
+        """Last-Event-ID equal to a deleted highest id never hides the new row."""
+        binaries = app_factory.binaries
+        with app_factory(
+            yt_dlp=fake_ytdlp_ok(binaries), ffmpeg=str(binaries / "ffmpeg-missing")
+        ) as client:
+            application = client.app
+
+        hwm = asyncio.run(_seed_activity_events(settings, 5))
+        assert hwm == 5
+        payload = asyncio.run(
+            _delete_activity_and_commit_new(
+                settings, delete_from_id=4, message="after clear replay"
+            )
+        )
+        new_id = payload["id"]
+        assert new_id > hwm
+
+        body = asyncio.run(
+            _drive_sse_until(
+                application,
+                scope=_sse_scope(last_event_id=str(hwm).encode()),
+                done=lambda body: b"after clear replay" in body,
+            )
+        )
+
+        assert _delivered_activity_ids(body) == [new_id]
+
     def test_list_events_after_optionally_bounds_by_max_id(
         self, app_factory: Any, settings: Settings
     ) -> None:
@@ -2205,6 +2299,40 @@ async def _seed_activity_events(settings: Settings, total: int) -> int:
             await session.commit()
             hwm = await activity_repo.max_event_id(session)
         return hwm
+    finally:
+        await engine.dispose()
+
+
+async def _delete_activity_and_commit_new(
+    settings: Settings, *, delete_from_id: int, message: str
+) -> dict[str, Any]:
+    """Commit a delete of ids >= ``delete_from_id``, then one new repository row.
+
+    Returns the runner-shaped ``activity.created`` payload of the new row.
+    """
+    engine = create_async_engine(
+        f"sqlite+aiosqlite:///{settings.state_dir / 'downloader.db'}"
+    )
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        async with factory() as session:
+            await session.execute(
+                delete(ActivityEvent).where(ActivityEvent.id >= delete_from_id)
+            )
+            await session.commit()
+        async with factory() as session:
+            record = await activity_repo.add_activity_event(
+                session, job_id=None, level="info", event_type="job", message=message
+            )
+            await session.commit()
+        return {
+            "id": record.id,
+            "job_id": record.job_id,
+            "level": record.level,
+            "event_type": record.event_type,
+            "message": record.message,
+            "created_at": record.created_at.isoformat(),
+        }
     finally:
         await engine.dispose()
 

@@ -130,10 +130,18 @@ class JobItem(Base):
 
 
 class ActivityEvent(Base):
-    """Structured activity history backing the UI and SSE replay."""
+    """Structured activity history backing the UI and SSE replay.
+
+    ``sqlite_autoincrement`` (migration 0008): a committed id is never handed
+    out again, even after the highest or all rows are deleted, so SSE live
+    dedupe and ``Last-Event-ID`` replay can rely on monotonic ids.
+    """
 
     __tablename__ = "activity_events"
-    __table_args__ = (Index("ix_activity_events_job_id", "job_id"),)
+    __table_args__ = (
+        Index("ix_activity_events_job_id", "job_id"),
+        {"sqlite_autoincrement": True},
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     job_id: Mapped[str | None] = mapped_column(String(32))

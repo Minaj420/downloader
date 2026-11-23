@@ -21,11 +21,16 @@ target_metadata = Base.metadata
 
 
 def run_migrations_offline() -> None:
+    # Offline (--sql) only: SQLite DDL is transactional, so wrap the generated
+    # script, version stamps included, in one explicit BEGIN/COMMIT via the
+    # begin_transaction() below. If the script fails midway, roll back; never
+    # continue it to COMMIT. Online engine/transaction handling is unchanged.
     context.configure(
         url=config.get_main_option("sqlalchemy.url"),
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        transactional_ddl=True,
     )
 
     with context.begin_transaction():

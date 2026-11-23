@@ -13,12 +13,12 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - Onaylı v0.1 sırası ve v0.2 ertelemeleri: ARCHITECTURE §59 ve PRODUCT_SPEC.
 - Bulgu 3a kapandı: Fedora Compose ffprobe 7.1.5; tekil 720p, dikey 1080p; ağ hatalı öğe Retry ile indi (4/4), sıra korundu. Hedefli 817 PASS/1 SKIP, Ruff/mypy ve review temiz; göreli girdi testi should-fix.
 - Q3b-2 ve 3c Already exists v0.1 sonrası; güvenli numara ve çözünürlük eki kalır. Aday ve açık review bulguları `wip/already-exists` dalında.
-- Sıradaki M6-Q3-ACT: Clear History (§59) öncesi Activity kimliklerinin silme sonrası yeniden kullanılmasını önle; uygulama henüz başlamadı.
+- M6-Q3-ACT kapandı; sıradaki Q3 backend: Clear History önizleme ve güvenli toplu silme (ARCHITECTURE §59).
 - Bekleyen toplu UI Compose smoke: Queue'da active/history; gezinme/F5 sonrası sunucudan iş erişimi.
 - Smoke: uygun Cancel/Retry ve çift tık/pending.
 - Smoke: geçmiş iş detay/Activity, collection öğeleri; Load more ve yeniden bağlantıda güncellik.
 - Smoke: Private video içeren playlist; satır devre dışı, Select All ve sayaç dışında.
-- 2026-11-22 kullanıcı Compose Q2: Retry kaldığı yerden devam etti ve indirme tamamlandı.
+- Kullanıcı Compose PASS: Q2 Retry kaldığı yerden tamamlandı (22 Kasım); Q3-ACT eski Activity/Library, canlı Activity ve F5 sonrası geçmiş korundu (23 Kasım).
 - M6.4/5 kapanışı yok; full gate ve değişen davranış için yeni kullanıcı Compose smoke'u gerekir.
 ## Açık kararlar
 - M6.6 güvenilir albüm grubu/ön hazırlık ve çoklu album_artists klasör değeri; M6.7 cover.jpg seçimi açık.

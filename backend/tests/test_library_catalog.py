@@ -17,6 +17,7 @@ from typing import Any
 import pytest
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import IntegrityError
 
@@ -181,7 +182,9 @@ class TestLibraryMigration:
 
         assert version_row is not None
         assert {"library_items", "media_files"} <= tables
-        assert version_row[0] == "0007"
+        head_config = Config()
+        head_config.set_main_option("script_location", str(MIGRATIONS_DIR))
+        assert version_row[0] == ScriptDirectory.from_config(head_config).get_current_head()
         assert {
             "id",
             "owner_id",
