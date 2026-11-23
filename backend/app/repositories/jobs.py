@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, cast
 
@@ -278,6 +279,80 @@ async def list_history_jobs(
     records = list(result.scalars().all())
     await _preload_collection_retry_children(session, records)
     return records
+
+
+@dataclass(frozen=True)
+class ClearHistoryCandidate:
+    """Internal point-in-time selection; not a deletion grant or preview snapshot.
+
+    ``staging_keys`` are backend staging identities, never paths: the job id for
+    a single job, every child ``JobItem.id`` (any status) for a collection.
+    """
+
+    job_id: str
+    job_type: str
+    staging_keys: tuple[str, ...]
+
+
+def _clear_history_filter(owner_id: str, include_cancelled: bool) -> tuple[Any, ...]:
+    """Shared by count and list: owner plus an explicit parent status allowlist.
+
+    Queued (even with a cancel request), active and unknown statuses never match.
+    """
+    statuses = [JobStatus.COMPLETED.value, JobStatus.FAILED.value]
+    if include_cancelled:
+        statuses.append(JobStatus.CANCELLED.value)
+    return (DownloadJob.owner_id == owner_id, DownloadJob.status.in_(statuses))
+
+
+async def count_clear_history_candidates(
+    session: AsyncSession, owner_id: str, *, include_cancelled: bool
+) -> int:
+    result = await session.execute(
+        select(func.count(DownloadJob.id)).where(
+            *_clear_history_filter(owner_id, include_cancelled)
+        ).execution_options(autoflush=False)
+    )
+    return int(result.scalar_one())
+
+
+async def list_clear_history_candidates(
+    session: AsyncSession, owner_id: str, *, include_cancelled: bool
+) -> list[ClearHistoryCandidate]:
+    """One joined read, oldest first; children by ``source_order`` then id.
+
+    An unknown ``job_type`` raises instead of assuming staging ownership.
+    Both readers skip autoflush: pending caller changes are never written here.
+    """
+    result = await session.execute(
+        select(DownloadJob.id, DownloadJob.job_type, JobItem.id)
+        .outerjoin(JobItem, and_(
+            JobItem.job_id == DownloadJob.id, DownloadJob.job_type == "collection",
+        ))
+        .where(*_clear_history_filter(owner_id, include_cancelled))
+        .order_by(
+            DownloadJob.created_at.asc(), DownloadJob.id.asc(),
+            JobItem.source_order.asc(), JobItem.id.asc(),
+        )
+        .execution_options(autoflush=False)
+    )
+    types: dict[str, str] = {}
+    children: dict[str, list[str]] = {}
+    for job_id, job_type, child_id in result:
+        if job_type not in ("single", "collection"):
+            raise ValueError(f"Unsupported job type for Clear History: {job_type!r}")
+        types[job_id] = job_type
+        keys = children.setdefault(job_id, [])
+        if child_id is not None:
+            keys.append(child_id)
+    return [
+        ClearHistoryCandidate(
+            job_id=job_id,
+            job_type=job_type,
+            staging_keys=(job_id,) if job_type == "single" else tuple(children[job_id]),
+        )
+        for job_id, job_type in types.items()
+    ]
 
 
 async def update_job(
