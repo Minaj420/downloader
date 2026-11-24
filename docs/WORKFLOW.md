@@ -94,7 +94,7 @@ yüklenir; mevcut oturum reload olmuş sayılmaz.
 7. Lead yalnız hedefli kontrolleri kendi yeniden çalıştırır; worker PASS raporu yetmez.
 8. STATE yalnız gerçek devam durumu değişince iş commitinde güncellenir; hedef 1–2 satırdır,
    katı sınır değil (80 satır üst sınırı korunur); rutin ayrı kayıt yoktur. Karar kaydı yalnız yeni ürün/mimari karar içindir. Review (veya "Küçük iş yolu
-   (KARAR)" saf karar kaydı istisnası) ve kontrollerden geçen iş
+   (KARAR)" saf karar kaydı istisnası) ve kontrollerden geçen iş (istisna: WIP koruması)
    tek otomatik commit olur: görevde gerçekten değişen dosyalar (STATE değiştiyse o da) tek tek
    stage edilir; worker STATE/git yazmaz. Göreve özel açık git yasağına uyulur.
    Komut: `git commit -m <başlık> -m <gövde>`. Başlık `tür(iş-kodu): açıklama`
@@ -111,7 +111,7 @@ yüklenir; mevcut oturum reload olmuş sayılmaz.
 
 Kota/provider/kimlik hatasında tekrar veya sessiz model fallback yok. İzin reddini
 başka rol/yolla aşma. Kapsam dışı ihtiyaç, beklenmeyen git değişikliği, etkileşimli
-onay ve çözülemeyen must-fix durma nedenidir.
+onay ve çözülemeyen must-fix durma nedenidir. Durma, WIP korumasını engellemez.
 
 ## Kullanıcı onaylı ek düzeltme turu (KARAR)
 
@@ -125,10 +125,13 @@ yalnız kod/test/config işleri içindir.
 2. Kullanıcı belirli bir kod işi için açıkça izin verirse o iş için bir ek tur açılır. Kapsam
    yalnız kullanıcının onay mesajında belirtilen bulgulardır.
 3. Ek turdan sonra yeni must-fix çıkarsa düzeltmeye girişilmez; lead durur ve kullanıcıya
-   sorar. Zincirleme ek tur yoktur.
+   sorar. Zincirleme ek tur yoktur (Kullanıcı istisnası hariç).
 4. Lead kod işinde ek turu kendiliğinden açamaz. Başka ajan/model seçmek veya işi yeniden
    adlandırmak sınırı sıfırlamaz.
 5. Onay STATE.md'ye iş adı ve kapsamıyla tek kısa satır olarak yazılır (yalnız lead).
+
+- **Kullanıcı istisnası:** Kullanıcı, tek ek tur kullanıldıktan sonra, iş kodu ve kapsadığı bulgular adıyla belirtilmiş, tek seferlik bir ek tur onayı verebilir. Onay chat'te açıkça "istisna" ifadesiyle verilir; Lead bunu gerekçesiyle STATE.md'ye kaydeder ve uygular. İstisna kapsam dışına genişletilemez, kendini yenilemez; sonraki review'da yeni must-fix çıkarsa Lead durur ve kullanıcıya bildirir.
+- **WIP koruması:** Açık engel varken feature branch'e WIP commit atılabilir. Push, main'e merge ve deploy, engeller kapanana kadar yapılmaz.
 
 ## Review sınıf sınırı (KARAR)
 
