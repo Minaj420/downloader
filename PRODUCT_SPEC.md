@@ -326,7 +326,7 @@ Explicit conversion applies to new single and collection downloads, and only to 
 
 The application must not imply that increasing a numeric bitrate creates quality absent from the source.
 
-FFmpeg may be used for conversion, remux and other final media processing. Embedded text tags are planned to be written through a thin Mutagen integration instead (§14; planned, not implemented).
+FFmpeg may be used for conversion, remux and other final media processing. Embedded text tags are planned to be written through a thin Mutagen integration instead (§14; only the isolated adapter exists, downloads are not tagged yet).
 
 M6 decision (approved; planned, not implemented, except the WebM-contained Opus → `.opus` remux, which is implemented in M6.5b/c for single and collection Original audio-only downloads): `Original / Best Available` audio preserves source quality. Opus audio delivered inside a WebM container is remuxed losslessly into an `.opus` container; AAC/M4A is kept as-is. MP3 or AAC re-encoding is not a default behaviour; it happens only when the user explicitly selects a conversion output. Unsupported or unknown source codecs and missing encoders are handled in later technical design, and no encoder is guaranteed on every FFmpeg build. Past Library items are not reprocessed.
 
@@ -537,10 +537,11 @@ Where metadata can be determined reliably, files should contain embedded metadat
 
 Users should be able to inspect or correct important album metadata before the download when automatic metadata is uncertain (the M6.8 edit UI and embedded artwork are v0.2; v0.1 writes the M6.5 text tags only).
 
-M6.5 text tags (approved; planned, not implemented; M6.5 stays open until the user's real-use Docker Compose smoke result and the full gates): embedded text tags are planned to be written with the existing third-party Mutagen library (not yet an installed repository dependency), not by hand-written format code: MP3 ID3v2.4, M4A MP4 atoms, FLAC / Ogg Vorbis / Opus Vorbis comments. Minimum fields only; there is no genre/composer field and no provider framework.
+M6.5 text tags (approved; not wired: the Mutagen runtime dependency and an isolated, tested adapter exist, but no download is tagged yet; M6.5 stays open until the user's real-use Docker Compose smoke result and the full gates): embedded text tags are written with the existing third-party Mutagen library, not by hand-written format code: MP3 ID3v2.4, M4A MP4 atoms, FLAC / Ogg Vorbis / Opus Vorbis comments. Minimum fields only; there is no genre/composer field and no provider framework.
 
 - `TITLE`: the source track name, otherwise the source title. `ARTIST`: every normalized source name, kept as a natural multi-value tag of the format; the current normalizer limits are not promised to be lifted. `ALBUM` and `ALBUMARTIST`: only explicit source or user data. Track and disc numbers: only known values. Date/year: source release data, never the upload date.
 - Total tracks and total discs are not in `SourceMetadata` today and M6.5 does not derive them. Playlist source order is never written as an embedded track tag.
+- Preservation (user decision): only supplied fields are updated. Other embedded tags stay, including managed fields with no supplied value, existing artwork and already known track/disc totals.
 - WAV and the Original WebM fallback (§14 remux fallback) are outside tags and artwork. Video and other unsupported containers are outside this audio-tag scope. An unsupported format is not presented as an error, and no remux or transcode is done just to carry a tag.
 
 M6.7 source artwork (approved; deferred to v0.2; not implemented): by default a track's own thumbnail image is embedded as a square crop; the general playlist image is not used. A missing or broken cover never blocks the download. The user removes or replaces the cover on the M6.8 selection screen. The earlier rule that every source cover requires an explicit selection is superseded and is not an active rule. An album-wide `cover.jpg` is not chosen automatically when tracks have different thumbnail covers; the `cover.jpg` example in §13 is conditional, and the album-wide selection detail stays an open M6.7 design follow-up. For a playlist with different albums, one cover is never applied automatically to all tracks. Format support is not guaranteed.

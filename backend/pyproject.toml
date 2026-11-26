@@ -10,6 +10,9 @@ dependencies = [
     "aiosqlite>=0.20",
     "alembic>=1.13",
     "pydantic-settings>=2.0",
+    # Floor is the tested release; capped because the adapter reads Mutagen's
+    # private MP4 atom tree to keep video and fragmented files untagged.
+    "mutagen>=1.48.1,<1.49",
 ]
 
 [project.optional-dependencies]

@@ -14,19 +14,19 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - Q3b-2 ve 3c Already exists v0.1 sonrası; güvenli numara ve çözünürlük eki kalır. Aday ve açık review bulguları `wip/already-exists` dalında.
 - M6-Q20 kapandı: Compose seçici/Ses PASS, Shorts 4/4, 1080×1920 doğrulandı; tavan dışı yedek otomatik PASS, uygun canlı kaynak yok, kullanıcı kapanışı onayladı. Katalog eşleşmesi (§16) gerekirse önce koleksiyonlarda.
 - M6-Q3 parkta (ARCHITECTURE §59 önceliği bayat); WIP dalı merge edilmez, staging silme/API yok.
-- Aktif M6.5 metin etiketleri; sıradaki M6.5-T2: yalıtık Mutagen yazma/geri okuma ve biçim testleri (runner'a bağlanmaz).
+- M6.5-T2 yazıcı ve codec istisnası doğrulandı: Fedora 26 Kasım 265 test/Ruff/mypy PASS, review temiz. Compose bağımlılık/açılış smoke'u bekliyor; ardından T3 tekil indirme.
+- Accepted (M6.5-T2): düşen/yinelenen TXXX değişmeden reddedilebilir (ID3v2.4 dahil). Should-fix: seek hata ayrıntısı ve ses-önce çoklanmış Ogg testi.
 - Bekleyen toplu UI Compose smoke: Queue'da active/history; gezinme/F5 sonrası sunucudan iş erişimi.
 - Smoke: uygun Cancel/Retry, çift tık/pending; geçmiş iş detay/Activity, collection öğeleri; Load more ve yeniden bağlantıda güncellik.
 - Smoke: Private video içeren playlist; satır devre dışı, Select All ve sayaç dışında.
 - Kullanıcı Compose PASS: Q2 Retry kaldığı yerden tamamlandı (22 Kasım); Q3-ACT eski Activity/Library, canlı Activity ve F5 sonrası geçmiş korundu (23 Kasım).
-- M6.4/5 kapanışı yok; full gate ve kullanıcı Compose smoke'u gerekir. Mevcut gömülü etiketlerin korunması/değiştirilmesi dosya yazımı öncesi netleşecek.
+- M6.4/5 kapanışı yok; full gate ve kullanıcı Compose smoke'u gerekir. T2 yazıcı indirme akışına bağlı değil.
 ## Açık kararlar
 - M6.6 güvenilir albüm grubu/ön hazırlık ve çoklu album_artists klasör değeri; M6.7 cover.jpg seçimi açık.
 - M6.9 yalnız seçim ekranından kullanıcı isterse; MB/CAA aday, hak/API/embed koşulları o işte netleşecek.
 - Mutagen lisansı kişisel kullanıma engel değil; dağıtım uyumu notu sürer. M9 kalite/boyut bekler.
 - S1 M7 hedef doğrulamasıyla onaylı; açılış yaz-sil probu/kalıcı hata bandı planlı; S2 v0.1 sonrası.
 - v0.1 platform ikonları M6.5 UI'da; ikon seti ve lisans açık.
-- Onaylı Retry/retention, failed staging ve K3 yetkili belgelerde; K2 ve tema v0.2.
 ## Açık bulgular
 - should-fix: eski conversion durumları PRODUCT_SPEC §8–9 ve ARCHITECTURE M6
   kapanış paragrafında bayat; sabit profillerin yetkili belgeye aktarımı ayrı iş.
