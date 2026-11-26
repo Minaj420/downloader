@@ -9,6 +9,7 @@ import asyncio
 import os
 import re
 import sqlite3
+import threading
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
@@ -17,10 +18,16 @@ from typing import Any, Never, cast
 
 import pytest
 from fastapi.testclient import TestClient
+from mutagen.flac import FLAC
 from sqlalchemy import select
 
 from app.config import Settings
-from app.domain.analysis import MediaFormatKind, NormalizedAnalysis, NormalizedFormat
+from app.domain.analysis import (
+    MediaFormatKind,
+    NormalizedAnalysis,
+    NormalizedFormat,
+    SourceMetadata,
+)
 from app.domain.jobs import JobError, JobErrorCode, job_error_code_retryable
 from app.integrations.ffmpeg import (
     ConversionProfile,
@@ -36,10 +43,17 @@ from app.repositories import jobs as job_repo
 from app.services import job_runner
 from app.services.job_runner import (
     _REMUX_FALLBACK_SAVED,
+    _TAG_FALLBACK_SAVED,
     RunnerDeps,
     run_download_job,
 )
-from app.services.storage_service import MediaFileMissingError, StorageService
+from app.services.storage_service import (
+    MediaFileMissingError,
+    MediaFileTargetChangedError,
+    StagedEditResult,
+    StoragePathError,
+    StorageService,
+)
 from app.utils.filenames import conflict_media_filenames
 from tests.conftest import FakeAnalyzer, build_application
 from tests.fake_binaries import fake_ffmpeg_fail, fake_ffmpeg_record, fake_ytdlp_ok
@@ -54,6 +68,7 @@ from tests.test_output_profiles import (
     scalar,
     single_request,
 )
+from tests.test_staged_tag_copy import tiny_flac
 
 TITLE = "Title"
 AUDIO = MediaFormatKind.AUDIO_ONLY
@@ -86,6 +101,8 @@ class StubMedia:
         self.convert_error: BaseException | None = None
         self.in_convert: Callable[[], None] | None = None
         self.download_ext = "mp4"
+        self.download_bytes = b"source"
+        self.convert_bytes = b"converted"
         self.dimensions: VideoDimensions | None = None
         self.probed: list[Path] = []
         self.probe_error: BaseException | None = None
@@ -106,7 +123,7 @@ class StubMedia:
     async def download(self, **kwargs: Any) -> list[str]:
         path = Path(kwargs["output_template"].replace("%(ext)s", self.download_ext))
         self.calls.append(f"download:{kwargs['format_selector']}")
-        path.write_bytes(b"source")
+        path.write_bytes(self.download_bytes)
         return [str(path)]
 
     async def merge_streams(
@@ -123,7 +140,7 @@ class StubMedia:
     ) -> None:
         self.calls.append(f"convert:{profile}")
         self.conversions.append((input_path.name, output_path.name, copy_audio, copy_video))
-        output_path.write_bytes(b"converted")
+        output_path.write_bytes(self.convert_bytes)
         if self.in_convert is not None:
             self.in_convert()
         if self.convert_error is not None:
@@ -175,13 +192,15 @@ class SingleRun:
 
     async def seed(
         self, formats: list[NormalizedFormat], variant: str, profile: str | None,
-        *, legacy_formats: bool = False,
+        *, legacy_formats: bool = False, source_title: str | None = None,
+        metadata: SourceMetadata | None = None,
     ) -> None:
         now = datetime.now(UTC)
         analysis = NormalizedAnalysis(
             analysis_id="analysis", original_url="https://example.com/v",
             detected_platform="generic", detected_platform_label="Generic",
             content_type="single", formats=formats, duration_seconds=60.0,
+            title=source_title, source_metadata=metadata,
         )
         # Snapshots persisted before ``h264_profile_idc`` existed lack the key.
         result_json = analysis.model_dump_json(
@@ -228,10 +247,14 @@ class SingleRun:
 async def execute_run(
     tmp_path: Path, formats: list[NormalizedFormat], variant: str, profile: str | None,
     *, prepare: Callable[[SingleRun], None] | None = None, legacy_formats: bool = False,
+    source_title: str | None = None, metadata: SourceMetadata | None = None,
 ) -> tuple[SingleRun, Facts]:
     run = SingleRun(tmp_path)
     try:
-        await run.seed(formats, variant, profile, legacy_formats=legacy_formats)
+        await run.seed(
+            formats, variant, profile, legacy_formats=legacy_formats,
+            source_title=source_title, metadata=metadata,
+        )
         if prepare is not None:
             prepare(run)
         await run.run()
@@ -805,6 +828,481 @@ async def test_remux_fallback_name_conflict_saves_numbered_original_with_warning
     [item] = facts.items
     assert (item.format, item.codec, item.bitrate) == ("webm", "opus", 160.0)
     assert not (run.staging / "job").exists()
+
+
+# --- M6.5 text tags: single audio downloads (M6.5-T3) ----------------------------------
+
+METADATA = SourceMetadata(track="Şarkı", artists=["A", "B"], album="Albüm", track_number=3)
+FLAC_AUDIO = [fmt("a", AUDIO, audio="flac", bitrate=900.0)]
+BROKEN_MP3 = b"not audio at all " * 40
+STAGED_FLAC = "media.flac"
+
+
+def flac_download(data: bytes | None = None) -> Callable[[SingleRun], None]:
+    def prepare(run: SingleRun) -> None:
+        run.media.download_ext = "flac"
+        run.media.download_bytes = tiny_flac() if data is None else data
+
+    return prepare
+
+
+def spy_tagging(
+    calls: list[Path],
+    after: Callable[[SingleRun, StagedEditResult | None], None] | None = None,
+    results: list[tuple[bool, tuple[int, int]]] | None = None,
+) -> Callable[[SingleRun], None]:
+    """Wrap ``stage_edited_copy``; ``after`` runs on the loop once it returned/raised.
+
+    ``results`` records each returned selection as ``(edited, identity)``.
+    """
+
+    def install(run: SingleRun) -> None:
+        original = run.storage.stage_edited_copy
+
+        async def spy(staging_key: str, source: Path, edit: Any) -> StagedEditResult:
+            calls.append(source)
+            result: StagedEditResult | None = None
+            try:
+                result = await original(staging_key, source, edit)
+                if results is not None:
+                    results.append((result.edited, result.identity))
+                return result
+            finally:
+                if after is not None:
+                    after(run, result)
+
+        run.storage.stage_edited_copy = spy  # type: ignore[method-assign]
+
+    return install
+
+
+def both(*steps: Callable[[SingleRun], None]) -> Callable[[SingleRun], None]:
+    def prepare(run: SingleRun) -> None:
+        for step in steps:
+            step(run)
+
+    return prepare
+
+
+def staged_names(run: SingleRun) -> list[str]:
+    return sorted(path.name for path in (run.staging / "job").iterdir())
+
+
+def inode(path: Path) -> tuple[int, int]:
+    entry = os.stat(path, follow_symlinks=False)
+    return (entry.st_dev, entry.st_ino)
+
+
+def assert_failed_unpublished(run: SingleRun, facts: Facts, code: str) -> None:
+    """No file, no completion/catalog rows, no warning row or event."""
+    assert (facts.record.status, facts.record.error_code) == ("failed", code)
+    assert facts.record.final_path is None
+    assert_nothing_published(run, facts)
+    assert _TAG_FALLBACK_SAVED not in facts.messages
+    events = [event["event"] for event in run.bus.events]
+    assert "job.completed" not in events and events[-1] == "job.failed"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("metadata, source_title, title", [
+    (METADATA, "Source Title", "Şarkı"),
+    (None, "  Source Title  ", "Source Title"),  # trimmed source title fallback
+])
+async def test_single_audio_publishes_verified_tagged_copy(
+    tmp_path: Path, metadata: SourceMetadata | None, source_title: str, title: str,
+) -> None:
+    placed: list[tuple[str, bytes]] = []
+    results: list[tuple[bool, tuple[int, int]]] = []
+
+    def prepare(run: SingleRun) -> None:
+        flac_download()(run)
+        spy_tagging([], results=results)(run)
+        original = run.storage.place_final
+
+        async def place(source: Path, **kwargs: Any) -> Any:
+            # Placement gets the copy; the prepared file is still untouched.
+            placed.append((source.name, (run.staging / "job" / STAGED_FLAC).read_bytes()))
+            assert kwargs["source_identity"] is not None
+            return await original(source, **kwargs)
+
+        run.storage.place_final = place  # type: ignore[method-assign]
+
+    run, facts = await execute_run(
+        tmp_path, FLAC_AUDIO, "a", None, prepare=prepare,
+        source_title=source_title, metadata=metadata,
+    )
+    record = facts.record
+    assert (record.status, record.error_code, record.final_path) == (
+        "completed", None, f"audio/{TITLE}.flac"), record.error_detail
+    published = run.library / "audio" / f"{TITLE}.flac"
+    assert run.published_files() == [published]
+    [(placed_name, prepared)] = placed
+    assert placed_name != STAGED_FLAC and placed_name.endswith(".flac")
+    assert prepared == tiny_flac()
+    # The published inode is exactly the verified, pinned tagged copy.
+    [(edited, identity)] = results
+    assert edited and inode(published) == identity
+    tagged = FLAC(published)
+    assert tagged["TITLE"] == [title]
+    if metadata is not None:
+        assert (tagged["ARTIST"], tagged["ALBUM"], tagged["TRACKNUMBER"]) == (
+            ["A", "B"], ["Albüm"], ["3"])
+    assert facts.messages == ["Download started", "Finalizing", "Saved to App Library"]
+    assert facts.warnings == [] and warning_events(run) == []
+    [item] = facts.items
+    [media_file] = facts.files
+    assert (item.media_type, item.format, item.codec) == ("audio", "flac", "flac")
+    assert (media_file.path, media_file.size_bytes) == (
+        record.final_path, published.stat().st_size)
+    assert not (run.staging / "job").exists()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("profile, formats, prepare, name, data, codec", [
+    # Explicit target: the converted MP3 is kept, never the pre-conversion source.
+    ("mp3", [fmt("a", AUDIO, audio="opus", bitrate=160.0)], "broken_mp3", "mp3",
+     BROKEN_MP3, "mp3"),
+    (None, FLAC_AUDIO, "broken_flac", "flac", b"fLaC", "flac"),
+])
+async def test_typed_tag_failure_publishes_intact_prepared_file_with_warning(
+    tmp_path: Path, profile: str | None, formats: list[NormalizedFormat], prepare: str,
+    name: str, data: bytes, codec: str,
+) -> None:
+    results: list[tuple[bool, tuple[int, int]]] = []
+    prepared: list[tuple[int, int]] = []
+
+    def capture(run: SingleRun, result: StagedEditResult | None) -> None:
+        assert result is not None
+        prepared.append(inode(result.path))
+
+    def setup(run: SingleRun) -> None:
+        if prepare == "broken_mp3":
+            run.media.convert_bytes = BROKEN_MP3
+        else:
+            flac_download(b"fLaC")(run)
+        spy_tagging([], capture, results)(run)
+
+    run, facts = await execute_run(
+        tmp_path, formats, "a", profile, prepare=setup, metadata=METADATA,
+    )
+    record = facts.record
+    assert (record.status, record.error_code, record.final_path) == (
+        "completed", None, f"audio/{TITLE}.{name}"), record.error_detail
+    published = run.library / "audio" / f"{TITLE}.{name}"
+    assert run.published_files() == [published]
+    assert published.read_bytes() == data
+    # The rechecked prepared inode itself is published, with its own size.
+    [(edited, identity)] = results
+    assert not edited and prepared == [identity] and inode(published) == identity
+    [media_file] = facts.files
+    assert media_file.size_bytes == len(data)
+    assert facts.messages[-2:] == ["Saved to App Library", _TAG_FALLBACK_SAVED]
+    [warning] = facts.warnings
+    assert (warning.message, warning.details_json) == (_TAG_FALLBACK_SAVED, None)
+    assert "Şarkı" not in _TAG_FALLBACK_SAVED and "/" not in _TAG_FALLBACK_SAVED
+    [item] = facts.items
+    assert (item.format, item.codec) == (name, codec)
+    # Published once, after commit, before the completion event.
+    assert warning_events(run) == [_TAG_FALLBACK_SAVED]
+    assert [event["event"] for event in run.bus.events][-2:] == [
+        "activity.created", "job.completed"]
+    assert run.bus.events[-2]["id"] == warning.id
+    assert not (run.staging / "job").exists()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("case", [
+    "no_tags", "blank_title", "video", "wav", "remux_fallback", "webm_vorbis",
+])
+async def test_ineligible_downloads_bypass_tagging_without_copy(
+    tmp_path: Path, case: str,
+) -> None:
+    calls: list[Path] = []
+    metadata: SourceMetadata | None = METADATA
+    source_title: str | None = None
+    profile: str | None = None
+    formats = FLAC_AUDIO
+    steps: list[Callable[[SingleRun], None]] = [spy_tagging(calls), flac_download()]
+    if case == "no_tags":
+        metadata = None
+    elif case == "blank_title":
+        metadata, source_title = None, "   "
+    elif case == "video":
+        formats = [fmt("a", MUXED, video="h264", audio="aac")]
+        steps = [spy_tagging(calls)]
+    elif case == "wav":
+        formats, profile = [fmt("a", AUDIO, audio="aac")], "wav"
+        steps = [spy_tagging(calls)]
+    elif case == "remux_fallback":
+        formats = OPUS_AUDIO
+        steps = [spy_tagging(calls), remux_fails(exit_status())]
+    else:
+        formats = [fmt("a", AUDIO, audio="vorbis")]
+
+        def webm(run: SingleRun) -> None:
+            run.media.download_ext = "webm"
+
+        steps = [spy_tagging(calls), webm]
+    run, facts = await execute_run(
+        tmp_path, formats, "a", profile, prepare=both(*steps),
+        source_title=source_title, metadata=metadata,
+    )
+    assert facts.record.status == "completed", facts.record.error_detail
+    assert calls == []
+    expected = [_REMUX_FALLBACK_SAVED] if case == "remux_fallback" else []
+    assert [warning.message for warning in facts.warnings] == expected
+    assert _TAG_FALLBACK_SAVED not in facts.messages
+    [published] = run.published_files()
+    if case in {"no_tags", "blank_title"}:
+        assert published.read_bytes() == tiny_flac()
+
+
+@pytest.mark.anyio
+async def test_unsupported_content_is_published_unchanged_and_silent(tmp_path: Path) -> None:
+    calls: list[Path] = []
+    foreign = b"OggS\x00\x02 not an m4a"
+
+    def m4a(run: SingleRun) -> None:
+        run.media.download_ext = "m4a"
+        run.media.download_bytes = foreign
+
+    run, facts = await execute_run(
+        tmp_path, [fmt("a", AUDIO, audio="aac")], "a", None,
+        prepare=both(spy_tagging(calls), m4a), metadata=METADATA,
+    )
+    assert (facts.record.status, facts.record.final_path) == (
+        "completed", f"audio/{TITLE}.m4a")
+    assert len(calls) == 1
+    assert (run.library / "audio" / f"{TITLE}.m4a").read_bytes() == foreign
+    assert facts.messages == ["Download started", "Finalizing", "Saved to App Library"]
+    assert facts.warnings == [] and warning_events(run) == []
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("error, code", [
+    (OSError(28, "No space left on device"), "disk_write_failed"),
+    (MediaFileTargetChangedError("copy"), "internal_error"),
+    (StoragePathError("escape"), "internal_error"),
+], ids=["oserror", "target_changed", "path"])
+async def test_tagging_storage_errors_fail_without_fallback(
+    tmp_path: Path, error: Exception, code: str,
+) -> None:
+    def prepare(run: SingleRun) -> None:
+        flac_download()(run)
+
+        async def broken(staging_key: str, source: Path, edit: Any) -> Never:
+            raise error
+
+        run.storage.stage_edited_copy = broken  # type: ignore[method-assign]
+
+    run, facts = await execute_run(tmp_path, FLAC_AUDIO, "a", None, prepare=prepare,
+                                   metadata=METADATA)
+    assert (facts.record.status, facts.record.error_code) == ("failed", code)
+    assert_nothing_published(run, facts)
+    assert "Finalizing" not in facts.messages
+    assert (run.staging / "job" / STAGED_FLAC).read_bytes() == tiny_flac()
+
+
+@pytest.mark.anyio
+async def test_copy_cleanup_error_is_not_an_optional_tag_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def refuse(dir_fd: int, name: str, identity: tuple[int, int]) -> None:
+        raise PermissionError(13, "cleanup denied")
+
+    monkeypatch.setattr(StorageService, "_remove_own_copy", staticmethod(refuse))
+    run, facts = await execute_run(
+        tmp_path, FLAC_AUDIO, "a", None, prepare=flac_download(b"fLaC"), metadata=METADATA,
+    )
+    assert (facts.record.status, facts.record.error_code) == ("failed", "disk_write_failed")
+    assert_nothing_published(run, facts)
+    assert _TAG_FALLBACK_SAVED not in facts.messages
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("data", [None, b"fLaC"], ids=["written", "tag_error"])
+async def test_user_cancel_during_tagging_publishes_nothing(
+    tmp_path: Path, data: bytes | None,
+) -> None:
+    calls: list[Path] = []
+
+    def cancel(run: SingleRun, result: StagedEditResult | None) -> None:
+        run.cancel.set()
+
+    run, facts = await execute_run(
+        tmp_path, FLAC_AUDIO, "a", None,
+        prepare=both(flac_download(data), spy_tagging(calls, cancel)), metadata=METADATA,
+    )
+    assert (facts.record.status, facts.record.error_code) == ("cancelled", "cancelled")
+    assert len(calls) == 1
+    assert_nothing_published(run, facts)
+    assert "Finalizing" not in facts.messages
+    assert _TAG_FALLBACK_SAVED not in facts.messages
+    # Only the intact prepared file stays for an explicit Retry; no copy is left.
+    assert staged_names(run) == [STAGED_FLAC]
+    assert (run.staging / "job" / STAGED_FLAC).read_bytes() == (data or tiny_flac())
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("data", [None, b"fLaC"], ids=["edited", "original"])
+async def test_repeated_task_cancellation_drains_tagging_then_propagates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, data: bytes | None,
+) -> None:
+    entered, release, finished = threading.Event(), threading.Event(), threading.Event()
+    real_editor = job_runner._text_tag_editor
+
+    def blocking_editor(suffix: str, tags: Any, failures: Any) -> Callable[[Any], bool]:
+        edit = real_editor(suffix, tags, failures)
+
+        def wrapped(handle: Any) -> bool:
+            entered.set()
+            release.wait(5)
+            try:
+                return edit(handle)
+            finally:
+                finished.set()
+
+        return wrapped
+
+    monkeypatch.setattr(job_runner, "_text_tag_editor", blocking_editor)
+    run = SingleRun(tmp_path)
+    try:
+        await run.seed(FLAC_AUDIO, "a", None, metadata=METADATA)
+        flac_download(data)(run)
+        task = asyncio.ensure_future(run.run())
+        while not entered.is_set():
+            await asyncio.sleep(0.01)
+        task.cancel()
+        await asyncio.sleep(0.02)
+        task.cancel()
+        await asyncio.sleep(0.02)
+        assert not task.done()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert finished.is_set()
+        facts = await run.facts()
+    finally:
+        release.set()
+        await run.engine.dispose()
+    assert (facts.record.status, facts.record.error_code) == ("failed", "interrupted_by_restart")
+    assert_nothing_published(run, facts)
+    assert _TAG_FALLBACK_SAVED not in facts.messages
+    assert staged_names(run) == [STAGED_FLAC]
+    assert (run.staging / "job" / STAGED_FLAC).read_bytes() == (data or tiny_flac())
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("data, edited", [
+    (None, True),  # tagged copy replaced
+    (b"OggS\x00\x02 not flac", False),  # unsupported: the original replaced
+    (b"fLaC", False),  # typed fallback: the original replaced
+], ids=["edited_copy", "unsupported", "tag_error"])
+async def test_selection_swapped_before_placement_fails_closed(
+    tmp_path: Path, data: bytes | None, edited: bool,
+) -> None:
+    swapped: list[tuple[Path, tuple[int, int]]] = []
+
+    def swap(run: SingleRun, result: StagedEditResult | None) -> None:
+        assert result is not None and result.edited is edited
+        result.path.unlink()
+        result.path.write_bytes(b"impostor")
+        # The selected inode is still pinned: the replacement gets another one.
+        assert inode(result.path) != result.identity
+        swapped.append((result.path, result.identity))
+
+    run, facts = await execute_run(
+        tmp_path, FLAC_AUDIO, "a", None,
+        prepare=both(flac_download(data), spy_tagging([], swap)), metadata=METADATA,
+    )
+    assert_failed_unpublished(run, facts, "internal_error")
+    [(impostor, _)] = swapped
+    assert impostor.read_bytes() == b"impostor"  # unowned: neither published nor unlinked
+    if edited:
+        assert (run.staging / "job" / STAGED_FLAC).read_bytes() == tiny_flac()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("data", [None, b"fLaC"], ids=["written", "tag_error"])
+async def test_source_swapped_during_tagging_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, data: bytes | None,
+) -> None:
+    real_editor = job_runner._text_tag_editor
+    holder: list[SingleRun] = []
+
+    def swapping_editor(suffix: str, tags: Any, failures: Any) -> Callable[[Any], bool]:
+        edit = real_editor(suffix, tags, failures)
+
+        def wrapped(handle: Any) -> bool:
+            staged = holder[0].staging / "job" / STAGED_FLAC
+            staged.unlink()
+            staged.write_bytes(b"impostor")
+            return edit(handle)
+
+        return wrapped
+
+    monkeypatch.setattr(job_runner, "_text_tag_editor", swapping_editor)
+    run, facts = await execute_run(
+        tmp_path, FLAC_AUDIO, "a", None,
+        prepare=both(flac_download(data), holder.append), metadata=METADATA,
+    )
+    assert_failed_unpublished(run, facts, "internal_error")
+    assert staged_names(run) == [STAGED_FLAC]  # own copy removed
+    assert (run.staging / "job" / STAGED_FLAC).read_bytes() == b"impostor"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("failure", ["verification", "commit", "placement", "lost_claim"])
+async def test_tag_fallback_warning_requires_committed_completion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str,
+) -> None:
+    stage_catalog = job_runner.stage_media_catalog_reference
+    stage_update = job_repo.stage_job_update_if_status
+
+    async def missing(*args: Any, **kwargs: Any) -> None:
+        raise MediaFileMissingError("gone")
+
+    async def stage_then_break_commit(session: Any, *args: Any, **kwargs: Any) -> None:
+        await stage_catalog(session, *args, **kwargs)
+
+        async def broken_commit() -> None:
+            raise RuntimeError("commit failed")
+
+        monkeypatch.setattr(session, "commit", broken_commit)
+
+    async def lost(session: Any, job_id: str, statuses: Any, values: dict[str, Any]) -> bool:
+        if values.get("status") == "completed":
+            return False
+        return await stage_update(session, job_id, statuses, values)
+
+    async def broken_place(*args: Any, **kwargs: Any) -> None:
+        raise OSError(28, "No space left on device")
+
+    def prepare(run: SingleRun) -> None:
+        flac_download(b"fLaC")(run)
+        if failure == "placement":
+            monkeypatch.setattr(run.storage, "place_final", broken_place)
+
+    if failure == "verification":
+        monkeypatch.setattr(job_runner, "stage_media_catalog_reference", missing)
+    elif failure == "commit":
+        monkeypatch.setattr(job_runner, "stage_media_catalog_reference", stage_then_break_commit)
+    elif failure == "lost_claim":
+        monkeypatch.setattr(job_repo, "stage_job_update_if_status", lost)
+    run, facts = await execute_run(
+        tmp_path, FLAC_AUDIO, "a", None, prepare=prepare, metadata=METADATA,
+    )
+    expected = {
+        "verification": ("failed", "internal_error"),
+        "commit": ("failed", "internal_error"),
+        "placement": ("failed", "disk_write_failed"),
+        "lost_claim": ("finalizing", None),
+    }[failure]
+    assert (facts.record.status, facts.record.error_code) == expected
+    assert (facts.items, facts.files, facts.warnings) == ([], [], [])
+    assert warning_events(run) == []
+    assert _TAG_FALLBACK_SAVED not in facts.messages
+    assert "job.completed" not in [event["event"] for event in run.bus.events]
 
 
 # --- plan validation before any media I/O -----------------------------------------

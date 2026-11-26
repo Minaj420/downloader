@@ -14,13 +14,13 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - Q3b-2 ve 3c Already exists v0.1 sonrası; güvenli numara ve çözünürlük eki kalır. Aday ve açık review bulguları `wip/already-exists` dalında.
 - M6-Q20 kapandı: Compose seçici/Ses PASS, Shorts 4/4, 1080×1920 doğrulandı; tavan dışı yedek otomatik PASS, uygun canlı kaynak yok, kullanıcı kapanışı onayladı. Katalog eşleşmesi (§16) gerekirse önce koleksiyonlarda.
 - M6-Q3 parkta (ARCHITECTURE §59 önceliği bayat); WIP dalı merge edilmez, staging silme/API yok.
-- M6.5-T2 yazıcı ve codec istisnası doğrulandı: Fedora 26 Kasım 265 test/Ruff/mypy PASS, review temiz. Compose bağımlılık/açılış smoke'u bekliyor; ardından T3 tekil indirme.
+- M6.5-T2 Fedora Compose PASS (healthy, Mutagen 1.48.1). T3 tekil ses etiketleri: Fedora 27 Kasım 791 test/Ruff/mypy PASS, review temiz; Compose smoke bekliyor, ardından koleksiyon.
 - Accepted (M6.5-T2): düşen/yinelenen TXXX değişmeden reddedilebilir (ID3v2.4 dahil). Should-fix: seek hata ayrıntısı ve ses-önce çoklanmış Ogg testi.
 - Bekleyen toplu UI Compose smoke: Queue'da active/history; gezinme/F5 sonrası sunucudan iş erişimi.
 - Smoke: uygun Cancel/Retry, çift tık/pending; geçmiş iş detay/Activity, collection öğeleri; Load more ve yeniden bağlantıda güncellik.
 - Smoke: Private video içeren playlist; satır devre dışı, Select All ve sayaç dışında.
 - Kullanıcı Compose PASS: Q2 Retry kaldığı yerden tamamlandı (22 Kasım); Q3-ACT eski Activity/Library, canlı Activity ve F5 sonrası geçmiş korundu (23 Kasım).
-- M6.4/5 kapanışı yok; full gate ve kullanıcı Compose smoke'u gerekir. T2 yazıcı indirme akışına bağlı değil.
+- M6.4/5 kapanışı yok; full gate ve kullanıcı Compose smoke'u gerekir. Etiketleme şimdilik yalnız tekil ses indirmelerinde.
 ## Açık kararlar
 - M6.6 güvenilir albüm grubu/ön hazırlık ve çoklu album_artists klasör değeri; M6.7 cover.jpg seçimi açık.
 - M6.9 yalnız seçim ekranından kullanıcı isterse; MB/CAA aday, hak/API/embed koşulları o işte netleşecek.
@@ -62,7 +62,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - Accepted: Original remux EXIT_STATUS içindeki disk/izin hatası genel uyarıda kalabilir (PRODUCT_SPEC §14).
 - Accepted: commit anında iptal canlı child uyarısını kaçırabilir; commit edilmiş
   uyarı DB'de kalır; Activity sorgusu veya uygun cursorla replay'den erişilir.
-- Accepted: private tek yazıcılı staging lstat/FFmpeg açılışı mikro yarışı sürer;
+- Accepted: private staging lstat/FFmpeg açılışı, stat/unlink ve inode'a yerinde yazma sınırı sürer;
   eski token'lı çıktılar cleanup'a kadar disk kullanır. Mutlak race koruması değil.
 - Accepted: kill sonrası 5 sn reap + en fazla 1 sn waiter drain; D-state garantisi yok,
   ek iptaller özgün kesintiyi değiştirmez; process-group kapsam dışı.

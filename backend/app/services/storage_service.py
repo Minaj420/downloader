@@ -33,7 +33,7 @@ from collections.abc import Callable, Sequence
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 from app.domain.library import MediaStorageType
 from app.utils.filenames import (
@@ -222,6 +222,51 @@ class PreparedMediaFile:
         except OSError as exc:
             raise StorageDeleteFailedError(str(exc)) from exc
         return self.resolved_path
+
+
+@dataclass(slots=True)
+class StagedEditResult:
+    """The staged file chosen for placement after an edit (PRODUCT_SPEC §14).
+
+    ``edited`` is ``True`` for the verified edited copy (same staging
+    directory and suffix as its source) and ``False`` for the rechecked
+    original source when the editor kept nothing. ``_pin`` holds that inode
+    and its staging directory open until ``discard``/``close``, so the inode
+    cannot be freed and its number reused while ``place_final(
+    source_identity=identity)`` binds a fresh walk from the staging root to it.
+
+    ``discard`` never raises and always closes. Only an edited copy is
+    unlinked, under the held directory and only while the name still holds the
+    pinned inode (a no-op once placement moved it); the original source and
+    any unowned replacement are never unlinked. ``close`` is idempotent.
+    """
+
+    path: Path
+    edited: bool
+    _pin: PreparedMediaFile
+
+    @property
+    def identity(self) -> tuple[int, int]:
+        return self._pin.identity
+
+    def close(self) -> None:
+        self._pin.close()
+
+    def discard(self) -> None:
+        pin = self._pin
+        try:
+            if self.edited and not pin._closed:
+                entry = os.stat(
+                    pin.final_name, dir_fd=pin._parent_fd, follow_symlinks=False
+                )
+                if stat.S_ISREG(entry.st_mode) and (
+                    entry.st_dev, entry.st_ino
+                ) == pin.identity:
+                    os.unlink(pin.final_name, dir_fd=pin._parent_fd)
+        except OSError:
+            pass
+        finally:
+            pin.close()
 
 
 @dataclass(slots=True)
@@ -424,6 +469,7 @@ class StorageService:
         publish_guard: AbstractContextManager[Any] | None = None,
         video_short_edge: int | None = None,
         staging_key: str | None = None,
+        source_identity: tuple[int, int] | None = None,
     ) -> PlacementResult:
         """Move finalized media off the event loop without overwriting a target.
 
@@ -433,6 +479,14 @@ class StorageService:
         every publish attempt and before its unlink. The job runner always
         passes it. ``None`` only pins the given leaf (no ownership check) for
         legacy direct callers; production code must not rely on it.
+
+        ``source_identity`` (requires ``staging_key``) binds the pin to an
+        already verified inode, e.g. ``StagedEditResult.identity``: the fresh
+        walk re-checks every parent from the staging root, and a different
+        inode at the source name fails closed with
+        ``MediaFileTargetChangedError`` before anything is published or
+        unlinked. The caller must keep that inode pinned open until this
+        returns, so its number cannot be reused by a replacement.
 
         ``video_short_edge`` (video only) is the measured short edge of the
         staged file; it names the output ``Title (720p).ext``. ``None``
@@ -446,6 +500,8 @@ class StorageService:
         """
         if staging_key is not None:
             staging_key = self._validated_job_id(staging_key)
+        elif source_identity is not None:
+            raise ValueError("source_identity requires staging_key")
         self._validate_video_short_edge(video_short_edge, media_kind)
         extension = source.suffix.lstrip(".") or "bin"
         names = self._candidate_names(
@@ -460,6 +516,7 @@ class StorageService:
                 names,
                 cancel_requested or (lambda: False),
                 publish_guard,
+                source_identity,
             )
         )
         # Once finalization starts, let its atomic publish finish so callers can
@@ -612,6 +669,156 @@ class StorageService:
             return False
         prepared.close()
         return True
+
+    async def stage_edited_copy(
+        self, staging_key: str, source: Path, edit: Callable[[BinaryIO], bool],
+    ) -> StagedEditResult:
+        """Copy a staged file and let ``edit`` change only the copy (§14).
+
+        ``source`` must be a regular file in ``staging_key``'s own staging,
+        pinned with the child-placement no-follow walk. The copy is created
+        ``O_CREAT | O_EXCL | O_NOFOLLOW`` under the pinned source directory
+        with the same suffix and filled from the pinned descriptor: a genuine
+        copy, never a hard link, so the source bytes are never mutated.
+        ``edit`` gets the copy as a seekable ``r+b`` handle it must not close
+        and returns ``True`` when the copy changed and should be kept. Any
+        exception it raises is a genuine failure; storage interprets nothing.
+
+        Afterwards, on both outcomes, the source entry must still be the pinned
+        inode and the copy name still the created one; detectable swaps fail
+        closed. On ``False`` or any error the copy is removed under the held
+        directory, only while it still holds the created (still pinned) inode
+        (an unowned entry is never unlinked; that raises
+        ``MediaFileTargetChangedError``). A removal error replaces the original
+        error, so it is never reported as an edit outcome.
+
+        The result keeps the chosen inode pinned: the edited copy on ``True``,
+        the rechecked original source on ``False``. The caller passes
+        ``result.path``/``result.identity`` to ``place_final`` and calls
+        ``discard`` once placement and cleanup are finished. Every descriptor
+        not transferred to the result is closed on every exit.
+
+        The blocking worker owns all descriptors and the copy. Repeated waiter
+        cancellation waits for it to finish, discards whichever result emerged
+        and then re-raises ``CancelledError``. Pinned inodes may still be
+        modified in place by a concurrent writer; this is not a guarantee
+        against arbitrary filesystem mutation.
+        """
+        staging_key = self._validated_job_id(staging_key)
+        operation = asyncio.ensure_future(asyncio.to_thread(
+            self._stage_edited_copy_sync, staging_key, source, edit,
+        ))
+        cancelled = False
+        while not operation.done():
+            try:
+                # ``wait`` never cancels the worker task itself.
+                await asyncio.wait((operation,))
+            except asyncio.CancelledError:
+                cancelled = True
+        if cancelled:
+            if operation.exception() is None:
+                operation.result().discard()
+            raise asyncio.CancelledError
+        return operation.result()
+
+    def _stage_edited_copy_sync(
+        self, key: str, source_path: Path, edit: Callable[[BinaryIO], bool],
+    ) -> StagedEditResult:
+        source = self._prepare_child_output(key, source_path)
+        transferred = False
+        try:
+            copy = self._edit_pinned_copy(source, edit)
+            if copy is not None:
+                return StagedEditResult(copy.resolved_path, True, copy)
+            # Nothing kept: the rechecked original stays pinned for placement.
+            transferred = True
+            return StagedEditResult(source.resolved_path, False, source)
+        finally:
+            if not transferred:
+                source.close()
+
+    def _edit_pinned_copy(
+        self, source: PreparedMediaFile, edit: Callable[[BinaryIO], bool],
+    ) -> PreparedMediaFile | None:
+        """The verified edited copy, pinned; ``None`` when nothing was kept."""
+        parent_fd = os.dup(source._parent_fd)
+        pin_fd: int | None = None
+        owned = True
+        try:
+            suffix = source.resolved_path.suffix
+            for _ in range(16):
+                name = f".edit-{secrets.token_hex(8)}{suffix}"
+                try:
+                    fd = os.open(
+                        name,
+                        os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+                        0o600, dir_fd=parent_fd,
+                    )
+                except FileExistsError:
+                    continue
+                break
+            else:
+                raise FileExistsError(errno.EEXIST, "no free temporary name")
+            try:
+                # A second descriptor keeps the copy's inode alive (no number
+                # reuse) through every identity check, placement and discard.
+                pin_fd = os.dup(fd)
+                created = os.fstat(pin_fd)
+            except BaseException:
+                # Unverifiable ownership: the name is left, never unlinked.
+                os.close(fd)
+                raise
+            identity = (created.st_dev, created.st_ino)
+            try:
+                # fdopen owns the descriptor even when copying fails.
+                with os.fdopen(fd, "r+b") as handle:
+                    pinned = os.fstat(source._pinned_fd)
+                    with os.fdopen(os.dup(source._pinned_fd), "rb") as original:
+                        original.seek(0)
+                        shutil.copyfileobj(original, handle)
+                    handle.flush()
+                    if os.fstat(handle.fileno()).st_size != pinned.st_size:
+                        raise OSError(errno.EIO, "edit copy size mismatch")
+                    os.fchmod(handle.fileno(), stat.S_IMODE(pinned.st_mode))
+                    handle.seek(0)
+                    keep = edit(handle)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                # Detectable swaps of the source or the copy fail closed.
+                self._check_child_entry(source)
+                if self._entry_identity(name, parent_fd) != identity:
+                    raise MediaFileTargetChangedError(name)
+            except BaseException:
+                self._remove_own_copy(parent_fd, name, identity)
+                raise
+            if not keep:
+                self._remove_own_copy(parent_fd, name, identity)
+                return None
+            assert pin_fd is not None
+            copy = PreparedMediaFile(
+                parent_fd, pin_fd, name, source.resolved_path.parent / name, identity
+            )
+            owned = False  # both descriptors transferred to the pinned copy
+            return copy
+        finally:
+            if owned:
+                for held in (pin_fd, parent_fd):
+                    if held is not None:
+                        try:
+                            os.close(held)
+                        except OSError:
+                            pass
+
+    @staticmethod
+    def _remove_own_copy(dir_fd: int, name: str, identity: tuple[int, int]) -> None:
+        """Unlink ``name`` only while it still holds ``identity``; errors raise."""
+        try:
+            entry = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return
+        if not stat.S_ISREG(entry.st_mode) or (entry.st_dev, entry.st_ino) != identity:
+            raise MediaFileTargetChangedError(name)
+        os.unlink(name, dir_fd=dir_fd)
 
     @staticmethod
     def _check_child_entry(source: PreparedMediaFile) -> None:
@@ -953,12 +1160,16 @@ class StorageService:
         names: Sequence[str],
         cancel_requested: Callable[[], bool],
         publish_guard: AbstractContextManager[Any] | None = None,
+        source_identity: tuple[int, int] | None = None,
     ) -> PlacementResult:
         source = (
             self._pin_unowned_source(source_path) if staging_key is None
             else self._prepare_child_output(staging_key, source_path)
         )
         try:
+            if source_identity is not None and source.identity != source_identity:
+                # Handoff check: the verified copy must be the inode published.
+                raise MediaFileTargetChangedError(str(source_path))
             # Same filesystem: link the verified source inode; EXDEV: one copy
             # from the pinned descriptor.
             return self._publish_pinned(

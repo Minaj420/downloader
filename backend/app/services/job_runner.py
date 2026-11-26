@@ -19,7 +19,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, BinaryIO
 from uuid import uuid4
 
 from sqlalchemy import select
@@ -39,6 +39,12 @@ from app.integrations.ffmpeg import (
     FFmpegFailureKind,
     FFmpegProcessor,
     VideoDimensions,
+)
+from app.integrations.mutagen_tags import (
+    TAGGABLE_SUFFIXES,
+    TagError,
+    TagOutcome,
+    write_text_tags,
 )
 from app.integrations.ytdlp import (
     DownloadProgress,
@@ -66,11 +72,13 @@ from app.services.storage_service import (
     MediaFileTargetChangedError,
     PlacementCancelled,
     PlacementResult,
+    StagedEditResult,
     StorageDeleteFailedError,
     StoragePathError,
     StorageService,
     StorageTargetError,
 )
+from app.services.text_tags import TextTags, intended_text_tags
 from app.utils.processes import ensure_process_terminated
 
 logger = logging.getLogger(__name__)
@@ -101,6 +109,11 @@ _REMUX_UNCERTAINTY = (
 )
 _REMUX_FALLBACK_SAVED = (
     "Opus packaging failed — saved the original WebM file. " + _REMUX_UNCERTAINTY
+)
+
+# Fixed text only: never the tag error detail, paths or tag values (§14).
+_TAG_FALLBACK_SAVED = (
+    "Music tags could not be written — saved the file without the new tags."
 )
 
 _DETAIL_LIMIT = 4_000
@@ -210,6 +223,26 @@ def build_app_library_catalog(
         created_at=now,
     )
     return item, media_file
+
+
+def _text_tag_editor(
+    suffix: str, tags: TextTags, failures: list[TagError],
+) -> Callable[[BinaryIO], bool]:
+    """Storage edit callback: keep the copy only when tags were written.
+
+    Only a typed ``TagError`` is captured (into ``failures``) and reported as
+    "nothing kept", so storage still rechecks and pins the original. Genuine
+    I/O and every other error propagate unchanged.
+    """
+
+    def edit(candidate: BinaryIO) -> bool:
+        try:
+            return write_text_tags(candidate, suffix=suffix, tags=tags) is TagOutcome.WRITTEN
+        except TagError as exc:
+            failures.append(exc)
+            return False
+
+    return edit
 
 
 def _post_processing_message(merging: bool, output: ConversionProfile | None) -> str:
@@ -398,25 +431,61 @@ class _JobExecution:
                 on_process_started=self._register_process,
             )
 
-        await self._check_cancelled()
-        await self._set_status(JobStatus.FINALIZING, "Finalizing")
-        media_kind = "audio" if selected.kind == "audio_only" else "video"
-        placement = await self._deps.storage.place_final(
-            media_file,
-            media_kind=media_kind,
-            title=record.title,
-            cancel_requested=self._cancel_event.is_set,
-            publish_guard=self._cancel_gate,
-            # The filename carries the same measured short edge as the catalog.
-            video_short_edge=None if dimensions is None else dimensions.short_edge,
-            # Ownership: the source must stay this job's own staged file.
-            staging_key=self._job_id,
-        )
+        # M6.5 text tags (single audio only): a storage-owned staged copy is
+        # edited and verified; the prepared file itself is never touched.
+        # ``selection`` pins the chosen inode (tagged copy or the rechecked
+        # prepared file) until placement and cleanup are finished.
+        selection: StagedEditResult | None = None
+        tag_fallback = False
+        tags = intended_text_tags(normalized.source_metadata, source_title=normalized.title)
+        if (
+            selected.kind == "audio_only"
+            and not remux_fallback
+            and tags is not None
+            and media_file.suffix.lower() in TAGGABLE_SUFFIXES
+        ):
+            await self._check_cancelled()
+            failures: list[TagError] = []
+            selection = await self._deps.storage.stage_edited_copy(
+                self._job_id, media_file,
+                _text_tag_editor(media_file.suffix, tags, failures),
+            )
+            if failures:
+                # Only a typed tag failure is optional: the intact prepared
+                # output is published instead. Details stay in the private log.
+                logger.warning(
+                    "text tagging failed: job_id=%s kind=%s detail=%s",
+                    self._job_id, failures[0].kind.value, failures[0].detail,
+                )
+                tag_fallback = True
+
+        try:
+            await self._check_cancelled()
+            await self._set_status(JobStatus.FINALIZING, "Finalizing")
+            media_kind = "audio" if selected.kind == "audio_only" else "video"
+            placement = await self._deps.storage.place_final(
+                media_file if selection is None else selection.path,
+                media_kind=media_kind,
+                title=record.title,
+                cancel_requested=self._cancel_event.is_set,
+                publish_guard=self._cancel_gate,
+                # The filename carries the same measured short edge as the catalog.
+                video_short_edge=None if dimensions is None else dimensions.short_edge,
+                # Ownership: the source must stay this job's own staged file.
+                staging_key=self._job_id,
+                # The verified, still pinned inode must be the one published.
+                source_identity=None if selection is None else selection.identity,
+            )
+        finally:
+            if selection is not None:
+                # Closes the pin; only an unpublished own copy is unlinked.
+                selection.discard()
         await self._activity("Saved to App Library")
 
         await self._complete(
             record, normalized, selected, placement, plan,
-            remux_fallback=remux_fallback, dimensions=dimensions,
+            remux_fallback=remux_fallback, tag_fallback=tag_fallback,
+            dimensions=dimensions,
         )
         self._deps.storage.remove_staging(self._job_id)
 
@@ -496,6 +565,7 @@ class _JobExecution:
         plan: ConversionPlan | None = None,
         *,
         remux_fallback: bool = False,
+        tag_fallback: bool = False,
         dimensions: VideoDimensions | None = None,
     ) -> None:
         """Complete the job and write its Library catalog rows atomically.
@@ -514,7 +584,8 @@ class _JobExecution:
 
         ``remux_fallback`` adds the Original remux warning Activity inside the
         same transaction, after the catalog re-verification succeeded; it is
-        published only once the completion has committed.
+        published only once the completion has committed. ``tag_fallback``
+        adds the fixed text-tag warning the same way.
         """
         item, media_file = build_app_library_catalog(
             record, normalized, selected, placement, plan, dimensions
@@ -561,17 +632,21 @@ class _JobExecution:
                         f"before catalog commit: {exc!r}"
                     ),
                 ) from exc
-            warning = None
-            if remux_fallback:
-                warning = await activity.add_activity_event(
-                    session,
-                    job_id=self._job_id,
-                    level="warning",
-                    event_type="job",
-                    message=_REMUX_FALLBACK_SAVED,
-                )
+            warnings: list[ActivityEvent] = []
+            for enabled, message in (
+                (remux_fallback, _REMUX_FALLBACK_SAVED),
+                (tag_fallback, _TAG_FALLBACK_SAVED),
+            ):
+                if enabled:
+                    warnings.append(await activity.add_activity_event(
+                        session,
+                        job_id=self._job_id,
+                        level="warning",
+                        event_type="job",
+                        message=message,
+                    ))
             await session.commit()
-        if warning is not None:
+        for warning in warnings:
             self._publish_activity(warning)
         await self._publish_job_event("job.completed")
 

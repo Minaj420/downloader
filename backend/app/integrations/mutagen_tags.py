@@ -9,7 +9,8 @@ not be published.
 Only supplied fields are updated. Absent managed fields, unrelated metadata,
 artwork and already known track/disc totals stay; totals are never derived.
 
-Not wired into any runner yet.
+Wired only for single audio downloads (job runner, on a storage-owned staged
+copy); collection children are not tagged yet.
 """
 
 from __future__ import annotations
@@ -170,6 +171,8 @@ def _translated(handle: _Handle, kind: TagErrorKind) -> Iterator[None]:
 _FAMILY_BY_SUFFIX = {
     ".mp3": "mpeg", ".m4a": "mp4", ".flac": "flac", ".opus": "ogg", ".ogg": "ogg",
 }
+# Lowercase suffixes worth a candidate copy; any other suffix is UNSUPPORTED.
+TAGGABLE_SUFFIXES = frozenset(_FAMILY_BY_SUFFIX)
 _FOREIGN_MAGIC = (
     b"RIFF", b"RF64", b"FORM", b"FLV", b"\x1aE\xdf\xa3", b"\x30\x26\xb2\x75",
 )
