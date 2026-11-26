@@ -332,6 +332,8 @@ M6 decision (approved; planned, not implemented, except the WebM-contained Opus 
 
 Explicit conversion failure (approved; planned, not implemented): when the user explicitly selected a conversion output and that target cannot be produced, the job (or collection child) fails. The application never silently publishes or completes with the original in a different format. This is separate from the optional tag/artwork and `Original` remux fallback in §14.
 
+Single audio source selector (approved; deferred, not implemented): when Audio is selected for a single download, the UI shows a separate, compact source selector that is collapsed by default. Its default is `Best Available`, meaning the most preferred usable audio-only stream in yt-dlp's source ordering — not the first row shown on screen and not a cross-codec bitrate comparison. While collapsed it shows the selected codec and, when known, the approximate bitrate; when expanded it shows the available source options, and the user can change the source manually and return to automatic selection. The output format choice remains separate. Collection (playlist/album) behaviour is unchanged.
+
 ---
 
 # 9. Video Downloads
