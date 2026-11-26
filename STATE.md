@@ -14,7 +14,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - Q3b-2 ve 3c Already exists v0.1 sonrası; güvenli numara ve çözünürlük eki kalır. Aday ve açık review bulguları `wip/already-exists` dalında.
 - M6-Q20 kapandı: Compose seçici/Ses PASS, Shorts 4/4, 1080×1920 doğrulandı; tavan dışı yedek otomatik PASS, uygun canlı kaynak yok, kullanıcı kapanışı onayladı. Katalog eşleşmesi (§16) gerekirse önce koleksiyonlarda.
 - M6-Q3 parkta (ARCHITECTURE §59 önceliği bayat); WIP dalı merge edilmez, staging silme/API yok.
-- M6.5-T2 Fedora Compose PASS (healthy, Mutagen 1.48.1). T3 tekil ses etiketleri: Fedora 27 Kasım 791 test/Ruff/mypy PASS, review temiz; Compose smoke bekliyor, ardından koleksiyon.
+- M6.5-T2 Fedora Compose PASS (healthy, Mutagen 1.48.1). T3 kapandı: Fedora 27 Kasım 791 test/Ruff/mypy PASS, review temiz; kullanıcı Compose MP3 oynatma/başlık/sanatçı ve WAV uyarısız tamamlanma PASS. Sırada koleksiyon.
 - Accepted (M6.5-T2): düşen/yinelenen TXXX değişmeden reddedilebilir (ID3v2.4 dahil). Should-fix: seek hata ayrıntısı ve ses-önce çoklanmış Ogg testi.
 - Bekleyen toplu UI Compose smoke: Queue'da active/history; gezinme/F5 sonrası sunucudan iş erişimi.
 - Smoke: uygun Cancel/Retry, çift tık/pending; geçmiş iş detay/Activity, collection öğeleri; Load more ve yeniden bağlantıda güncellik.
