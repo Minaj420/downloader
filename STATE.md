@@ -19,7 +19,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - Accepted (M6.5-T2): düşen/yinelenen TXXX değişmeden reddedilebilir (ID3v2.4 dahil). Should-fix: seek hata ayrıntısı ve ses-önce çoklanmış Ogg testi.
 - Toplu UI Compose smoke: Queue gezinme/F5, History satır içi tek detay, koleksiyon/Activity, Load more ve yeniden bağlantıda açık Activity'nin korunması.
 - Smoke (M6.5-UI-Retry): Details ve History'de uygun Retry, ortak pending/çift tık, hatanın başlatıldığı yerde görünmesi ve başarıda Active'e geçiş; uygun Cancel.
-- Smoke: Private video içeren playlist; satır devre dışı, Select All ve sayaç dışında.
+- Smoke: Private playlist öğesi devre dışı, Select All ve sayaç dışında; restart/ağ hatalı çocukta Queue detayında ve New Download'da yalnız kullanıcı mesajı.
 - Kullanıcı Compose PASS: Q2 Retry kaldığı yerden tamamlandı (22 Kasım); Q3-ACT eski Activity/Library, canlı Activity ve F5 sonrası geçmiş korundu (23 Kasım).
 ## Açık kararlar
 - M6.6 güvenilir albüm grubu/ön hazırlık ve çoklu album_artists klasör değeri; M6.7 cover.jpg seçimi açık.
@@ -34,8 +34,8 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
   single başarılı convert+iptal ek testi eksik. Üretim hatası bulunmadı.
 - Audit (ARCH §59): Settings → S1/M7; son seçim localStorage v0.1. Library detay (M9-L): başlığa tıklanabilirlik belirsiz, detay sayfa sonunda; popup/satır içi genişleme kararı açık.
 - New Download adı v0.1'de kalır; K2 v0.2. M6.5-UI-History should-fix: yeniden bağlantıda taşınan panel içindeki klavye odağı kaybolabilir.
-- Smoke (M6.5-UI-Quality): tekil 1080×1920 → `Up to 1080p`, `Best Available` varsayılanı, seçili kaynak ölçüsü ve ayrı çıktı biçimi. Sırada M6.5 UI: Media Preview/hata metinleri.
-- network_error/Deno bağı kanıtsız. Analiz +25/hepsi v0.2.
+- Smoke (M6.5-UI-Quality): tekil 1080×1920 → `Up to 1080p`, `Best Available` varsayılanı, seçili kaynak ölçüsü ve ayrı çıktı biçimi. Sırada M6.5 UI: Media Preview.
+- network_error/Deno bağı kanıtsız. Analiz +25/hepsi v0.2. Should-fix M6.5-UI-Errors: Queue detayında çocuk hata metni için doğrudan test.
 - Fedora Python 3.14: child storage pidfd testi düzeltme diff'inde geçti; full gate çalışmadı.
 - should-fix: child Skip Existing Activity uyarısı yok; ayrı lifecycle/transaction işi. Queue satırsız kayıp Retry yanıtı + polling testi açık.
 - should-fix: modelsiz implement resume CLI hatasının belgelenmesi ve izleyici partial-line

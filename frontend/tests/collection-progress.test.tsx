@@ -139,7 +139,8 @@ describe("collection progress and parent controls", () => {
     expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", String(100 * count / total));
     expect(screen.queryByText("100%")).not.toBeInTheDocument();
     expect(screen.getByText("Parent reason")).toBeInTheDocument();
-    expect(within(region()).getByText("download_failed: Reason b")).toBeInTheDocument();
+    expect(within(region()).getByText("Reason b")).toBeInTheDocument();
+    expect(within(region()).queryByText(/download_failed/)).not.toBeInTheDocument();
     expect(within(region()).getAllByRole("listitem")[0]).toHaveTextContent(kind === "all failed" ? "failed" : "completed");
     expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
   });
@@ -179,8 +180,24 @@ describe("collection progress and parent controls", () => {
     act(() => Stream.current.emit(terminal));
     expect(reads(fetch)).toHaveLength(2);
     await act(async () => final.resolve(json({ ...terminal, items: [item("a", 0, "completed"), item("b", 4, "completed"), item("c", 9, "failed")] })));
-    expect(within(region()).getByText("download_failed: Reason c")).toBeInTheDocument();
+    expect(within(region()).getByText("Reason c")).toBeInTheDocument();
+    expect(within(region()).queryByText(/download_failed/)).not.toBeInTheDocument();
     expect(within(region()).queryByText(/not current/)).not.toBeInTheDocument();
+  });
+
+  it.each([
+    { code: "interrupted_by_restart", message: "Download was interrupted by a restart." },
+    { code: "network_error", message: "Network problem while downloading." },
+  ])("shows only the public message for child error $code", async ({ code, message }) => {
+    const failed = { ...item("b", 4, "failed"), error: { code, message, retryable: true } };
+    harness({ create: () => ({ ...failure(), items: [item("a", 0, "completed"), failed, item("c", 9, "failed")] }) });
+    await start();
+    const row = within(region()).getAllByRole("listitem")[1];
+    expect(within(row).getByText(message)).toBeInTheDocument();
+    expect(row).toHaveTextContent("Source order: 4 — Result b");
+    expect(row).toHaveTextContent("failed — 100%");
+    expect(region()).not.toHaveTextContent(code);
+    expect(screen.getByText("Parent reason")).toBeInTheDocument();
   });
 
   it("coalesces SSE bursts and rejects old REST parent and child facts", async () => {

@@ -21,7 +21,7 @@ export function CollectionProgress({ job, loadStatus }: {
           <li className="activity-item" key={item.id}>
             <span>Source order: {item.source_order} — {item.title ?? "Untitled"}</span>{" "}
             <span>{item.status} — {item.progress.percent}%</span>
-            {item.error && <p className="job-error">{item.error.code}: {item.error.message}</p>}
+            {item.error && <p className="job-error">{item.error.message}</p>}
           </li>
         ))}
       </ol>
