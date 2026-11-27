@@ -23,6 +23,7 @@ import {
   decideSnapshot,
   EMPTY_QUEUE_LISTS,
   findJob,
+  newestSnapshot,
   removeJob,
   snapshotTime,
   type QueueLists,
@@ -34,6 +35,8 @@ type ReconcileKind = "merge" | "reset";
 export type QueueAction = "cancel" | "retry";
 export type QueueListStatus = "loading" | "ready" | "error";
 export type LoadMoreStatus = "idle" | "loading" | "error";
+/** Where a Retry error is shown; Cancel errors have no entry (row only). */
+export type ErrorSurface = "row" | "detail";
 
 /** The single open on-demand detail, keyed by job ID (not list membership). */
 export interface QueueDetail {
@@ -52,6 +55,8 @@ export interface QueueView {
   sseOpen: boolean;
   pending: Readonly<Record<string, QueueAction>>;
   errors: Readonly<Record<string, string>>;
+  /** Transient UI placement of a Retry error (one surface at a time). */
+  errorSurfaces: Readonly<Record<string, ErrorSurface>>;
   detail: QueueDetail | null;
 }
 
@@ -63,6 +68,7 @@ export const INITIAL_QUEUE_VIEW: QueueView = {
   sseOpen: false,
   pending: {},
   errors: {},
+  errorSurfaces: {},
   detail: null,
 };
 
@@ -153,10 +159,32 @@ export class QueueController {
   }
 
   private emit(patch: Partial<QueueView>): void {
-    this.view = { ...this.view, ...patch };
+    this.view = this.alignErrorSurfaces({ ...this.view, ...patch });
     if (!this.live) return;
     this.publish(this.view);
     this.syncPolling();
+  }
+
+  // A Retry error stays where the action started. Only when that surface is
+  // gone does it move to the matching other one, and it stays there when the
+  // first surface comes back (no second live alert, no jumping back).
+  private alignErrorSurfaces(view: QueueView): QueueView {
+    let surfaces = view.errorSurfaces;
+    for (const [id, surface] of Object.entries(view.errorSurfaces)) {
+      let next: ErrorSurface | null = surface;
+      if (view.errors[id] == null) {
+        next = null;
+      } else {
+        const hasRow = findJob(view.lists, id) != null;
+        const hasDetail = view.detail?.id === id;
+        if (surface === "row" && !hasRow && hasDetail) next = "detail";
+        else if (surface === "detail" && !hasDetail && hasRow) next = "row";
+      }
+      if (next !== surface) {
+        surfaces = next == null ? without(surfaces, id) : { ...surfaces, [id]: next };
+      }
+    }
+    return surfaces === view.errorSurfaces ? view : { ...view, errorSurfaces: surfaces };
   }
 
   // Rule 5: poll while SSE is not open (even with empty lists) and while
@@ -275,9 +303,11 @@ export class QueueController {
         for (const job of active.jobs) this.offer(job, true);
         return;
       }
+      // The open detail's snapshot is only a comparison base (never membership).
+      const prior = this.view.detail?.job;
       const result = kind === "reset"
-        ? applyReset(this.view.lists, active.jobs, head)
-        : applyMerge(this.view.lists, active.jobs, head);
+        ? applyReset(this.view.lists, active.jobs, head, prior)
+        : applyMerge(this.view.lists, active.jobs, head, prior);
       if (result.reset && kind === "merge") this.generation += 1;
       this.commitLists(result.lists);
       this.emit({
@@ -347,7 +377,7 @@ export class QueueController {
     try {
       const page = await listHistoryJobs({ cursor: request.cursor });
       if (!current()) return;
-      this.commitLists(applyHistoryPage(this.view.lists, page));
+      this.commitLists(applyHistoryPage(this.view.lists, page, this.view.detail?.job));
       this.emit({ loadMoreStatus: "idle" });
       for (const job of page.jobs) this.offerDetail(job, true);
     } catch {
@@ -470,13 +500,18 @@ export class QueueController {
     void this.runAction(id, "cancel");
   }
 
-  retry(id: string): void {
-    void this.runAction(id, "retry");
+  /** `origin` is the surface that started the Retry (its error appears there). */
+  retry(id: string, origin: ErrorSurface = "row"): void {
+    void this.runAction(id, "retry", origin);
   }
 
-  private async runAction(id: string, action: QueueAction): Promise<void> {
+  private async runAction(id: string, action: QueueAction, origin: ErrorSurface = "row"): Promise<void> {
     if (!this.live || this.pendingActions.has(id)) return;
-    const current = findJob(this.view.lists, id);
+    // Retry also works for a row-less job with the matching open detail, using
+    // the same winning snapshot the panel renders.
+    const detail = this.view.detail;
+    const row = findJob(this.view.lists, id);
+    const current = action === "retry" && detail?.id === id ? newestSnapshot(row, detail.job) : row;
     if (current == null || (action === "cancel" ? !isActiveJob(current.status) : !canRetryJob(current))) return;
     const session = this.session;
     const floor = snapshotTime(current);
@@ -486,7 +521,12 @@ export class QueueController {
     try {
       const updated = await (action === "cancel" ? cancelJob(id) : retryJob(id));
       // Applied per rule 1: a newer SSE snapshot is never overwritten.
-      if (this.alive(session)) this.offer(updated, true);
+      if (this.alive(session)) {
+        this.offer(updated, true);
+        // A row-less retried job is never inserted from the response: the
+        // owner-scoped merge lists it again.
+        if (action === "retry" && findJob(this.view.lists, id) == null) this.requestReconcile("merge");
+      }
     } catch (error) {
       if (!this.alive(session)) return;
       const newest = this.newestTime(id);
@@ -497,6 +537,7 @@ export class QueueController {
             ...this.view.errors,
             [id]: error instanceof ApiRequestError ? error.message : ACTION_ERRORS[action],
           },
+          ...(action === "retry" ? { errorSurfaces: { ...this.view.errorSurfaces, [id]: origin } } : {}),
         });
       }
       // A lost response may still mean the server accepted the action: only

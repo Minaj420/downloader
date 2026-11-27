@@ -17,8 +17,8 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - M6.5-T2/T3 Fedora Compose PASS (Mutagen 1.48.1, MP3 etiket ve WAV); T3 hedefli 791 test/Ruff/mypy ve review PASS.
 - M6.5 metin etiketi kapandı: Compose Opus/MP3 etiket 2/2, MP3 oynatma, WAV 2/2 uyarısız, Shorts 2/2 oynatma/sıra, ses iptal 1/2 → Retry 2/2 kopyasız. Bu kapsamda plansız v0.1 zorunluluğu yok; M6.5 sunum UI/hata metinleri ayrı açık. ARCH §14 probe başlığı notu should-fix.
 - Accepted (M6.5-T2): düşen/yinelenen TXXX değişmeden reddedilebilir (ID3v2.4 dahil). Should-fix: seek hata ayrıntısı ve ses-önce çoklanmış Ogg testi.
-- Bekleyen toplu UI Compose smoke: Queue'da active/history; gezinme/F5 sonrası sunucudan iş erişimi.
-- Smoke: uygun Cancel/Retry, çift tık/pending; geçmiş iş detay/Activity, collection öğeleri; Load more ve yeniden bağlantıda güncellik. UI bulgusu: Queue Details panelinde Retry yok, eylem History satırında.
+- Bekleyen toplu UI Compose smoke: Queue active/history, gezinme/F5 sonrası iş erişimi, detay/Activity, koleksiyon öğeleri, Load more ve yeniden bağlantı.
+- Smoke (M6.5-UI-Retry): Details ve History'de uygun Retry, ortak pending/çift tık, hatanın başlatıldığı yerde görünmesi ve başarıda Active'e geçiş; uygun Cancel.
 - Smoke: Private video içeren playlist; satır devre dışı, Select All ve sayaç dışında.
 - Kullanıcı Compose PASS: Q2 Retry kaldığı yerden tamamlandı (22 Kasım); Q3-ACT eski Activity/Library, canlı Activity ve F5 sonrası geçmiş korundu (23 Kasım).
 ## Açık kararlar
@@ -37,7 +37,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - M6.5 UI onaylı: tekil videoda kaynakla desteklenen standart kısa kenar tavanları, varsayılan `Best Available`, ayrı çıktı biçimi. Küçük `Up to`; seçilen satır bilinen kaynak boyutunu açar, ayrı Exact modu yok. Stil ve PRODUCT_SPEC §9 uyumu bekliyor. Media Preview “Single item” etiketi sadeleştirilecek; diğer UI notları ARCH §59.
 - network_error/Deno bağı kanıtsız. Analiz +25/hepsi v0.2.
 - Fedora Python 3.14: child storage pidfd testi düzeltme diff'inde geçti; full gate çalışmadı.
-- should-fix: child Skip Existing Activity uyarısı yok; ayrı lifecycle/transaction işi.
+- should-fix: child Skip Existing Activity uyarısı yok; ayrı lifecycle/transaction işi. Queue satırsız kayıp Retry yanıtı + polling testi açık.
 - should-fix: modelsiz implement resume CLI hatasının belgelenmesi ve izleyici partial-line
   testinin deterministikliği açık; restart/model reload ve farklı-rol resume izolasyonu kanıtsız.
 - should-fix: lead.md eski bootstrap referansı.
@@ -57,7 +57,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - Host RPM Fusion FFmpeg smoke 23 PASS/0 SKIP; container libx264 ayrıca görüldü. Sonraki skip'i bildir.
 - 2026-11-27 macOS M6.5 full gate PASS: checker backend Ruff/mypy ve frontend lint/typecheck/234 test/build/kontrast 20; kullanıcı Homebrew Bash ile tam backend pytest 3132 geçti/29 atlandı/4 uyarı. macOS Bash 3.2 smoke betiğiyle uyumsuz.
 ## Bilinen riskler
-- Accepted: YouTube'da aynı gerçek başlık ve eksik availability yanlışlıkla elenebilir.
+- Accepted: YouTube'da aynı gerçek başlık ve eksik availability yanlışlıkla elenebilir. Queue Retry hatası yüzey kaybolunca tekrar seslendirilebilir.
 - Accepted: smoke idle kontrolü atomik değil; testte başka iş başlatılmaz; kullanıcı ağ/restart kurtarma PASS.
 - Accepted: Original remux EXIT_STATUS içindeki disk/izin hatası genel uyarıda kalabilir (PRODUCT_SPEC §14).
 - Accepted: commit anında iptal canlı child uyarısını kaçırabilir; commit edilmiş

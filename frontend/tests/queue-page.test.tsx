@@ -716,3 +716,419 @@ describe("QueuePage actions", () => {
     expect(rowTitles(activeRegion())).toEqual(["Job a"]);
   });
 });
+
+describe("QueuePage detail Retry", () => {
+  const detailRegion = () => within(screen.getByRole("region", { name: "Job details" }));
+  const failedJob = (id = "f", overrides: Partial<Job> = {}) =>
+    job(id, { status: "failed", error: retryable, updated_at: at(5), ...overrides });
+
+  async function openDetail(user: ReturnType<typeof userEvent.setup>, title: string) {
+    await user.click(row(title).getByRole("button", { name: "Details" }));
+    await settle();
+  }
+
+  function seedFailed(id = "f") {
+    const failed = failedJob(id);
+    server.pages.set("", { jobs: [failed], next_cursor: null });
+    server.jobs.set(id, failed);
+    server.activity.set(id, []);
+    return failed;
+  }
+
+  it("offers Retry in the detail only for retryable failed/cancelled jobs", async () => {
+    const cancelledRetryable = job("c1", {
+      status: "cancelled", created_at: at(9),
+      error: { code: "cancelled", message: "Cancelled.", retryable: true },
+    });
+    const items = [
+      failedJob("f", { created_at: at(10) }),
+      cancelledRetryable,
+      failedJob("n", { created_at: at(8), error: { ...retryable, retryable: false } }),
+      job("done", { status: "completed", created_at: at(7) }),
+    ];
+    server.active = [job("act", { status: "downloading" })];
+    server.pages.set("", { jobs: items, next_cursor: null });
+    for (const entry of [...items, ...server.active]) {
+      server.jobs.set(entry.id, entry);
+      server.activity.set(entry.id, []);
+    }
+    const { user } = await mount();
+
+    await openDetail(user, "Job f");
+    expect(detailRegion().getByRole("button", { name: "Retry" })).toBeEnabled();
+    await openDetail(user, "Job c1");
+    expect(detailRegion().getByRole("button", { name: "Retry" })).toBeEnabled();
+    for (const title of ["Job n", "Job done", "Job act"]) {
+      await openDetail(user, title);
+      expect(detailRegion().queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
+    }
+    expect(count((url) => url.endsWith("/retry"))).toBe(0);
+    // The History row Details button stays as is.
+    expect(row("Job f").getByRole("button", { name: "Details" })).toBeInTheDocument();
+  });
+
+  it("shares pending with the row, sends one POST on a double trigger and moves the job to active", async () => {
+    seedFailed();
+    const retry = deferred();
+    server.actions.set("/api/v1/jobs/f/retry", () => retry.promise);
+    const { user } = await mount();
+    await openDetail(user, "Job f");
+    const button = detailRegion().getByRole("button", { name: "Retry" });
+    act(() => {
+      fireEvent.click(button);
+      fireEvent.click(button);
+    });
+    expect(count((url) => url === "/api/v1/jobs/f/retry")).toBe(1);
+    expect(detailRegion().getByRole("button", { name: "Retrying…" })).toBeDisabled();
+    expect(row("Job f").getByRole("button", { name: "Retrying…" })).toBeDisabled();
+
+    retry.resolve(json(job("f", { status: "queued", updated_at: at(9) })));
+    await settle();
+    expect(rowTitles(activeRegion())).toEqual(["Job f"]);
+    expect(rowTitles(historyRegion())).toEqual([]);
+    expect(detailRegion().getByText("Queued")).toBeInTheDocument();
+    expect(detailRegion().queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
+  });
+
+  it("disables the detail Retry while the row Retry is pending and the reverse", async () => {
+    seedFailed();
+    const retry = deferred();
+    server.actions.set("/api/v1/jobs/f/retry", () => retry.promise);
+    const { user } = await mount();
+    await openDetail(user, "Job f");
+    await user.click(row("Job f").getByRole("button", { name: "Retry" }));
+    const detailButton = detailRegion().getByRole("button", { name: "Retrying…" });
+    expect(detailButton).toBeDisabled();
+    fireEvent.click(detailButton);
+    expect(count((url) => url === "/api/v1/jobs/f/retry")).toBe(1);
+  });
+
+  it("keeps the detail Retry disabled (not Retrying…) while a Cancel is pending", async () => {
+    server.active = [job("a", { status: "downloading", updated_at: at(5) })];
+    server.jobs.set("a", job("a", { status: "downloading", updated_at: at(5) }));
+    server.activity.set("a", []);
+    const cancel = deferred();
+    server.actions.set("/api/v1/jobs/a/cancel", () => cancel.promise);
+    const { stream, user } = await mount();
+    await openDetail(user, "Job a");
+    await user.click(row("Job a").getByRole("button", { name: "Cancel" }));
+
+    stream.emit("job.failed", failedJob("a", { updated_at: at(6) }));
+    const retryButton = detailRegion().getByRole("button", { name: "Retry" });
+    expect(retryButton).toBeDisabled();
+    fireEvent.click(retryButton);
+    expect(count((url) => url.endsWith("/retry"))).toBe(0);
+    cancel.resolve(json(job("a", { status: "downloading", updated_at: at(5) })));
+    await settle();
+    expect(detailRegion().getByRole("button", { name: "Retry" })).toBeEnabled();
+  });
+
+  it("does not let a stale Retry response override a newer SSE snapshot from the detail", async () => {
+    seedFailed();
+    const retry = deferred();
+    server.actions.set("/api/v1/jobs/f/retry", () => retry.promise);
+    const { stream, user } = await mount();
+    await openDetail(user, "Job f");
+    await user.click(detailRegion().getByRole("button", { name: "Retry" }));
+
+    stream.emit("job.completed", job("f", { status: "completed", updated_at: at(8) }));
+    retry.resolve(json(job("f", { status: "queued", updated_at: at(6) })));
+    await settle();
+    expect(rowTitles(activeRegion())).toEqual([]);
+    expect(detailRegion().getByText("Completed")).toBeInTheDocument();
+    expect(count((url) => url === "/api/v1/jobs/f/retry")).toBe(1);
+  });
+
+  it("shows a detail Retry error once, makes no repeat POST and allows a manual retry", async () => {
+    seedFailed();
+    const retry = deferred();
+    server.actions.set("/api/v1/jobs/f/retry", () => retry.promise);
+    const { user } = await mount();
+    await openDetail(user, "Job f");
+    const reads = count((url) => url === "/api/v1/jobs/f");
+    await user.click(detailRegion().getByRole("button", { name: "Retry" }));
+    retry.resolve(serverError());
+    await settle();
+
+    // Started from the panel: the single alert is in the panel, not the row.
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    expect(detailRegion().getByRole("alert")).toHaveTextContent("Server exploded.");
+    expect(row("Job f").queryByRole("alert")).not.toBeInTheDocument();
+    expect(count((url) => url === "/api/v1/jobs/f/retry")).toBe(1);
+    expect(count((url) => url === "/api/v1/jobs/f")).toBe(reads + 1);
+    expect(detailRegion().getByRole("button", { name: "Retry" })).toBeEnabled();
+
+    server.actions.set("/api/v1/jobs/f/retry", () => Promise.resolve(json(job("f", { status: "queued", updated_at: at(9) }))));
+    await user.click(detailRegion().getByRole("button", { name: "Retry" }));
+    await settle();
+    expect(count((url) => url === "/api/v1/jobs/f/retry")).toBe(2);
+    expect(rowTitles(activeRegion())).toEqual(["Job f"]);
+  });
+
+  it("retries from the detail after a reset dropped the row and lists the job again via merge", async () => {
+    seedFailed();
+    server.actions.set("/api/v1/jobs/f/retry", () => Promise.resolve(json(job("f", { status: "queued", updated_at: at(9) }))));
+    const { stream, user } = await mount();
+    await openDetail(user, "Job f");
+
+    server.pages.set("", { jobs: [job("h", { status: "completed", created_at: at(9) })], next_cursor: "c2" });
+    stream.open();
+    await settle();
+    expect(screen.queryByRole("listitem", { name: "Job f" })).not.toBeInTheDocument();
+
+    // Row-less failure: the panel itself carries the single alert.
+    server.actions.set("/api/v1/jobs/f/retry", () => Promise.resolve(serverError()));
+    await user.click(detailRegion().getByRole("button", { name: "Retry" }));
+    await settle();
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    expect(detailRegion().getByRole("alert")).toHaveTextContent("Server exploded.");
+    expect(detailRegion().getByRole("button", { name: "Retry" })).toBeEnabled();
+
+    server.actions.set("/api/v1/jobs/f/retry", () => Promise.resolve(json(job("f", { status: "queued", updated_at: at(9) }))));
+    server.active = [job("f", { status: "queued", updated_at: at(9) })];
+    await user.click(detailRegion().getByRole("button", { name: "Retry" }));
+    await settle();
+    expect(count((url) => url === "/api/v1/jobs/f/retry")).toBe(2);
+    expect(rowTitles(activeRegion())).toEqual(["Job f"]);
+    expect(rowTitles(historyRegion())).toEqual(["Job h"]);
+  });
+
+  // Drops the row of "f" with a reset while its detail stays open (keyed by ID).
+  async function dropRow(stream: FakeEventSource) {
+    server.pages.set("", { jobs: [job("h", { status: "completed", created_at: at(9) })], next_cursor: "c2" });
+    stream.open();
+    await settle();
+    expect(screen.queryByRole("listitem", { name: "Job f" })).not.toBeInTheDocument();
+  }
+
+  describe("error placement", () => {
+    beforeEach(() => {
+      seedFailed();
+      server.actions.set("/api/v1/jobs/f/retry", () => Promise.resolve(serverError()));
+    });
+
+    it("shows a row-started error only in the row and keeps it when the details close", async () => {
+      const { user } = await mount();
+      await openDetail(user, "Job f");
+      await user.click(row("Job f").getByRole("button", { name: "Retry" }));
+      await settle();
+      expect(screen.getAllByRole("alert")).toHaveLength(1);
+      expect(row("Job f").getByRole("alert")).toHaveTextContent("Server exploded.");
+      expect(detailRegion().queryByRole("alert")).not.toBeInTheDocument();
+
+      await user.click(detailRegion().getByRole("button", { name: "Close details" }));
+      expect(screen.getAllByRole("alert")).toHaveLength(1);
+      expect(row("Job f").getByRole("alert")).toHaveTextContent("Server exploded.");
+      expect(count((url) => url === "/api/v1/jobs/f/retry")).toBe(1);
+    });
+
+    it("moves a panel-started error to the row when the details close instead of losing it", async () => {
+      const { user } = await mount();
+      await openDetail(user, "Job f");
+      await user.click(detailRegion().getByRole("button", { name: "Retry" }));
+      await settle();
+      expect(detailRegion().getByRole("alert")).toHaveTextContent("Server exploded.");
+      expect(row("Job f").queryByRole("alert")).not.toBeInTheDocument();
+
+      await user.click(detailRegion().getByRole("button", { name: "Close details" }));
+      expect(screen.getAllByRole("alert")).toHaveLength(1);
+      expect(row("Job f").getByRole("alert")).toHaveTextContent("Server exploded.");
+    });
+
+    it("falls back to the panel when the row drops and does not jump back or double when it returns", async () => {
+      const { stream, user } = await mount();
+      await openDetail(user, "Job f");
+      await user.click(row("Job f").getByRole("button", { name: "Retry" }));
+      await settle();
+      expect(row("Job f").getByRole("alert")).toBeInTheDocument();
+
+      await dropRow(stream);
+      expect(screen.getAllByRole("alert")).toHaveLength(1);
+      expect(detailRegion().getByRole("alert")).toHaveTextContent("Server exploded.");
+
+      server.pages.set("", { jobs: [failedJob("f")], next_cursor: null });
+      stream.open();
+      await settle();
+      expect(row("Job f").getByRole("button", { name: "Retry" })).toBeInTheDocument();
+      expect(screen.getAllByRole("alert")).toHaveLength(1);
+      expect(detailRegion().getByRole("alert")).toHaveTextContent("Server exploded.");
+      expect(row("Job f").queryByRole("alert")).not.toBeInTheDocument();
+      expect(count((url) => url === "/api/v1/jobs/f/retry")).toBe(1);
+    });
+
+    it("keeps a Cancel error in the row only", async () => {
+      server.active = [job("a", { status: "downloading", updated_at: at(5) })];
+      server.jobs.set("a", job("a", { status: "downloading", updated_at: at(5) }));
+      server.activity.set("a", []);
+      server.actions.set("/api/v1/jobs/a/cancel", () => Promise.resolve(serverError()));
+      const { user } = await mount();
+      await openDetail(user, "Job a");
+      await user.click(row("Job a").getByRole("button", { name: "Cancel" }));
+      await settle();
+      expect(screen.getAllByRole("alert")).toHaveLength(1);
+      expect(row("Job a").getByRole("alert")).toHaveTextContent("Server exploded.");
+      expect(detailRegion().queryByRole("alert")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("snapshot winner", () => {
+    const stale = () => failedJob("f", { updated_at: at(5) });
+
+    async function openDroppedDetail() {
+      seedFailed();
+      const mounted = await mount();
+      await openDetail(mounted.user, "Job f");
+      await dropRow(mounted.stream);
+      return mounted;
+    }
+
+    function expectCompletedWithoutRetry() {
+      expect(detailRegion().getByText("Completed")).toBeInTheDocument();
+      expect(screen.queryAllByRole("button", { name: "Retry" })).toHaveLength(0);
+    }
+
+    it("keeps Completed when a delayed older merge response re-adds the Failed row", async () => {
+      const { stream } = await openDroppedDetail();
+      const held = onceFor((url) => url === "/api/v1/jobs?scope=history");
+      stream.emit("job.completed", job("f", { status: "completed", updated_at: at(8) }));
+      expect(screen.queryByRole("listitem", { name: "Job f" })).not.toBeInTheDocument();
+      expect(detailRegion().getByText("Completed")).toBeInTheDocument();
+
+      held.resolve(json({ jobs: [stale(), job("h", { status: "completed", created_at: at(9) })], next_cursor: "c2" }));
+      await settle();
+      expect(row("Job f").getByText("Completed")).toBeInTheDocument();
+      expectCompletedWithoutRetry();
+    });
+
+    it("keeps Completed when a delayed older Load more page re-adds the Failed row", async () => {
+      const { stream, user } = await openDroppedDetail();
+      const held = onceFor((url) => isHistoryCursor("c2")(url));
+      await user.click(screen.getByRole("button", { name: "Load more" }));
+      stream.emit("job.completed", job("f", { status: "completed", updated_at: at(8) }));
+      await settle();
+
+      held.resolve(json({ jobs: [stale()], next_cursor: null }));
+      await settle();
+      expect(row("Job f").getByText("Completed")).toBeInTheDocument();
+      expectCompletedWithoutRetry();
+    });
+
+    it("keeps Completed when an older reset head re-adds the Failed row", async () => {
+      const { stream } = await openDroppedDetail();
+      stream.emit("job.completed", job("f", { status: "completed", updated_at: at(8) }));
+      await settle();
+      server.pages.set("", { jobs: [stale()], next_cursor: null });
+      server.jobs.set("f", stale());
+      stream.open();
+      await settle();
+      expect(row("Job f").getByText("Completed")).toBeInTheDocument();
+      expectCompletedWithoutRetry();
+    });
+
+    it("reset: an older active Queued answer outside the head leaves the ID in neither list", async () => {
+      const { stream } = await openDroppedDetail();
+      stream.emit("job.completed", job("f", { status: "completed", updated_at: at(8) }));
+      await settle();
+      server.jobs.set("f", job("f", { status: "completed", updated_at: at(8) }));
+      server.active = [job("f", { status: "queued", updated_at: at(6) })];
+      stream.open();
+      await settle();
+
+      expect(screen.queryByRole("listitem", { name: "Job f" })).not.toBeInTheDocument();
+      expect(rowTitles(activeRegion())).toEqual([]);
+      expect(rowTitles(historyRegion())).toEqual(["Job h"]);
+      expect(screen.getByRole("button", { name: "Load more" })).toBeInTheDocument();
+      expectCompletedWithoutRetry();
+    });
+
+    it("reset: a Failed head row with the same update time keeps the known Completed everywhere", async () => {
+      const { stream } = await openDroppedDetail();
+      stream.emit("job.completed", job("f", { status: "completed", updated_at: at(8) }));
+      await settle();
+      server.jobs.set("f", job("f", { status: "completed", updated_at: at(8) }));
+      server.pages.set("", {
+        jobs: [job("h", { status: "completed", created_at: at(9) }), failedJob("f", { updated_at: at(8) })],
+        next_cursor: "c2",
+      });
+      stream.open();
+      await settle();
+
+      expect(rowTitles(historyRegion())).toEqual(["Job h", "Job f"]);
+      expect(row("Job f").getByText("Completed")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Load more" })).toBeInTheDocument();
+      expectCompletedWithoutRetry();
+    });
+
+    it("keeps loaded collection children when the returning row carries items: null", async () => {
+      const parent = job("f", {
+        job_type: "collection", status: "failed", error: retryable, updated_at: at(5),
+        total_items: 1, completed_items: 0, failed_items: 1, items: null,
+      });
+      server.pages.set("", { jobs: [parent], next_cursor: null });
+      server.jobs.set("f", { ...parent, items: [childItem("one")] });
+      server.activity.set("f", []);
+      const { stream, user } = await mount();
+      await openDetail(user, "Job f");
+      const results = () => within(screen.getByRole("region", { name: "Collection results" }));
+      expect(results().getByText(/Child one/)).toBeInTheDocument();
+
+      await dropRow(stream);
+      expect(results().getByText(/Child one/)).toBeInTheDocument();
+      // A merge (no detail re-read) brings the same snapshot back with items: null.
+      server.pages.set("", { jobs: [parent], next_cursor: null });
+      const reads = count((url) => url === "/api/v1/jobs/f");
+      stream.fail();
+      await settle();
+      expect(row("Job f").getByRole("button", { name: "Retry" })).toBeInTheDocument();
+      expect(results().getByText(/Child one/)).toBeInTheDocument();
+      expect(count((url) => url === "/api/v1/jobs/f")).toBe(reads);
+    });
+  });
+
+  describe("recovery", () => {
+    it("does not insert the row from a successful Retry POST until a scoped response lists it", async () => {
+      seedFailed();
+      server.actions.set("/api/v1/jobs/f/retry", () => Promise.resolve(json(job("f", { status: "queued", updated_at: at(9) }))));
+      const { stream, user } = await mount();
+      await openDetail(user, "Job f");
+      await dropRow(stream);
+
+      const heldActive = onceFor((url) => url === "/api/v1/jobs?scope=active");
+      await user.click(detailRegion().getByRole("button", { name: "Retry" }));
+      await settle();
+      expect(count((url) => url === "/api/v1/jobs/f/retry")).toBe(1);
+      expect(detailRegion().getByText("Queued")).toBeInTheDocument();
+      expect(screen.queryByRole("listitem", { name: "Job f" })).not.toBeInTheDocument();
+      expect(rowTitles(activeRegion())).toEqual([]);
+
+      server.active = [job("f", { status: "queued", updated_at: at(9) })];
+      heldActive.resolve(json({ jobs: server.active, next_cursor: null }));
+      await settle();
+      expect(rowTitles(activeRegion())).toEqual(["Job f"]);
+    });
+
+    it("recovers a lost Retry response with one GET and polling, without a second POST", async () => {
+      seedFailed();
+      server.actions.set("/api/v1/jobs/f/retry", () => Promise.reject(new TypeError("Failed to fetch")));
+      const { stream, user } = await mount();
+      stream.fail();
+      await settle();
+      await openDetail(user, "Job f");
+      // The server accepted the Retry although the response was lost.
+      const queued = job("f", { status: "queued", updated_at: at(9) });
+      server.jobs.set("f", queued);
+      server.active = [queued];
+      const reads = count((url) => url === "/api/v1/jobs/f");
+
+      await user.click(row("Job f").getByRole("button", { name: "Retry" }));
+      await settle();
+      expect(count((url) => url === "/api/v1/jobs/f")).toBe(reads + 1);
+      expect(rowTitles(activeRegion())).toEqual(["Job f"]);
+      expect(screen.queryAllByRole("alert")).toHaveLength(0);
+
+      await tick(4000);
+      expect(rowTitles(activeRegion())).toEqual(["Job f"]);
+      expect(count((url) => url === "/api/v1/jobs/f/retry")).toBe(1);
+    });
+  });
+});

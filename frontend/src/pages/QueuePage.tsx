@@ -1,9 +1,9 @@
 import { ActivityPanel } from "../features/new-download/ActivityPanel";
 import { CollectionProgress } from "../features/new-download/CollectionProgress";
 import { QueueJobRow } from "../features/queue/QueueJobRow";
-import { QUEUE_STATUS_LABELS } from "../features/queue/queueState";
+import { findJob, newestSnapshot, QUEUE_STATUS_LABELS } from "../features/queue/queueState";
 import { useQueue, type QueueController, type QueueDetail, type QueueView } from "../features/queue/useQueue";
-import type { Job } from "../api/jobs";
+import { canRetryJob, type Job } from "../api/jobs";
 
 function JobRows({ jobs, view, controller }: {
   jobs: Job[];
@@ -17,10 +17,10 @@ function JobRows({ jobs, view, controller }: {
           key={job.id}
           job={job}
           pendingAction={view.pending[job.id]}
-          error={view.errors[job.id]}
+          error={view.errorSurfaces[job.id] === "detail" ? undefined : view.errors[job.id]}
           detailOpen={view.detail?.id === job.id}
           onCancel={() => controller.cancel(job.id)}
-          onRetry={() => controller.retry(job.id)}
+          onRetry={() => controller.retry(job.id, "row")}
           onToggleDetail={() => controller.openDetail(job.id)}
         />
       ))}
@@ -29,8 +29,17 @@ function JobRows({ jobs, view, controller }: {
 }
 
 // Only one detail is open at a time: ActivityPanel uses a fixed DOM id.
-function JobDetail({ detail, controller }: { detail: QueueDetail; controller: QueueController }) {
-  const { job } = detail;
+function JobDetail({ detail, view, controller }: {
+  detail: QueueDetail;
+  view: QueueView;
+  controller: QueueController;
+}) {
+  // Rich, newest-wins snapshot (same one the controller uses for Retry): a
+  // stale row never replaces it and `items: null` never drops loaded items.
+  const job = newestSnapshot(findJob(view.lists, detail.id), detail.job);
+  const pendingAction = view.pending[detail.id];
+  // One live alert: the panel shows only Retry errors placed on it.
+  const error = view.errorSurfaces[detail.id] === "detail" ? view.errors[detail.id] : undefined;
   return (
     <section className="job-progress" id="queue-detail" aria-label="Job details">
       <header className="job-progress-header">
@@ -38,10 +47,21 @@ function JobDetail({ detail, controller }: { detail: QueueDetail; controller: Qu
         <span className={`badge badge-status badge-status-${job.status}`}>
           {QUEUE_STATUS_LABELS[job.status]}
         </span>
+        {canRetryJob(job) && (
+          <button
+            type="button"
+            className="button-secondary"
+            onClick={() => controller.retry(detail.id, "detail")}
+            disabled={pendingAction != null}
+          >
+            {pendingAction === "retry" ? "Retrying…" : "Retry"}
+          </button>
+        )}
         <button type="button" className="button-quiet" onClick={() => controller.closeDetail()}>
           Close details
         </button>
       </header>
+      {error && <p className="job-result job-error" role="alert">{error}</p>}
       {job.status === "completed" && (
         <p className="job-result">
           Saved to App Library{job.final_path ? ` — ${job.final_path}` : ""}
@@ -86,7 +106,7 @@ export function QueuePage() {
       )}
       {loading && !view.listError && <p role="status">Loading queue…</p>}
 
-      {view.detail && <JobDetail detail={view.detail} controller={controller} />}
+      {view.detail && <JobDetail detail={view.detail} view={view} controller={controller} />}
 
       <section className="queue-section" aria-label="Active and queued">
         <h2>Active and queued</h2>
