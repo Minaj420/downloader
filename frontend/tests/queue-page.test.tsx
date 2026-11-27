@@ -792,7 +792,7 @@ describe("QueuePage inline History details", () => {
     expect(row("Job a").getByRole("button", { name: "Hide details" })).toHaveAttribute("aria-controls", "queue-detail");
   });
 
-  it("closes inline from the panel, returns focus to the row toggle and keeps on-demand reads single", async () => {
+  it("closes inline via the row Hide details only, keeps focus on it and keeps on-demand reads single", async () => {
     seed();
     const { user } = await mount();
     expect(count((url) => url.includes("/activity"))).toBe(0);
@@ -801,20 +801,57 @@ describe("QueuePage inline History details", () => {
     expect(count((url) => url === "/api/v1/jobs/f/activity")).toBe(1);
     expect(count((url) => url === "/api/v1/jobs/g/activity")).toBe(0);
 
-    await user.click(detailRegion().getByRole("button", { name: "Close details" }));
+    // No duplicate close control inside the inline panel.
+    expect(detailRegion().queryByRole("button", { name: "Close details" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Close details" })).not.toBeInTheDocument();
+    const hide = row("Job f").getByRole("button", { name: "Hide details" });
+    expect(hide).toHaveAttribute("aria-expanded", "true");
+    expect(hide).toHaveAttribute("aria-controls", "queue-detail");
+
+    await user.click(hide);
     expect(screen.queryByRole("region", { name: "Job details" })).not.toBeInTheDocument();
     expect(row("Job f").getByRole("button", { name: "Details" })).toHaveFocus();
     expect(row("Job f").getByRole("button", { name: "Details" })).not.toHaveAttribute("aria-controls");
   });
 
-  it("closes through the row toggle without moving focus elsewhere", async () => {
+  it("keeps a usable Close details on the top Active panel", async () => {
+    server.active = [job("a", { status: "downloading" })];
+    server.jobs.set("a", job("a", { status: "downloading" }));
+    server.activity.set("a", []);
+    const { user } = await mount();
+    await user.click(row("Job a").getByRole("button", { name: "Details" }));
+    await settle();
+    expect(screen.getAllByRole("button", { name: "Close details" })).toHaveLength(1);
+
+    await user.click(detailRegion().getByRole("button", { name: "Close details" }));
+    expect(screen.queryByRole("region", { name: "Job details" })).not.toBeInTheDocument();
+    expect(row("Job a").getByRole("button", { name: "Details" })).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("closes via keyboard on the focused Hide details and keeps focus on the same toggle", async () => {
     seed();
     const { user } = await mount();
     await user.click(row("Job f").getByRole("button", { name: "Details" }));
     await settle();
-    await user.click(row("Job f").getByRole("button", { name: "Hide details" }));
+    const hide = row("Job f").getByRole("button", { name: "Hide details" });
+    hide.focus();
+    expect(hide).toHaveFocus();
+
+    await user.keyboard("{Enter}");
+    expect(screen.queryByRole("region", { name: "Job details" })).not.toBeInTheDocument();
+    const toggle = row("Job f").getByRole("button", { name: "Details" });
+    expect(toggle).toHaveFocus();
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(toggle).not.toHaveAttribute("aria-controls");
+
+    // Space reopens and closes again on the same control.
+    await user.keyboard(" ");
+    await settle();
+    expect(row("Job f").getByRole("button", { name: "Hide details" })).toHaveFocus();
+    await user.keyboard(" ");
     expect(screen.queryByRole("region", { name: "Job details" })).not.toBeInTheDocument();
     expect(row("Job f").getByRole("button", { name: "Details" })).toHaveFocus();
+    expect(row("Job f").getByRole("button", { name: "Details" })).toHaveAttribute("aria-expanded", "false");
   });
 
   it("does not steal focus on background updates", async () => {
@@ -972,7 +1009,7 @@ describe("QueuePage Activity expanded state and Retry focus", () => {
     expect(activityToggle()).toHaveAttribute("aria-expanded", "false");
 
     await user.click(activityToggle());
-    await user.click(detailRegion().getByRole("button", { name: "Close details" }));
+    await user.click(row("Job g").getByRole("button", { name: "Hide details" }));
     await user.click(row("Job g").getByRole("button", { name: "Details" }));
     await settle();
     expect(activityToggle()).toHaveAttribute("aria-expanded", "false");
@@ -1209,7 +1246,7 @@ describe("QueuePage detail Retry", () => {
       expect(row("Job f").getByRole("alert")).toHaveTextContent("Server exploded.");
       expect(detailRegion().queryByRole("alert")).not.toBeInTheDocument();
 
-      await user.click(detailRegion().getByRole("button", { name: "Close details" }));
+      await user.click(row("Job f").getByRole("button", { name: "Hide details" }));
       expect(screen.getAllByRole("alert")).toHaveLength(1);
       expect(row("Job f").getByRole("alert")).toHaveTextContent("Server exploded.");
       expect(count((url) => url === "/api/v1/jobs/f/retry")).toBe(1);
@@ -1223,9 +1260,19 @@ describe("QueuePage detail Retry", () => {
       expect(detailRegion().getByRole("alert")).toHaveTextContent("Server exploded.");
       expect(row("Job f").queryByRole("alert")).not.toBeInTheDocument();
 
-      await user.click(detailRegion().getByRole("button", { name: "Close details" }));
+      await user.click(row("Job f").getByRole("button", { name: "Hide details" }));
       expect(screen.getAllByRole("alert")).toHaveLength(1);
       expect(row("Job f").getByRole("alert")).toHaveTextContent("Server exploded.");
+    });
+
+    it("keeps a usable Close details on the rowless fallback panel", async () => {
+      const { stream, user } = await mount();
+      await openDetail(user, "Job f");
+      expect(detailRegion().queryByRole("button", { name: "Close details" })).not.toBeInTheDocument();
+
+      await dropRow(stream);
+      await user.click(detailRegion().getByRole("button", { name: "Close details" }));
+      expect(screen.queryByRole("region", { name: "Job details" })).not.toBeInTheDocument();
     });
 
     it("falls back to the panel when the row drops and does not jump back or double when it returns", async () => {

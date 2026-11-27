@@ -41,7 +41,8 @@ function JobDetail({
   view: QueueView;
   controller: QueueController;
   onRetry: () => void;
-  onClose: () => void;
+  /** Top panel only; inline History details close via the row's Hide details. */
+  onClose?: () => void;
   activityExpanded: boolean;
   onActivityExpandedChange: (expanded: boolean) => void;
 }) {
@@ -68,9 +69,11 @@ function JobDetail({
             {pendingAction === "retry" ? "Retrying…" : "Retry"}
           </button>
         )}
-        <button type="button" className="button-quiet" onClick={onClose}>
-          Close details
-        </button>
+        {onClose && (
+          <button type="button" className="button-quiet" onClick={onClose}>
+            Close details
+          </button>
+        )}
       </header>
       {error && <p className="job-result job-error" role="alert">{error}</p>}
       {job.status === "completed" && (
@@ -97,9 +100,9 @@ function JobDetail({
   );
 }
 
-// Focus is only moved after the user's own close/Retry inside the panel, never
-// on background updates.
-type FocusRequest = { kind: "toggle" | "panel"; id: string };
+// Focus is only moved after the user's own Retry inside the panel, never on
+// background updates.
+type FocusRequest = { kind: "panel"; id: string };
 
 export function QueuePage() {
   const { view, controller } = useQueue();
@@ -125,13 +128,6 @@ export function QueuePage() {
     const request = focusRequest.current;
     if (!request) return;
     const root = rootRef.current;
-    if (request.kind === "toggle") {
-      focusRequest.current = null;
-      if (view.detail != null) return;
-      const toggles = root?.querySelectorAll<HTMLElement>("[data-job-toggle]") ?? [];
-      Array.from(toggles).find((node) => node.dataset.jobToggle === request.id)?.focus();
-      return;
-    }
     if (view.detail?.id !== request.id) {
       focusRequest.current = null;
     } else if (inlineId == null) {
@@ -164,10 +160,7 @@ export function QueuePage() {
           if (inline) requestFocus({ kind: "panel", id: detail.id });
           controller.retry(detail.id, "detail");
         }}
-        onClose={() => {
-          if (inline) requestFocus({ kind: "toggle", id: detail.id });
-          controller.closeDetail();
-        }}
+        onClose={inline ? undefined : () => controller.closeDetail()}
       />
     );
   }

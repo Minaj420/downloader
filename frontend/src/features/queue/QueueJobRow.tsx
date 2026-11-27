@@ -80,7 +80,6 @@ export function QueueJobRow({
             className="button-quiet"
             aria-expanded={detailOpen}
             aria-controls={detailOpen ? "queue-detail" : undefined}
-            data-job-toggle={job.id}
             onClick={onToggleDetail}
           >
             {detailOpen ? "Hide details" : "Details"}
