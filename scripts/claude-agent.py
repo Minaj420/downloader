@@ -28,7 +28,7 @@ COMMON = (
 MAINTENANCE_TOOLS = ["Read", "Grep", "Glob", "Edit"]
 MAINTENANCE_ALLOW = [
     "Read", "Grep", "Glob",
-    "Edit(./.opencode/commands/continue.md)", "Edit(./.opencode/commands/oturumabasla.md)",
+    "Edit(./.opencode/commands/devam.md)", "Edit(./.opencode/commands/oturumabasla.md)",
 ]
 MAINTENANCE_DENY = [
     "Read(./.env)", "Read(./.env.*)", "Read(./**/.env)", "Read(./**/.env.*)",
@@ -36,7 +36,7 @@ MAINTENANCE_DENY = [
 ]
 MAINTENANCE_DISALLOWED = "Agent,Task,Skill,mcp__*,Bash,Write"
 MAINTENANCE_INSTRUCTION = (
-    "Komut bakımı modu: yalnız MEVCUT .opencode/commands/continue.md ve "
+    "Komut bakımı modu: yalnız MEVCUT .opencode/commands/devam.md ve "
     ".opencode/commands/oturumabasla.md dosyalarının gövdesini Edit ile düzenle. Her dosyanın "
     "başındaki ilk --- ... --- frontmatter bloğu bayt bayt değişmez. Bash/Write, test "
     "çalıştırma, başka config veya dosya düzenleme ve yeni dosya oluşturma yok. Yalnız bu iki "
@@ -209,7 +209,7 @@ def main():
                         help="implement defaults to sonnet; consult/review require opus")
     parser.add_argument("--log", action="store_true", help="Save stream JSONL under tmp/claude")
     parser.add_argument("--maintain-commands", action="store_true",
-                        help="implement only, no --resume: edit bodies of continue.md and "
+                        help="implement only, no --resume: edit bodies of devam.md and "
                              "oturumabasla.md under .opencode/commands; no Bash/Write")
     args = parser.parse_args()
     try:

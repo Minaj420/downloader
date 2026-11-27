@@ -289,7 +289,7 @@ IMPLEMENT_DENY = ENV_DENY + [
 ]
 MAINT_ALLOW = [
     "Read", "Grep", "Glob",
-    "Edit(./.opencode/commands/continue.md)", "Edit(./.opencode/commands/oturumabasla.md)",
+    "Edit(./.opencode/commands/devam.md)", "Edit(./.opencode/commands/oturumabasla.md)",
 ]
 MAINT_DENY = ENV_DENY + [
     "Edit(./STATE.md)", "Edit(./.claude/**)", "Edit(./.git/**)", "Edit(./.opencode/agents/**)",

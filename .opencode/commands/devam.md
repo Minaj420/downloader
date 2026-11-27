@@ -12,7 +12,7 @@ en fazla o kadar iş yap (üst sınır 5); boşsa tek iş. Ek talimat varsa kaps
 ona göre daralt:
 
 Opus danışması için WORKFLOW adım 2'yi uygula; yalnız danışma gerektiğinde görüşü ve
-lead kararını görünür özetle. Claude /devam'a yönlendirme. Tek yazıcı,
+lead kararını görünür özetle. Tek yazıcı,
 bir review düzeltme turu (istisnalar: WORKFLOW adım 6), kota/kimlik/izin hatasında
 tekrar veya sessiz fallback yok.
 Her iş başında “Uygulayıcı: Sonnet/Opus; gerekçe...” de. Varsayılan Sonnet;

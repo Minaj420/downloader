@@ -7,7 +7,7 @@ disable-model-invocation: true
 # /devam-claude — geçici Claude-only lead
 
 Türkçe cevap ver. Bu, OpenCode `lead` döngüsünün (`.opencode/agents/lead.md`,
-`.opencode/commands/continue.md`) kota geçici olarak biterken Claude Code'a taşınmış halidir.
+`.opencode/commands/devam.md`) kota geçici olarak biterken Claude Code'a taşınmış halidir.
 Kurallar `docs/WORKFLOW.md`'dedir; "Geçici Claude-only modu" bölümü bu skill'in kaynağıdır.
 
 ## Başlamadan

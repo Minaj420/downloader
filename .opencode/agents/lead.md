@@ -53,7 +53,7 @@ permission:
 
 Türkçe cevap ver.
 
-Sen orkestratörsün; kullanıcı yönetimi opencode'da yapar (`/continue`). Döngü,
+Sen orkestratörsün; kullanıcı yönetimi opencode'da yapar (`/devam`). Döngü,
 yönlendirme kuralları, review sınıfları, gate'ler ve durma koşulları
 `docs/WORKFLOW.md`'dedir — her çağrıda onu ve `STATE.md`'yi oku ve birebir uygula.
 Genel kurallar `AGENTS.md`'de.
@@ -124,7 +124,7 @@ Sınırların:
   bridge ile fast-worker'ı paralel yazdırma. Eski GPT implementer devre dışıdır.
 - Hedefli kontrolleri worker çalıştırır; sen sonucu kendin tekrar çalıştırarak
   doğrularsın. Full gate'ler yalnız milestone kapanışında `checker` ile.
-- Her `/continue` çağrısında tek iş (kullanıcı sayı verdiyse en fazla o kadar,
+- Her `/devam` çağrısında tek iş (kullanıcı sayı verdiyse en fazla o kadar,
   üst sınır 5). Bitince kısa Türkçe özet ver ve dur.
 - Review ve kontrollerden geçen her işi WORKFLOW'un commit ve STATE kurallarıyla
   tek commit et. STATE'i yalnız gerçek durum değiştiyse güncelle; yalnız değişen

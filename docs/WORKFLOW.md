@@ -1,6 +1,6 @@
 # Geliştirme workflow'u
 
-Tek yönetim OpenCode `lead` ve `/continue`'dur. Claude Code `/devam` pasiftir;
+Tek yönetim OpenCode `lead` ve `/devam`'dır.
 Claude child başka ajan/CLI çağırmaz. Kurallar AGENTS.md, durum STATE.md,
 ürün PRODUCT_SPEC.md, mimari ARCHITECTURE.md'dir.
 
@@ -216,13 +216,13 @@ scripts/claude-review.sh 'Çalışma ağacındaki altyapı değişikliklerini in
 bash scripts/claude-agent.sh implement 'Amaç... İzinli dosyalar... Hedefli kontroller...'
 bash scripts/claude-agent.sh implement 'Uzman iş: amaç... İzinli dosyalar... Hedefli kontroller...' --model opus
 bash scripts/claude-agent.sh implement 'Tek review düzeltme turu: ...' --resume <claude-session-id> --model sonnet
-bash scripts/claude-agent.sh implement 'Komut bakımı: continue.md/oturumabasla.md gövdesi...' --maintain-commands --log
+bash scripts/claude-agent.sh implement 'Komut bakımı: devam.md/oturumabasla.md gövdesi...' --maintain-commands --log
 ```
 
 `--maintain-commands` opt-in komut bakımıdır; yalnız `implement` ile ve `--resume`
 olmadan kabul edilir, aksi provider başlamadan CLI hatasıdır (exit 2; doğrudan API
 `ValueError`). Kısaltılmış seçenekler (`--maint`, `--mod`) kabul edilmez. Yol listesi veya
-wildcard parametresi yoktur; hedef yalnız mevcut `.opencode/commands/continue.md` ve
+wildcard parametresi yoktur; hedef yalnız mevcut `.opencode/commands/devam.md` ve
 `.opencode/commands/oturumabasla.md` gövdeleridir. Kullanım koşulları:
 - Her görev için açık kullanıcı onayı gerekir; lead kendiliğinden başlatmaz.
 - Resume yoktur: düzeltme turu aynı modelle yeni çağrıdır; bakım session'ı başka modda
@@ -323,7 +323,7 @@ doğrulanmış iddia edilmez. Server/tmux/ek altyapı yoktur.
   Normal implement deny listesi `.opencode/**` Edit/Write'ı kapsar.
 - Tek istisna `--maintain-commands` bakım setidir; normal rollere eklenmez. tools yalnız
   Read/Grep/Glob/Edit; allow yalnız Read/Grep/Glob ile
-  `Edit(./.opencode/commands/continue.md)` ve `Edit(./.opencode/commands/oturumabasla.md)`.
+  `Edit(./.opencode/commands/devam.md)` ve `Edit(./.opencode/commands/oturumabasla.md)`.
   Genel Edit/Write/Bash ve test izinleri yoktur; Agent/Task/Skill/MCP/Bash/Write disallowed'dır.
   Deny: `.env` okuma kuralları, `STATE.md`, `.claude/**`, `.git/**`, `.opencode/agents/**`.
   Geniş `.opencode/**` deny bu ayrı sette yoktur (iki allow'u öldürürdü); `dontAsk` allowlist
@@ -377,7 +377,7 @@ için commit yoktur; commit sonrası kendi hash'i yazılmaz. İşaret yerel Git 
 veya mod izni değildir. Yalnız lead yazar.
 
 **Dönüş.** Kullanıcı `/normal-mod` yazar (`bash scripts/mode.sh normal`); STATE yasağı geri gelir.
-Sonraki ilk OpenCode `/continue`'da lead başlangıç sınırının mevcut HEAD'in atası olduğunu izinli
+Sonraki ilk OpenCode `/devam`'da lead başlangıç sınırının mevcut HEAD'in atası olduğunu izinli
 git log/show ile doğrular (kısa SHA, dal/etiket adı veya başka seçenek kabul edilmez): salt `git log <sha>..HEAD` başarısı atalık kanıtı değildir; tam SHA
 HEAD geçmişinde bulunmalıdır. Aralıkta merge/pull veya açıklanamayan geçmiş varsa dur, işareti koru.
 Sınırdan sonraki bütün commit'ler (Sonnet/Opus dahil) bağımsız GPT review'a girer; bulgular normal
