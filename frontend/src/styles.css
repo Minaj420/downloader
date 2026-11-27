@@ -634,6 +634,17 @@ button:disabled {
   accent-color: var(--color-accent-ui);
 }
 
+/* Single-video quality rows: only the "Up to" prefix is de-emphasised; the
+   secondary size facts keep normal text colour on the tinted row. */
+.quality-prefix {
+  font-size: 0.8em;
+}
+
+.quality-detail {
+  font-size: 0.875rem;
+  color: var(--color-text);
+}
+
 .destination-group {
   border: var(--border-default);
   border-radius: var(--radius-panel);

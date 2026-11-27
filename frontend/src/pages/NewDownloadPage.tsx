@@ -25,6 +25,10 @@ import {
 import { JobProgress } from "../features/new-download/JobProgress";
 import type { ItemsLoadStatus } from "../features/new-download/CollectionProgress";
 import { AUTO_PLATFORM_VALUE } from "../features/new-download/platforms";
+import {
+  BEST_VIDEO_QUALITY_KEY,
+  buildVideoQualityOptions,
+} from "../features/new-download/videoQuality";
 
 const POLL_INTERVAL_MS = 2000;
 
@@ -77,9 +81,12 @@ function snapshotTime(job: Job): string {
 export function NewDownloadPage() {
   const [url, setUrl] = useState("");
   const [platform, setPlatform] = useState(AUTO_PLATFORM_VALUE);
+  // `quality` is the video quality row key (separate radio identity, since two
+  // rows may share one variant); null for an audio variant.
   const [variantSelection, setVariantSelection] = useState<{
     analysisId: string;
     variantId: string;
+    quality: string | null;
   } | null>(null);
   const [collectionSelection, setCollectionSelection] =
     useState<CollectionSelectionState | null>(null);
@@ -190,12 +197,30 @@ export function NewDownloadPage() {
   const createJob = useCreateJob();
 
   const platformHint = platform === AUTO_PLATFORM_VALUE ? null : platform;
+  const videoQualityOptions =
+    analyze.data == null || analyze.data.content_type === "collection"
+      ? []
+      : buildVideoQualityOptions(analyze.data.formats);
+  const firstFormat = analyze.data?.formats[0] ?? null;
+  // Default: Best Available for a video source, else the first (audio) format.
+  const defaultsToVideo = firstFormat != null && firstFormat.kind !== "audio_only" &&
+    videoQualityOptions.length > 0;
+  const hasLiveVariantSelection =
+    analyze.data != null && variantSelection?.analysisId === analyze.data.analysis_id;
   const selectedVariantId =
     analyze.data == null
       ? null
-      : variantSelection?.analysisId === analyze.data.analysis_id
+      : hasLiveVariantSelection && variantSelection != null
         ? variantSelection.variantId
-        : (analyze.data.formats[0]?.variant_id ?? null);
+        : defaultsToVideo
+          ? videoQualityOptions[0].variantId
+          : (firstFormat?.variant_id ?? null);
+  const selectedQualityKey =
+    hasLiveVariantSelection && variantSelection != null
+      ? variantSelection.quality
+      : defaultsToVideo
+        ? BEST_VIDEO_QUALITY_KEY
+        : null;
 
   // Only the selection bound to the displayed analysis snapshot is live.
   const activeCollectionSelection =
@@ -249,7 +274,20 @@ export function NewDownloadPage() {
     if (result == null || analyze.isPending || createJob.isPending || createPending.current) return;
     // A kind change (audio <-> video) drops the old output choice for good.
     if (singleVariantKind(variantId) !== outputKind) setOutputSelection(null);
-    setVariantSelection({ analysisId: result.analysis_id, variantId });
+    setVariantSelection({ analysisId: result.analysis_id, variantId, quality: null });
+  };
+
+  const handleSelectVideoQuality = (key: string) => {
+    const result = analyze.data;
+    const option = videoQualityOptions.find((entry) => entry.key === key);
+    if (result == null || option == null || analyze.isPending || createJob.isPending ||
+      createPending.current) return;
+    if (singleVariantKind(option.variantId) !== outputKind) setOutputSelection(null);
+    setVariantSelection({
+      analysisId: result.analysis_id,
+      variantId: option.variantId,
+      quality: option.key,
+    });
   };
 
   const handleSelectOutputProfile = (profile: OutputProfile) => {
@@ -324,6 +362,9 @@ export function NewDownloadPage() {
       onSuccess: (result) => {
         if (!mounted.current) return;
         setCollectionSelection(defaultCollectionSelection(result));
+        // A single-video quality/variant choice never survives a new analysis,
+        // even with a repeated analysis id: it restarts at Best Available.
+        setVariantSelection(null);
         // Every successful analysis restarts at Original, even for a repeated
         // analysis id.
         setOutputSelection(null);
@@ -689,6 +730,9 @@ export function NewDownloadPage() {
         <AnalysisResult
           result={analyze.data}
           selectedVariantId={selectedVariantId}
+          videoQualityOptions={videoQualityOptions}
+          selectedVideoQualityKey={selectedQualityKey}
+          onSelectVideoQuality={handleSelectVideoQuality}
           selectedCollectionItemIds={activeCollectionSelection?.selectedItemIds ?? []}
           collectionMode={activeCollectionSelection?.mode ?? null}
           outputKind={outputKind}

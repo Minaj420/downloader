@@ -784,9 +784,8 @@ describe("NewDownloadPage", () => {
     expect(screen.getByText("YouTube", { selector: ".badge-platform" })).toBeInTheDocument();
     expect(screen.getByText("Test Channel")).toBeInTheDocument();
     expect(screen.getByText("3:25")).toBeInTheDocument();
-    expect(screen.getByText(/Best Available \(1080p\)/)).toBeInTheDocument();
+    expect(screen.getByText("Best Available")).toBeInTheDocument();
     expect(screen.getByText(/~160 kbps/)).toBeInTheDocument();
-    expect(screen.getAllByText(/90\.6 MiB/).length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: "Download" })).toBeEnabled();
   });
 
@@ -939,13 +938,16 @@ describe("NewDownloadPage", () => {
 
     const selection = screen.getByRole("region", { name: "Format & Destination" });
     const videoGroup = within(selection).getAllByRole("radio").slice(0, 3);
-    // Best Available first, then one option per real source resolution,
-    // highest to lowest; sizes may stay visible.
+    // Best Available first, then short-edge ceilings the source supports,
+    // highest to lowest; no sizes or raw label text in the rows.
     expect(videoGroup.map((radio) => radio.closest("label")?.textContent)).toEqual([
-      "Best Available (1080p) · 90.6 MiB",
-      "1080p · 90.6 MiB",
-      "720p · 28.6 MiB",
+      "Best Available",
+      "Up to 1080p",
+      "Up to 720p",
     ]);
+    // Secondary file size per concrete row (Best and Up to 1080p share a format).
+    expect(within(selection).getAllByText("90.6 MiB")).toHaveLength(2);
+    expect(within(selection).getAllByText("28.6 MiB")).toHaveLength(1);
     // Low-level stream details never reach the primary video list.
     for (const radio of videoGroup) {
       const text = radio.closest("label")?.textContent ?? "";
@@ -963,7 +965,7 @@ describe("NewDownloadPage", () => {
 
     await analyzeSingleResult(user);
     const bestVariant = screen.getByRole("radio", { name: /Best Available/ });
-    const resolutionVariant = screen.getByRole("radio", { name: /^720p/ });
+    const resolutionVariant = screen.getByRole("radio", { name: "Up to 720p" });
     // The first offered format (Best Available) is the default selection.
     expect(bestVariant).toBeChecked();
 
@@ -981,6 +983,243 @@ describe("NewDownloadPage", () => {
       variant_id: "video-720",
       output_profile: "original",
       destination: "app_library",
+    });
+  });
+
+  describe("single video quality ceilings", () => {
+    const base = singleResult.formats[0];
+    const video = (
+      variantId: string,
+      width: number | null,
+      height: number | null,
+      label: string | null = null,
+    ): NormalizedAnalysis["formats"][number] => ({
+      ...base,
+      variant_id: variantId,
+      format_id: variantId,
+      label,
+      resolution_label: label,
+      width,
+      height,
+    });
+    const resultWith = (
+      ...formats: NormalizedAnalysis["formats"]
+    ): NormalizedAnalysis => ({ ...singleResult, formats });
+    const flow = (result: NormalizedAnalysis) => {
+      stubEventSource();
+      return stubFetch((url, init) => {
+        if (url === "/api/v1/health") return Promise.resolve(jsonResponse({ status: "ok", database: "ok" }));
+        if (url === "/api/v1/analysis") return Promise.resolve(jsonResponse(result));
+        if (url === "/api/v1/jobs" && init?.method === "POST") return Promise.resolve(jsonResponse(queuedJob));
+        return Promise.reject(new Error(`Unexpected fetch: ${url} ${init?.method ?? "GET"}`));
+      });
+    };
+    const analyzeWith = async (result: NormalizedAnalysis) => {
+      const fetchMock = flow(result);
+      const { user } = await renderNewDownload();
+      await analyzeSingleResult(user);
+      return { fetchMock, user };
+    };
+    const videoRows = () =>
+      within(screen.getByRole("group", { name: "Video formats" }))
+        .getAllByRole("radio")
+        .map((radio) => radio.closest("label")?.textContent);
+    const quality = (name: string) =>
+      within(screen.getByRole("group", { name: "Video formats" })).getByRole("radio", { name });
+    const postedBodies = (fetchMock: ReturnType<typeof stubFetch>) =>
+      fetchMock.mock.calls
+        .filter(([url, init]) => url === "/api/v1/jobs" && init?.method === "POST")
+        .map(([, init]) => JSON.parse(String(init?.body)) as Record<string, unknown>);
+
+    it("uses the short edge of a vertical source and posts the matching concrete variant", async () => {
+      // Backend-style label "1920p" must never be trusted or shown.
+      const { fetchMock, user } = await analyzeWith(
+        resultWith(
+          video("video-best", 1080, 1920, "Best Available (1920p)"),
+          video("video-1920", 1080, 1920, "1920p"),
+        ),
+      );
+      expect(videoRows()).toEqual(["Best Available", "Up to 1080p"]);
+      expect(screen.queryByText(/1920p/)).not.toBeInTheDocument();
+      // Selected row reveals the reliable real source size.
+      expect(screen.getByText("Source 1080×1920")).toBeInTheDocument();
+
+      await user.click(quality("Up to 1080p"));
+      expect(quality("Up to 1080p")).toBeChecked();
+      expect(screen.getByText("Source 1080×1920")).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "Download" }));
+      await screen.findByText("Queued");
+      expect(postedBodies(fetchMock)).toEqual([
+        {
+          analysis_id: singleResult.analysis_id,
+          variant_id: "video-1920",
+          output_profile: "original",
+          destination: "app_library",
+        },
+      ]);
+    });
+
+    it("defaults to Best Available and posts the video-best variant", async () => {
+      const { fetchMock, user } = await analyzeWith(singleResult);
+      expect(quality("Best Available")).toBeChecked();
+      expect(quality("Up to 1080p")).not.toBeChecked();
+      expect(quality("Up to 720p")).not.toBeChecked();
+      // Source facts of the selected row only; small and exact.
+      expect(screen.getByText("Source 1920×1080")).toBeInTheDocument();
+      expect(screen.queryByText(/Exact/i)).not.toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "Download" }));
+      await screen.findByText("Queued");
+      expect(postedBodies(fetchMock)[0]).toMatchObject({
+        variant_id: "video-best",
+        output_profile: "original",
+      });
+    });
+
+    it("shows a non-standard source maximum under the smallest covering ceiling only", async () => {
+      await analyzeWith(
+        resultWith(
+          video("video-best", 1080, 608),
+          video("video-608", 1080, 608),
+        ),
+      );
+      expect(videoRows()).toEqual(["Best Available", "Up to 720p"]);
+    });
+
+    it("maps 858 to 1080, never offers a ceiling above it and caps at 2160", async () => {
+      await analyzeWith(
+        resultWith(video("video-best", 1526, 858), video("video-858", 1526, 858), video("video-480", 854, 480)),
+      );
+      expect(videoRows()).toEqual(["Best Available", "Up to 1080p", "Up to 720p", "Up to 480p"]);
+    });
+
+    it("ends the ceiling list at 2160 for a larger source while Best may be higher", async () => {
+      await analyzeWith(
+        resultWith(
+          video("video-best", 7680, 4320),
+          video("video-4320", 7680, 4320),
+          video("video-2160", 3840, 2160),
+        ),
+      );
+      expect(videoRows()).toEqual(["Best Available", "Up to 2160p"]);
+      expect(screen.getByText("Source 7680×4320")).toBeInTheDocument();
+    });
+
+    it("offers only Best Available when no reliable dimension exists", async () => {
+      await analyzeWith(
+        resultWith(
+          video("video-best", null, null, "Best Available (4320p)"),
+          video("video-label-8k", null, null, "8K"),
+        ),
+      );
+      expect(videoRows()).toEqual(["Best Available"]);
+      // No exact size without both dimensions: no misleading number.
+      expect(screen.queryByText(/^Source \d/)).not.toBeInTheDocument();
+    });
+
+    it("uses a single known positive dimension as a safe bound without claiming a size", async () => {
+      const { user } = await analyzeWith(
+        resultWith(video("video-best", null, 720), video("video-720", null, 720)),
+      );
+      expect(videoRows()).toEqual(["Best Available", "Up to 720p"]);
+      await user.click(quality("Up to 720p"));
+      expect(screen.queryByText(/^Source \d/)).not.toBeInTheDocument();
+    });
+
+    it("keeps separate radios when two ceilings resolve to the same variant", async () => {
+      const { fetchMock, user } = await analyzeWith(
+        resultWith(
+          video("video-best", 1920, 1080),
+          video("video-1080", 1920, 1080),
+          video("video-480", 854, 480),
+        ),
+      );
+      expect(videoRows()).toEqual(["Best Available", "Up to 1080p", "Up to 720p", "Up to 480p"]);
+      await user.click(quality("Up to 720p"));
+      expect(quality("Up to 720p")).toBeChecked();
+      expect(quality("Up to 480p")).not.toBeChecked();
+      expect(quality("Up to 1080p")).not.toBeChecked();
+      await user.click(quality("Up to 480p"));
+      expect(quality("Up to 480p")).toBeChecked();
+      expect(quality("Up to 720p")).not.toBeChecked();
+      await user.click(screen.getByRole("button", { name: "Download" }));
+      await screen.findByText("Queued");
+      expect(postedBodies(fetchMock)[0]).toMatchObject({ variant_id: "video-480" });
+    });
+
+    it("never lets the Best Available clone join the ceiling pool and keeps analysis order on ties", async () => {
+      // The clone claims 1080 but no concrete format does: no 1080 ceiling.
+      const { fetchMock, user } = await analyzeWith(
+        resultWith(
+          video("video-best", 1920, 1080),
+          video("video-first", 1280, 720),
+          video("video-second", 1280, 720),
+        ),
+      );
+      expect(videoRows()).toEqual(["Best Available", "Up to 720p"]);
+      await user.click(quality("Up to 720p"));
+      await user.click(screen.getByRole("button", { name: "Download" }));
+      await screen.findByText("Queued");
+      expect(postedBodies(fetchMock)[0]).toMatchObject({ variant_id: "video-first" });
+    });
+
+    it("shows an approximate size with ~, the same estimate on every ceiling a format represents", async () => {
+      const best = { ...video("video-best", 1920, 1080), filesize_bytes: null, filesize_approx_bytes: 5_000_000 };
+      const concrete = { ...video("video-1080", 1920, 1080), filesize_bytes: null, filesize_approx_bytes: 5_000_000 };
+      const small = { ...video("video-480", 854, 480), filesize_bytes: 30_000_000, filesize_approx_bytes: null };
+      await analyzeWith(resultWith(best, concrete, small));
+      expect(videoRows()).toEqual(["Best Available", "Up to 1080p", "Up to 720p", "Up to 480p"]);
+      // Best + 1080 use the approximate size; 720 and 480 both resolve to the 480 format.
+      expect(screen.getAllByText("~4.8 MiB")).toHaveLength(2);
+      expect(screen.getAllByText("28.6 MiB")).toHaveLength(2);
+      // Size never leaks into the radio's accessible name.
+      expect(quality("Up to 720p")).toHaveAccessibleDescription("28.6 MiB");
+    });
+
+    it("associates the selected source size with its radio", async () => {
+      await analyzeWith(resultWith(video("video-best", 1080, 1920), video("video-v", 1080, 1920)));
+      expect(quality("Best Available")).toHaveAccessibleDescription(/Source 1080×1920/);
+      expect(quality("Up to 1080p")).not.toHaveAccessibleDescription(/Source/);
+    });
+
+    it("offers Best Available only for a single over-2160 variant", async () => {
+      await analyzeWith(resultWith(video("video-best", 7680, 4320), video("video-4320", 7680, 4320)));
+      expect(videoRows()).toEqual(["Best Available"]);
+    });
+
+    it("resets the quality choice on a new analysis, even with a repeated analysis id", async () => {
+      const { fetchMock, user } = await analyzeWith(singleResult);
+      await user.click(quality("Up to 720p"));
+      await user.click(screen.getByRole("button", { name: "Analyze" }));
+      await waitFor(() => expect(quality("Up to 720p")).not.toBeChecked());
+      expect(fetchMock.mock.calls.filter(([url]) => url === "/api/v1/analysis")).toHaveLength(2);
+      expect(quality("Best Available")).toBeChecked();
+      await user.click(screen.getByRole("button", { name: "Download" }));
+      await screen.findByText("Queued");
+      expect(postedBodies(fetchMock)[0]).toMatchObject({ variant_id: "video-best" });
+    });
+
+    it("drops the video choice and keeps Original output when switching to audio and back", async () => {
+      const { fetchMock, user } = await analyzeWith(singleResult);
+      await user.click(quality("Up to 720p"));
+      await user.click(
+        within(screen.getByRole("group", { name: "Audio formats" })).getByRole("radio", { name: /opus/i }),
+      );
+      for (const radio of within(screen.getByRole("group", { name: "Video formats" })).getAllByRole("radio")) {
+        expect(radio).not.toBeChecked();
+      }
+      expect(screen.queryByText(/^Source \d/)).not.toBeInTheDocument();
+      await user.click(quality("Best Available"));
+      expect(quality("Best Available")).toBeChecked();
+      await user.click(screen.getByRole("button", { name: "Download" }));
+      await screen.findByText("Queued");
+      expect(postedBodies(fetchMock)).toEqual([
+        {
+          analysis_id: singleResult.analysis_id,
+          variant_id: "video-best",
+          output_profile: "original",
+          destination: "app_library",
+        },
+      ]);
     });
   });
 
@@ -1101,7 +1340,7 @@ describe("NewDownloadPage", () => {
 
       await user.click(outputRadio("MP4 (compatible)"));
       // 720p is a muxed variant: still video, so the choice survives.
-      await user.click(sourceRadio("Video formats", /^720p/));
+      await user.click(sourceRadio("Video formats", /^Up to 720p/));
       expect(outputRadio("MP4 (compatible)")).toBeChecked();
       await user.click(screen.getByRole("button", { name: "Download" }));
       await screen.findByText("Queued");
@@ -1119,7 +1358,7 @@ describe("NewDownloadPage", () => {
 
       await user.click(sourceRadio("Audio formats", /opus/i));
       await user.click(outputRadio("MP3"));
-      await user.click(sourceRadio("Video formats", /^720p/));
+      await user.click(sourceRadio("Video formats", /^Up to 720p/));
       expect(outputRadio("Original")).toBeChecked();
       await user.click(sourceRadio("Audio formats", /opus/i));
       expect(outputRadio("Original / Best Available")).toBeChecked();

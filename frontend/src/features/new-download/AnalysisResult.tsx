@@ -1,14 +1,20 @@
 import type { ReactNode } from "react";
 import type { NormalizedAnalysis, NormalizedFormat } from "../../api/analysis";
 import type { CollectionMode, OutputMediaKind, OutputProfile } from "../../api/jobs";
-import { formatFileSize, formatDuration } from "./format";
+import { formatDuration } from "./format";
 import { platformLabel } from "./platforms";
 import { CollectionSelection } from "./CollectionSelection";
 import { OutputProfileSelect } from "./OutputProfileSelect";
+import { fileSizeLabel, type VideoQualityOption } from "./videoQuality";
 
 interface AnalysisResultProps {
   result: NormalizedAnalysis;
   selectedVariantId: string | null;
+  /** Single-video rows: Best Available plus source-supported short-edge ceilings. */
+  videoQualityOptions: readonly VideoQualityOption[];
+  /** Selected quality row key; rows are separate identities even for one variant. */
+  selectedVideoQualityKey: string | null;
+  onSelectVideoQuality: (key: string) => void;
   /** Snapshot-scoped collection selection; empty for single media. */
   selectedCollectionItemIds: readonly string[];
   /** Explicit collection-level mode; null until the user chooses one. */
@@ -31,22 +37,7 @@ interface AnalysisResultProps {
   onUseDetectedPlatform: (platform: string) => void;
 }
 
-function sizeLabel(format: NormalizedFormat): string | null {
-  if (format.filesize_bytes != null) {
-    return formatFileSize(format.filesize_bytes);
-  }
-  const approx = formatFileSize(format.filesize_approx_bytes);
-  return approx ? `~${approx}` : null;
-}
-
-function videoLabel(format: NormalizedFormat): string {
-  // Application-level choice label from the backend analysis (e.g.
-  // "Best Available (1080p)", "720p"); low-level codec/container/fps and
-  // kind details stay out of the primary video list (PRODUCT_SPEC §9).
-  const name = format.label ?? format.resolution_label ?? "Video";
-  const size = sizeLabel(format);
-  return size ? `${name} · ${size}` : name;
-}
+const sizeLabel = fileSizeLabel;
 
 function audioLabel(format: NormalizedFormat): string {
   const parts: string[] = [];
@@ -61,6 +52,9 @@ function audioLabel(format: NormalizedFormat): string {
 export function AnalysisResult({
   result,
   selectedVariantId,
+  videoQualityOptions,
+  selectedVideoQualityKey,
+  onSelectVideoQuality,
   selectedCollectionItemIds,
   collectionMode,
   outputKind,
@@ -78,7 +72,6 @@ export function AnalysisResult({
   onUseDetectedPlatform,
 }: AnalysisResultProps) {
   const duration = formatDuration(result.duration_seconds);
-  const videoFormats = result.formats.filter((format) => format.kind !== "audio_only");
   const audioFormats = result.formats.filter((format) => format.kind === "audio_only");
   const isCollection = result.content_type === "collection";
   const collection = result.collection ?? null;
@@ -254,7 +247,7 @@ export function AnalysisResult({
             </section>
           ) : (
             <>
-              {videoFormats.length > 0 && (
+              {videoQualityOptions.length > 0 && (
                 <section
                   className="format-group"
                   role="group"
@@ -262,21 +255,47 @@ export function AnalysisResult({
                 >
                   <h3 id="video-formats-heading">Video formats</h3>
                   <ul>
-                    {videoFormats.map((format) => (
-                      <li key={format.variant_id} className="format-item">
-                        <label className="format-option">
-                          <input
-                            type="radio"
-                            name="variant"
-                            value={format.variant_id}
-                            checked={selectedVariantId === format.variant_id}
-                            disabled={selectionPending}
-                            onChange={() => onSelectVariant(format.variant_id)}
-                          />
-                          <span className="format-label">{videoLabel(format)}</span>
-                        </label>
-                      </li>
-                    ))}
+                    {videoQualityOptions.map((option) => {
+                      const checked = selectedVideoQualityKey === option.key;
+                      const sizeId = `quality-${option.key}-size`;
+                      const sourceId = `quality-${option.key}-source`;
+                      const showSource = checked && option.sourceSize != null;
+                      const describedBy = [
+                        option.fileSize != null ? sizeId : "",
+                        showSource ? sourceId : "",
+                      ].join(" ").trim();
+                      return (
+                        <li key={option.key} className="format-item">
+                          <label className="format-option">
+                            <input
+                              type="radio"
+                              name="variant"
+                              value={option.key}
+                              checked={checked}
+                              disabled={selectionPending}
+                              aria-describedby={describedBy.length > 0 ? describedBy : undefined}
+                              onChange={() => onSelectVideoQuality(option.key)}
+                            />
+                            <span className="format-label">
+                              {option.labelPrefix && (
+                                <>
+                                  <span className="quality-prefix">{option.labelPrefix}</span>{" "}
+                                </>
+                              )}
+                              {option.labelMain}
+                            </span>
+                          </label>
+                          {option.fileSize != null && (
+                            <span className="quality-detail" id={sizeId}>{option.fileSize}</span>
+                          )}
+                          {showSource && (
+                            <span className="quality-detail" id={sourceId}>
+                              Source {option.sourceSize}
+                            </span>
+                          )}
+                        </li>
+                      );
+                    })}
                   </ul>
                 </section>
               )}

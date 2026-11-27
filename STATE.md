@@ -34,7 +34,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
   single başarılı convert+iptal ek testi eksik. Üretim hatası bulunmadı.
 - Audit (ARCH §59): Settings → S1/M7; son seçim localStorage v0.1. Library detay (M9-L): başlığa tıklanabilirlik belirsiz, detay sayfa sonunda; popup/satır içi genişleme kararı açık.
 - New Download adı v0.1'de kalır; History satır içi detay M6.5 UI'a alındı. K2 v0.2.
-- M6.5 UI onaylı: tekil videoda kaynakla desteklenen standart kısa kenar tavanları, varsayılan `Best Available`, ayrı çıktı biçimi. Küçük `Up to`; seçilen satır bilinen kaynak boyutunu açar, ayrı Exact modu yok. Stil ve PRODUCT_SPEC §9 uyumu bekliyor. Media Preview “Single item” etiketi sadeleştirilecek; diğer UI notları ARCH §59.
+- Smoke (M6.5-UI-Quality): tekil 1080×1920 → `Up to 1080p`, `Best Available` varsayılanı, seçili kaynak ölçüsü ve ayrı çıktı biçimi. Sırada M6.5 UI: History satır içi detay veya Media Preview/hata metinleri.
 - network_error/Deno bağı kanıtsız. Analiz +25/hepsi v0.2.
 - Fedora Python 3.14: child storage pidfd testi düzeltme diff'inde geçti; full gate çalışmadı.
 - should-fix: child Skip Existing Activity uyarısı yok; ayrı lifecycle/transaction işi. Queue satırsız kayıp Retry yanıtı + polling testi açık.
