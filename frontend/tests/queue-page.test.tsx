@@ -146,9 +146,19 @@ async function mount({ open = true } = {}) {
 
 const activeRegion = () => within(screen.getByRole("region", { name: "Active and queued" }));
 const historyRegion = () => within(screen.getByRole("region", { name: "History" }));
-const row = (title: string) => within(screen.getByRole("listitem", { name: title }));
+const rowItem = (title: string) => screen.getByRole("listitem", { name: title });
+// Scoped to the row summary/action area so an inline detail panel inside the
+// same list item never makes role queries (Retry, alert, status text) ambiguous.
+const row = (title: string) => {
+  const summary = rowItem(title).querySelector<HTMLElement>(":scope > .queue-row-summary");
+  if (!summary) throw new Error(`No summary for ${title}`);
+  return within(summary);
+};
+// Only queue rows: nested Activity/collection list items are not rows.
 const rowTitles = (region: ReturnType<typeof within>) =>
-  region.queryAllByRole("listitem").map((item: HTMLElement) => item.getAttribute("aria-label"));
+  region.queryAllByRole("listitem")
+    .filter((item: HTMLElement) => item.classList.contains("queue-row"))
+    .map((item: HTMLElement) => item.getAttribute("aria-label"));
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
@@ -714,6 +724,289 @@ describe("QueuePage actions", () => {
     await settle();
     expect(count((url) => url === "/api/v1/jobs/a/retry")).toBe(1);
     expect(rowTitles(activeRegion())).toEqual(["Job a"]);
+  });
+});
+
+describe("QueuePage inline History details", () => {
+  const detailRegion = () => within(screen.getByRole("region", { name: "Job details" }));
+  const failedJob = (id: string, overrides: Partial<Job> = {}) =>
+    job(id, { status: "failed", error: retryable, updated_at: at(5), ...overrides });
+
+  function seed() {
+    const items = [
+      failedJob("f", { created_at: at(9) }),
+      job("g", { status: "completed", created_at: at(8) }),
+    ];
+    server.pages.set("", { jobs: items, next_cursor: null });
+    for (const entry of items) {
+      server.jobs.set(entry.id, entry);
+      server.activity.set(entry.id, []);
+    }
+  }
+
+  it("renders the History panel inside the selected row only, with one panel and linked toggle", async () => {
+    seed();
+    const { user } = await mount();
+    await user.click(row("Job f").getByRole("button", { name: "Details" }));
+    await settle();
+
+    const panel = screen.getByRole("region", { name: "Job details" });
+    expect(screen.getAllByRole("region", { name: "Job details" })).toHaveLength(1);
+    expect(document.querySelectorAll("#queue-detail")).toHaveLength(1);
+    expect(rowItem("Job f")).toContainElement(panel);
+    expect(rowItem("Job g")).not.toContainElement(panel);
+    expect(within(rowItem("Job f")).getAllByRole("region", { name: "Job details" })).toHaveLength(1);
+    expect(within(rowItem("Job g")).queryByRole("region", { name: "Job details" })).not.toBeInTheDocument();
+    // Directly beneath the row summary, after it in DOM order.
+    expect(rowItem("Job f").lastElementChild).toBe(panel);
+    expect(rowTitles(historyRegion())).toEqual(["Job f", "Job g"]);
+
+    const toggle = row("Job f").getByRole("button", { name: "Hide details" });
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(toggle).toHaveAttribute("aria-controls", "queue-detail");
+    expect(toggle.getAttribute("aria-controls")).toBe(panel.id);
+    expect(row("Job g").getByRole("button", { name: "Details" })).toHaveAttribute("aria-expanded", "false");
+
+    // Switching rows moves the single panel.
+    await user.click(row("Job g").getByRole("button", { name: "Details" }));
+    await settle();
+    expect(screen.getAllByRole("region", { name: "Job details" })).toHaveLength(1);
+    expect(rowItem("Job g")).toContainElement(screen.getByRole("region", { name: "Job details" }));
+    expect(within(rowItem("Job f")).queryByRole("region", { name: "Job details" })).not.toBeInTheDocument();
+    expect(row("Job f").getByRole("button", { name: "Details" })).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("keeps the Active panel at the top, outside the row", async () => {
+    server.active = [job("a", { status: "downloading" })];
+    server.jobs.set("a", job("a", { status: "downloading" }));
+    server.activity.set("a", []);
+    const { user } = await mount();
+    await user.click(row("Job a").getByRole("button", { name: "Details" }));
+    await settle();
+
+    const panel = screen.getByRole("region", { name: "Job details" });
+    expect(rowItem("Job a")).not.toContainElement(panel);
+    expect(within(activeRegion().getByRole("list")).queryByRole("region", { name: "Job details" })).not.toBeInTheDocument();
+    expect(panel.compareDocumentPosition(screen.getByRole("region", { name: "Active and queued" })))
+      .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(row("Job a").getByRole("button", { name: "Hide details" })).toHaveAttribute("aria-controls", "queue-detail");
+  });
+
+  it("closes inline from the panel, returns focus to the row toggle and keeps on-demand reads single", async () => {
+    seed();
+    const { user } = await mount();
+    expect(count((url) => url.includes("/activity"))).toBe(0);
+    await user.click(row("Job f").getByRole("button", { name: "Details" }));
+    await settle();
+    expect(count((url) => url === "/api/v1/jobs/f/activity")).toBe(1);
+    expect(count((url) => url === "/api/v1/jobs/g/activity")).toBe(0);
+
+    await user.click(detailRegion().getByRole("button", { name: "Close details" }));
+    expect(screen.queryByRole("region", { name: "Job details" })).not.toBeInTheDocument();
+    expect(row("Job f").getByRole("button", { name: "Details" })).toHaveFocus();
+    expect(row("Job f").getByRole("button", { name: "Details" })).not.toHaveAttribute("aria-controls");
+  });
+
+  it("closes through the row toggle without moving focus elsewhere", async () => {
+    seed();
+    const { user } = await mount();
+    await user.click(row("Job f").getByRole("button", { name: "Details" }));
+    await settle();
+    await user.click(row("Job f").getByRole("button", { name: "Hide details" }));
+    expect(screen.queryByRole("region", { name: "Job details" })).not.toBeInTheDocument();
+    expect(row("Job f").getByRole("button", { name: "Details" })).toHaveFocus();
+  });
+
+  it("does not steal focus on background updates", async () => {
+    seed();
+    const { stream, user } = await mount();
+    await user.click(row("Job g").getByRole("button", { name: "Details" }));
+    await settle();
+    const other = row("Job f").getByRole("button", { name: "Retry" });
+    other.focus();
+
+    stream.emit("job.updated", failedJob("f", { updated_at: at(20), title: "Job f" }));
+    stream.open();
+    await settle();
+    expect(rowItem("Job g")).toContainElement(screen.getByRole("region", { name: "Job details" }));
+    expect(row("Job f").getByRole("button", { name: "Retry" })).toHaveFocus();
+  });
+
+  it("falls back to the single top panel when a reset drops the row, and returns inline when it is back", async () => {
+    seed();
+    const { stream, user } = await mount();
+    await user.click(row("Job f").getByRole("button", { name: "Details" }));
+    await settle();
+    expect(rowItem("Job f")).toContainElement(detailRegion().getByRole("heading", { name: "Job f" }));
+
+    server.pages.set("", { jobs: [job("h", { status: "completed", created_at: at(9) })], next_cursor: "c2" });
+    stream.open();
+    await settle();
+    expect(screen.queryByRole("listitem", { name: "Job f" })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("region", { name: "Job details" })).toHaveLength(1);
+    const top = screen.getByRole("region", { name: "Job details" });
+    expect(historyRegion().queryByRole("region", { name: "Job details" })).not.toBeInTheDocument();
+    expect(top.compareDocumentPosition(screen.getByRole("region", { name: "Active and queued" })))
+      .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+
+    // Row back in History: rendered only inline, never twice.
+    server.pages.set("", { jobs: [failedJob("f", { created_at: at(9) })], next_cursor: null });
+    stream.open();
+    await settle();
+    expect(screen.getAllByRole("region", { name: "Job details" })).toHaveLength(1);
+    expect(rowItem("Job f")).toContainElement(screen.getByRole("region", { name: "Job details" }));
+    expect(document.querySelectorAll("#queue-detail")).toHaveLength(1);
+  });
+
+  it("relocates the panel to the top on inline Retry, keeps one panel and moves focus to it", async () => {
+    seed();
+    server.actions.set("/api/v1/jobs/f/retry", () => Promise.resolve(json(job("f", { status: "queued", updated_at: at(9) }))));
+    const { user } = await mount();
+    await user.click(row("Job f").getByRole("button", { name: "Details" }));
+    await settle();
+    expect(rowItem("Job f")).toContainElement(screen.getByRole("region", { name: "Job details" }));
+
+    await user.click(detailRegion().getByRole("button", { name: "Retry" }));
+    await settle();
+    expect(rowTitles(activeRegion())).toEqual(["Job f"]);
+    expect(rowTitles(historyRegion())).toEqual(["Job g"]);
+    expect(screen.getAllByRole("region", { name: "Job details" })).toHaveLength(1);
+    const panel = screen.getByRole("region", { name: "Job details" });
+    expect(rowItem("Job f")).not.toContainElement(panel);
+    expect(panel).toHaveFocus();
+    expect(detailRegion().getByText("Queued")).toBeInTheDocument();
+    expect(row("Job f").getByRole("button", { name: "Hide details" })).toHaveAttribute("aria-controls", "queue-detail");
+  });
+
+  it("shows an inline panel-started Retry error once, inside the panel and not in the row summary", async () => {
+    seed();
+    server.actions.set("/api/v1/jobs/f/retry", () => Promise.resolve(serverError()));
+    const { user } = await mount();
+    await user.click(row("Job f").getByRole("button", { name: "Details" }));
+    await settle();
+    await user.click(detailRegion().getByRole("button", { name: "Retry" }));
+    await settle();
+
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    expect(detailRegion().getByRole("alert")).toHaveTextContent("Server exploded.");
+    expect(row("Job f").queryByRole("alert")).not.toBeInTheDocument();
+    expect(rowItem("Job f")).toContainElement(screen.getByRole("alert"));
+    expect(screen.getByRole("region", { name: "Job details" })).not.toHaveFocus();
+  });
+});
+
+describe("QueuePage Activity expanded state and Retry focus", () => {
+  const detailRegion = () => within(screen.getByRole("region", { name: "Job details" }));
+  const failedJob = (id: string, overrides: Partial<Job> = {}) =>
+    job(id, { status: "failed", error: retryable, updated_at: at(5), ...overrides });
+  const activityToggle = () => detailRegion().getByRole("button", { name: /Activity/ });
+
+  function seed() {
+    const items = [
+      failedJob("f", { created_at: at(9) }),
+      job("g", { status: "completed", created_at: at(8) }),
+    ];
+    server.pages.set("", { jobs: items, next_cursor: null });
+    for (const entry of items) {
+      server.jobs.set(entry.id, entry);
+      server.activity.set(entry.id, [activity(1, entry.id, `Saw ${entry.id}`)]);
+    }
+  }
+
+  async function openExpanded(user: ReturnType<typeof userEvent.setup>, title: string) {
+    await user.click(row(title).getByRole("button", { name: "Details" }));
+    await settle();
+    expect(activityToggle()).toHaveAttribute("aria-expanded", "false");
+    await user.click(activityToggle());
+    expect(activityToggle()).toHaveAttribute("aria-expanded", "true");
+  }
+
+  it("keeps Activity expanded and visible when a reset moves the panel inline → top → inline", async () => {
+    seed();
+    const { stream, user } = await mount();
+    await openExpanded(user, "Job f");
+    expect(detailRegion().getByText("Saw f")).toBeInTheDocument();
+
+    server.pages.set("", { jobs: [job("h", { status: "completed", created_at: at(9) })], next_cursor: "c2" });
+    stream.open();
+    await settle();
+    expect(screen.queryByRole("listitem", { name: "Job f" })).not.toBeInTheDocument();
+    expect(activityToggle()).toHaveAttribute("aria-expanded", "true");
+    expect(detailRegion().getByText("Saw f")).toBeInTheDocument();
+
+    server.pages.set("", { jobs: [failedJob("f", { created_at: at(9) })], next_cursor: null });
+    stream.open();
+    await settle();
+    expect(rowItem("Job f")).toContainElement(screen.getByRole("region", { name: "Job details" }));
+    expect(activityToggle()).toHaveAttribute("aria-expanded", "true");
+    expect(detailRegion().getByText("Saw f")).toBeInTheDocument();
+  });
+
+  it("keeps Activity expanded when inline Retry relocates the panel to the top", async () => {
+    seed();
+    server.actions.set("/api/v1/jobs/f/retry", () => Promise.resolve(json(job("f", { status: "queued", updated_at: at(9) }))));
+    const { user } = await mount();
+    await openExpanded(user, "Job f");
+
+    await user.click(detailRegion().getByRole("button", { name: "Retry" }));
+    await settle();
+    expect(rowTitles(activeRegion())).toEqual(["Job f"]);
+    expect(rowItem("Job f")).not.toContainElement(screen.getByRole("region", { name: "Job details" }));
+    expect(activityToggle()).toHaveAttribute("aria-expanded", "true");
+    expect(detailRegion().getByText("Saw f")).toBeInTheDocument();
+  });
+
+  it("resets Activity to collapsed on another job and on every close/reopen, including the same ID", async () => {
+    seed();
+    const { stream, user } = await mount();
+    await openExpanded(user, "Job f");
+
+    await user.click(row("Job g").getByRole("button", { name: "Details" }));
+    await settle();
+    expect(activityToggle()).toHaveAttribute("aria-expanded", "false");
+
+    await user.click(activityToggle());
+    await user.click(row("Job g").getByRole("button", { name: "Hide details" }));
+    await user.click(row("Job g").getByRole("button", { name: "Details" }));
+    await settle();
+    expect(activityToggle()).toHaveAttribute("aria-expanded", "false");
+
+    await user.click(activityToggle());
+    await user.click(detailRegion().getByRole("button", { name: "Close details" }));
+    await user.click(row("Job g").getByRole("button", { name: "Details" }));
+    await settle();
+    expect(activityToggle()).toHaveAttribute("aria-expanded", "false");
+
+    // A 404 close also resets.
+    await user.click(activityToggle());
+    server.jobs.delete("g");
+    stream.open();
+    await settle();
+    expect(screen.queryByRole("region", { name: "Job details" })).not.toBeInTheDocument();
+    server.jobs.set("g", job("g", { status: "completed", created_at: at(8) }));
+    await user.click(row("Job g").getByRole("button", { name: "Details" }));
+    await settle();
+    expect(activityToggle()).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("keeps focus on another control chosen while the inline Retry is pending", async () => {
+    seed();
+    const retry = deferred();
+    server.actions.set("/api/v1/jobs/f/retry", () => retry.promise);
+    const { user } = await mount();
+    await user.click(row("Job f").getByRole("button", { name: "Details" }));
+    await settle();
+    await user.click(detailRegion().getByRole("button", { name: "Retry" }));
+    const other = row("Job g").getByRole("button", { name: "Details" });
+    other.focus();
+    expect(other).toHaveFocus();
+
+    retry.resolve(json(job("f", { status: "queued", updated_at: at(9) })));
+    await settle();
+    expect(rowTitles(activeRegion())).toEqual(["Job f"]);
+    expect(screen.getAllByRole("region", { name: "Job details" })).toHaveLength(1);
+    expect(other).toHaveFocus();
+    expect(screen.getByRole("region", { name: "Job details" })).not.toHaveFocus();
   });
 });
 

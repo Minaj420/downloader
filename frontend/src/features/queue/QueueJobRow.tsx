@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { canRetryJob, isActiveJob, type Job } from "../../api/jobs";
 import { formatFileSize } from "../new-download/format";
 import { QUEUE_STATUS_LABELS } from "./queueState";
@@ -11,6 +12,8 @@ interface QueueJobRowProps {
   onCancel: () => void;
   onRetry: () => void;
   onToggleDetail: () => void;
+  /** Inline detail panel (History only), rendered beneath the row summary. */
+  children?: ReactNode;
 }
 
 /** Compact row: no per-row Activity or children requests until Details opens. */
@@ -22,6 +25,7 @@ export function QueueJobRow({
   onCancel,
   onRetry,
   onToggleDetail,
+  children,
 }: QueueJobRowProps) {
   const active = isActiveJob(job.status);
   const collection = job.job_type === "collection";
@@ -38,48 +42,52 @@ export function QueueJobRow({
 
   return (
     <li className="queue-row" aria-label={job.title}>
-      <div className="queue-row-main">
-        <span className="queue-row-title">{job.title}</span>
-        <span className={`badge badge-status badge-status-${job.status}`}>
-          {QUEUE_STATUS_LABELS[job.status]}
-        </span>
-      </div>
-      {active && (
-        <p className="job-progress-meta">
-          <span>{percent}%</span>
-          {collection && (
-            <span>
-              {job.completed_items ?? "?"} / {job.total_items ?? "?"} items
-            </span>
-          )}
-          {speed && <span>{speed}/s</span>}
-        </p>
-      )}
-      {job.status === "failed" && job.error && (
-        <p className="job-result job-error">{job.error.message}</p>
-      )}
-      {error && <p className="job-result job-error" role="alert">{error}</p>}
-      <div className="queue-row-actions">
+      <div className="queue-row-summary">
+        <div className="queue-row-main">
+          <span className="queue-row-title">{job.title}</span>
+          <span className={`badge badge-status badge-status-${job.status}`}>
+            {QUEUE_STATUS_LABELS[job.status]}
+          </span>
+        </div>
         {active && (
-          <button type="button" className="button-danger" onClick={onCancel} disabled={busy}>
-            {pendingAction === "cancel" ? "Cancelling…" : "Cancel"}
-          </button>
+          <p className="job-progress-meta">
+            <span>{percent}%</span>
+            {collection && (
+              <span>
+                {job.completed_items ?? "?"} / {job.total_items ?? "?"} items
+              </span>
+            )}
+            {speed && <span>{speed}/s</span>}
+          </p>
         )}
-        {canRetryJob(job) && (
-          <button type="button" className="button-secondary" onClick={onRetry} disabled={busy}>
-            {pendingAction === "retry" ? "Retrying…" : "Retry"}
-          </button>
+        {job.status === "failed" && job.error && (
+          <p className="job-result job-error">{job.error.message}</p>
         )}
-        <button
-          type="button"
-          className="button-quiet"
-          aria-expanded={detailOpen}
-          aria-controls={detailOpen ? "queue-detail" : undefined}
-          onClick={onToggleDetail}
-        >
-          {detailOpen ? "Hide details" : "Details"}
-        </button>
+        {error && <p className="job-result job-error" role="alert">{error}</p>}
+        <div className="queue-row-actions">
+          {active && (
+            <button type="button" className="button-danger" onClick={onCancel} disabled={busy}>
+              {pendingAction === "cancel" ? "Cancelling…" : "Cancel"}
+            </button>
+          )}
+          {canRetryJob(job) && (
+            <button type="button" className="button-secondary" onClick={onRetry} disabled={busy}>
+              {pendingAction === "retry" ? "Retrying…" : "Retry"}
+            </button>
+          )}
+          <button
+            type="button"
+            className="button-quiet"
+            aria-expanded={detailOpen}
+            aria-controls={detailOpen ? "queue-detail" : undefined}
+            data-job-toggle={job.id}
+            onClick={onToggleDetail}
+          >
+            {detailOpen ? "Hide details" : "Details"}
+          </button>
+        </div>
       </div>
+      {children}
     </li>
   );
 }

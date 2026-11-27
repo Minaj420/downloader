@@ -17,7 +17,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - M6.5-T2/T3 Fedora Compose PASS (Mutagen 1.48.1, MP3 etiket ve WAV); T3 hedefli 791 test/Ruff/mypy ve review PASS.
 - M6.5 metin etiketi kapandı: Compose Opus/MP3 etiket 2/2, MP3 oynatma, WAV 2/2 uyarısız, Shorts 2/2 oynatma/sıra, ses iptal 1/2 → Retry 2/2 kopyasız. Bu kapsamda plansız v0.1 zorunluluğu yok; M6.5 sunum UI/hata metinleri ayrı açık. ARCH §14 probe başlığı notu should-fix.
 - Accepted (M6.5-T2): düşen/yinelenen TXXX değişmeden reddedilebilir (ID3v2.4 dahil). Should-fix: seek hata ayrıntısı ve ses-önce çoklanmış Ogg testi.
-- Bekleyen toplu UI Compose smoke: Queue active/history, gezinme/F5 sonrası iş erişimi, detay/Activity, koleksiyon öğeleri, Load more ve yeniden bağlantı.
+- Toplu UI Compose smoke: Queue gezinme/F5, History satır içi tek detay, koleksiyon/Activity, Load more ve yeniden bağlantıda açık Activity'nin korunması.
 - Smoke (M6.5-UI-Retry): Details ve History'de uygun Retry, ortak pending/çift tık, hatanın başlatıldığı yerde görünmesi ve başarıda Active'e geçiş; uygun Cancel.
 - Smoke: Private video içeren playlist; satır devre dışı, Select All ve sayaç dışında.
 - Kullanıcı Compose PASS: Q2 Retry kaldığı yerden tamamlandı (22 Kasım); Q3-ACT eski Activity/Library, canlı Activity ve F5 sonrası geçmiş korundu (23 Kasım).
@@ -33,8 +33,8 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - should-fix: collection başarılı convert/caller-cancel testi sleep(0) ile deterministik değil;
   single başarılı convert+iptal ek testi eksik. Üretim hatası bulunmadı.
 - Audit (ARCH §59): Settings → S1/M7; son seçim localStorage v0.1. Library detay (M9-L): başlığa tıklanabilirlik belirsiz, detay sayfa sonunda; popup/satır içi genişleme kararı açık.
-- New Download adı v0.1'de kalır; History satır içi detay M6.5 UI'a alındı. K2 v0.2.
-- Smoke (M6.5-UI-Quality): tekil 1080×1920 → `Up to 1080p`, `Best Available` varsayılanı, seçili kaynak ölçüsü ve ayrı çıktı biçimi. Sırada M6.5 UI: History satır içi detay veya Media Preview/hata metinleri.
+- New Download adı v0.1'de kalır; K2 v0.2. M6.5-UI-History should-fix: yeniden bağlantıda taşınan panel içindeki klavye odağı kaybolabilir.
+- Smoke (M6.5-UI-Quality): tekil 1080×1920 → `Up to 1080p`, `Best Available` varsayılanı, seçili kaynak ölçüsü ve ayrı çıktı biçimi. Sırada M6.5 UI: Media Preview/hata metinleri.
 - network_error/Deno bağı kanıtsız. Analiz +25/hepsi v0.2.
 - Fedora Python 3.14: child storage pidfd testi düzeltme diff'inde geçti; full gate çalışmadı.
 - should-fix: child Skip Existing Activity uyarısı yok; ayrı lifecycle/transaction işi. Queue satırsız kayıp Retry yanıtı + polling testi açık.
