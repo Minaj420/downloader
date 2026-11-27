@@ -3,10 +3,12 @@ import json
 import os
 import shutil
 import threading
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, BinaryIO, cast
 
 import pytest
+from mutagen.flac import FLAC
 from sqlalchemy import select, update
 
 from app.domain.jobs import CollectionProfile, JobError, JobErrorCode, JobStatus
@@ -18,21 +20,30 @@ from app.integrations.ffmpeg import (
     FFmpegProcessor,
     VideoDimensions,
 )
+from app.integrations.mutagen_tags import TagError
 from app.integrations.ytdlp import DownloadProgress, YtDlpAnalyzer, YtDlpDownloader
 from app.models.jobs import ActivityEvent, DownloadJob, JobItem
 from app.models.library import LibraryItem, MediaFile
 from app.repositories import jobs
 from app.services import collection_child_runner as child_runner
+from app.services import storage_service
 from app.services.collection_child_runner import ChildResult, ChildRunnerDeps, run_collection_child
 from app.services.collection_persistence import (
     CollectionCancelRequestOutcome,
     stage_collection_cancel_request,
     stage_collection_retry,
 )
-from app.services.job_runner import _REMUX_FALLBACK_SAVED
-from app.services.storage_service import StorageService
+from app.services.job_runner import _REMUX_FALLBACK_SAVED, _TAG_FALLBACK_SAVED
+from app.services.storage_service import (
+    MediaFileTargetChangedError,
+    StagedEditResult,
+    StoragePathError,
+    StorageService,
+)
+from app.services.text_tags import TextTags
 from tests.test_collection_repository import child, factory, parent
 from tests.test_prepared_media import source
+from tests.test_staged_tag_copy import tiny_flac
 
 
 @pytest.fixture
@@ -59,6 +70,8 @@ class Adapters(YtDlpAnalyzer, YtDlpDownloader, FFmpegProcessor):
         self.conversions: list[tuple[str, str, str, bool, bool]] = []
         self.download_ext = "mp4"
         self.convert_error: BaseException | None = None
+        # ``None``: ``b"converted:" + input``; otherwise the exact output bytes.
+        self.convert_bytes: bytes | None = None
         self.dimensions: VideoDimensions | None = None
         self.probed: list[Path] = []
 
@@ -131,7 +144,8 @@ class Adapters(YtDlpAnalyzer, YtDlpDownloader, FFmpegProcessor):
             await self.on_convert()
         if self.convert_error is not None:
             raise self.convert_error
-        output_path.write_bytes(b"converted:" + input_path.read_bytes())
+        output_path.write_bytes(self.convert_bytes if self.convert_bytes is not None
+                                else b"converted:" + input_path.read_bytes())
 
 
 class Harness:
@@ -793,6 +807,11 @@ async def test_finalization_never_lies(tmp_path: Path, monkeypatch: pytest.Monke
 # --- M6.5c Collection Original WebM/Opus remux ---------------------------------------
 
 
+# Fake remux output with foreign (RIFF) magic: the tag writer reports this
+# ``.opus`` content unsupported, so it is published unchanged and silently.
+UNSUPPORTED_OPUS = b"RIFF fake remux output"
+
+
 def opus_source() -> dict[str, Any]:
     return {"formats": [{"format_id": "opus", "ext": "webm", "vcodec": "none",
                          "acodec": "opus", "abr": 160}]}
@@ -836,6 +855,7 @@ async def test_original_opus_child_remuxes_losslessly_without_warning(
     try:
         await h.seed("audio")
         original_opus(h)
+        h.adapters.convert_bytes = UNSUPPORTED_OPUS
         transitions = record_transitions(monkeypatch)
         committed: list[ActivityEvent] = []
         assert await h.run(committed=committed) == ChildResult.COMPLETED
@@ -853,7 +873,7 @@ async def test_original_opus_child_remuxes_losslessly_without_warning(
         assert (item.format, item.codec, item.bitrate) == ("opus", "opus", 160)
         assert [c.path for c in copies] == ["audio/Track.opus"]
         assert (h.storage.library_root / "audio" / "Track.opus").read_bytes() == (
-            b"converted:media")
+            UNSUPPORTED_OPUS)
         assert committed == [] and await h.warnings() == []
         assert not h.processes and not (tmp_path / "staging" / "child-2").exists()
     finally:
@@ -1077,6 +1097,498 @@ async def test_fallback_completion_rollback_leaves_no_warning_or_catalog(
         with pytest.raises(JobError) as caught:
             await h.run(committed=committed)
         assert caught.value.code == JobErrorCode.INTERNAL_ERROR
+        facts = await h.facts()
+        assert facts[0] == "finalizing" and facts[2] == 0 and facts[4] == 0
+        assert facts[5] is None and facts[6] == []
+        assert committed == [] and await h.warnings() == []
+        assert not h.processes
+    finally:
+        await h.engine.dispose()
+
+
+# --- M6.5-T4 Collection child audio text tags ------------------------------------------
+
+
+# Explicit source music fields plus probe fields that are never tag sources.
+TAGGED_PROBE: dict[str, Any] = {
+    "track": "Probe Track", "artists": ["A", "B"], "album": "Probe Album",
+    "track_number": 3, "title": "Probe Title", "playlist_index": 7,
+}
+# Ogg magic in an ``.m4a`` file: the writer reports it unsupported (no error).
+UNSUPPORTED_M4A = b"OggS\x00\x02 not m4a"
+
+
+def spy_tagging(
+    h: Harness, monkeypatch: pytest.MonkeyPatch,
+    after: Callable[[StagedEditResult], None] | None = None,
+) -> list[tuple[str, Path, StagedEditResult]]:
+    """Record each staged edit; ``after`` runs on the returned, still pinned result."""
+    seen: list[tuple[str, Path, StagedEditResult]] = []
+    real = h.storage.stage_edited_copy
+
+    async def spy(staging_key: str, prepared: Path,
+                  edit: Callable[[BinaryIO], bool]) -> StagedEditResult:
+        result = await real(staging_key, prepared, edit)
+        seen.append((staging_key, prepared, result))
+        if after is not None:
+            after(result)
+        return result
+
+    monkeypatch.setattr(h.storage, "stage_edited_copy", spy)
+    return seen
+
+
+def spy_placement(h: Harness, monkeypatch: pytest.MonkeyPatch) -> list[tuple[Path, Any]]:
+    seen: list[tuple[Path, Any]] = []
+    real = h.storage.place_child_final
+
+    async def place(key: str, output: Path, **kwargs: Any) -> Any:
+        seen.append((output, kwargs.get("source_identity")))
+        return await real(key, output, **kwargs)
+
+    monkeypatch.setattr(h.storage, "place_child_final", place)
+    return seen
+
+
+def staging_names(tmp_path: Path) -> list[str]:
+    folder = tmp_path / "staging" / "child-2"
+    return sorted(p.name for p in folder.iterdir()) if folder.exists() else []
+
+
+def tag_keys(path: Path) -> list[str]:
+    return sorted(key.upper() for key in FLAC(path).keys())
+
+
+async def warning_facts(h: Harness) -> list[tuple[str | None, str, str, Any]]:
+    return [(r.job_id, r.event_type, r.message, json.loads(r.details_json or "null"))
+            for r in await h.warnings()]
+
+
+async def loop_turn() -> None:
+    """One deterministic event-loop turn (no timing sleep)."""
+    loop = asyncio.get_running_loop()
+    responsive = loop.create_future()
+    loop.call_soon(responsive.set_result, None)
+    await asyncio.wait_for(responsive, 2)
+
+
+@pytest.mark.anyio
+async def test_audio_child_publishes_verified_tagged_explicit_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    h = Harness(tmp_path)
+    try:
+        await h.seed("audio", output="flac", playlist_index=40, track_number=41)
+        h.adapters.source = source() | TAGGED_PROBE
+        h.adapters.convert_bytes = tiny_flac()
+        edits = spy_tagging(h, monkeypatch)
+        placements = spy_placement(h, monkeypatch)
+        committed: list[ActivityEvent] = []
+        assert await h.run(committed=committed) == ChildResult.COMPLETED
+        [(key, prepared, result)] = edits
+        assert key == "child-2" and result.edited
+        assert prepared.name.startswith("converted-") and prepared.suffix == ".flac"
+        # The verified, pinned copy is the inode child placement is bound to.
+        assert placements == [(result.path, result.identity)]
+        item, copies = (await h.facts())[5:]
+        published = h.storage.library_root / "audio" / "Track.flac"
+        assert [c.path for c in copies] == ["audio/Track.flac"]
+        assert copies[0].size_bytes == published.stat().st_size
+        assert (item.title, item.format) == ("Track", "flac")
+        tags = FLAC(published)
+        # Source track wins over the title; explicit source track number only.
+        assert tags["TITLE"] == ["Probe Track"] and tags["ARTIST"] == ["A", "B"]
+        assert tags["ALBUM"] == ["Probe Album"] and tags["TRACKNUMBER"] == ["3"]
+        assert tag_keys(published) == ["ALBUM", "ARTIST", "TITLE", "TRACKNUMBER"]
+        assert committed == [] and await h.warnings() == []
+        assert not h.processes and not (tmp_path / "staging" / "child-2").exists()
+    finally:
+        await h.engine.dispose()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("probe", [
+    {},
+    {"title": "Probe Title", "track": "  ", "playlist_index": 7, "playlist_count": 9,
+     "uploader": "Uploader", "upload_date": "20200101"},
+], ids=["no_metadata", "non_tag_probe_fields"])
+async def test_child_title_is_tag_fallback_and_order_never_becomes_track_number(
+    tmp_path: Path, probe: dict[str, Any],
+) -> None:
+    h = Harness(tmp_path)
+    try:
+        # Persisted order/track columns are naming/collection facts only.
+        await h.seed("audio", output="flac", playlist_index=40, track_number=41)
+        h.adapters.source = source() | probe
+        h.adapters.convert_bytes = tiny_flac()
+        assert await h.run() == ChildResult.COMPLETED
+        published = h.storage.library_root / "audio" / "Track.flac"
+        assert FLAC(published)["TITLE"] == ["Track"]
+        assert tag_keys(published) == ["TITLE"]  # no track/disc/album/artist/date
+        assert await h.warnings() == []
+    finally:
+        await h.engine.dispose()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("probe,expected", [
+    ({"title": "  Probe Title \n"}, ["Probe Title"]),
+    ({"title": "Probe Title", "track": "Probe Track"}, ["Probe Track"]),  # track wins
+    ({"title": "   "}, None),
+    ({"title": 123}, None),
+    ({"title": "bad\x00"}, None),
+    ({}, None),
+], ids=["probe_title", "track_wins", "blank", "not_str", "nul", "missing"])
+async def test_probe_title_is_tag_fallback_only_without_persisted_title(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, probe: dict[str, Any],
+    expected: list[str] | None,
+) -> None:
+    h = Harness(tmp_path)
+    try:
+        await h.seed("audio", output="flac")
+        async with h.sessions() as session:
+            await session.execute(
+                update(JobItem).where(JobItem.id == "child-2").values(title=None))
+            await session.commit()
+        h.adapters.source = source() | probe
+        h.adapters.convert_bytes = tiny_flac()
+        edits = spy_tagging(h, monkeypatch)
+        assert await h.run() == ChildResult.COMPLETED
+        # Filename, catalog and the stored row keep their existing fallback.
+        published = h.storage.library_root / "audio" / "Untitled.flac"
+        assert published_files(h) == [published]
+        item, copies = (await h.facts())[5:]
+        assert item.title == "Untitled" and [c.path for c in copies] == ["audio/Untitled.flac"]
+        async with h.sessions() as session:
+            row = await session.get(JobItem, "child-2")
+            assert row is not None and row.title is None
+        if expected is None:
+            # No usable title anywhere: nothing invented, no copy made.
+            assert edits == [] and published.read_bytes() == tiny_flac()
+        else:
+            assert FLAC(published)["TITLE"] == expected
+            assert tag_keys(published) == ["TITLE"]
+        assert await h.warnings() == []
+    finally:
+        await h.engine.dispose()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("output", ["mp3", "m4a", "flac", "opus"])
+async def test_typed_tag_failure_keeps_explicit_target_with_one_committed_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, output: str,
+) -> None:
+    h = Harness(tmp_path)
+    try:
+        await h.seed("audio", output=output)
+        h.adapters.source = source() | TAGGED_PROBE
+        # Default fake output is not parsable as the target: a typed TagError.
+        edits = spy_tagging(h, monkeypatch)
+        placements = spy_placement(h, monkeypatch)
+        committed: list[ActivityEvent] = []
+        assert await h.run(committed=committed) == ChildResult.COMPLETED
+        [(_, prepared, result)] = edits
+        assert not result.edited and result.path == prepared
+        assert placements == [(prepared, result.identity)]
+        # The ready explicit target, intact; never the pre-conversion .mp4 source.
+        target = h.storage.library_root / "audio" / f"Track.{output}"
+        assert published_files(h) == [target]
+        assert target.read_bytes() == b"converted:media"
+        item, copies = (await h.facts())[5:]
+        assert item.format == output and [c.path for c in copies] == [f"audio/Track.{output}"]
+        assert await warning_facts(h) == [
+            ("parent", "job", _TAG_FALLBACK_SAVED, {"child_id": "child-2"})]
+        assert "/" not in _TAG_FALLBACK_SAVED and "Probe" not in _TAG_FALLBACK_SAVED
+        assert [e.id for e in committed] == [r.id for r in await h.warnings()]
+        assert not h.processes and not (tmp_path / "staging" / "child-2").exists()
+    finally:
+        await h.engine.dispose()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("case", ["wav", "original_mp4", "remux_fallback", "video", "no_tags"])
+async def test_ineligible_children_bypass_tagging_without_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str,
+) -> None:
+    h = Harness(tmp_path)
+    try:
+        if case == "video":
+            await h.seed("video", 360)  # muxed: the download is the final output
+        else:
+            await h.seed("audio", output={"wav": "wav", "no_tags": "flac"}.get(case))
+        h.adapters.source = source() | TAGGED_PROBE
+        if case == "remux_fallback":
+            original_opus(h, exit_status())
+            h.adapters.source = opus_source() | TAGGED_PROBE
+        if case == "no_tags":
+            # No usable source field and no persisted title: nothing is invented.
+            h.adapters.source = source()
+            h.adapters.convert_bytes = tiny_flac()
+            async with h.sessions() as session:
+                await session.execute(
+                    update(JobItem).where(JobItem.id == "child-2").values(title=None))
+                await session.commit()
+        edits = spy_tagging(h, monkeypatch)
+        placements = spy_placement(h, monkeypatch)
+        committed: list[ActivityEvent] = []
+        assert await h.run(committed=committed) == ChildResult.COMPLETED
+        assert edits == [] and [identity for _, identity in placements] == [None]
+        path, data, warnings = {
+            "wav": ("audio/Track.wav", b"converted:media", []),
+            "original_mp4": ("audio/Track.mp4", b"media", []),
+            "remux_fallback": ("audio/Track.webm", b"media", [_REMUX_FALLBACK_SAVED]),
+            "video": ("video/02 - Track.mp4", b"media", []),
+            "no_tags": ("audio/Untitled.flac", tiny_flac(), []),
+        }[case]
+        assert published_files(h) == [h.storage.library_root / path]
+        assert (h.storage.library_root / path).read_bytes() == data
+        assert [r.message for r in await h.warnings()] == warnings
+        assert len(committed) == len(warnings)
+    finally:
+        await h.engine.dispose()
+
+
+@pytest.mark.anyio
+async def test_unsupported_content_is_published_unchanged_and_silent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    h = Harness(tmp_path)
+    try:
+        await h.seed("audio", output="m4a")
+        h.adapters.source = source() | TAGGED_PROBE
+        h.adapters.convert_bytes = UNSUPPORTED_M4A
+        edits = spy_tagging(h, monkeypatch)
+        committed: list[ActivityEvent] = []
+        assert await h.run(committed=committed) == ChildResult.COMPLETED
+        [(_, prepared, result)] = edits
+        assert not result.edited and result.path == prepared
+        assert (h.storage.library_root / "audio" / "Track.m4a").read_bytes() == UNSUPPORTED_M4A
+        assert committed == [] and await h.warnings() == []
+    finally:
+        await h.engine.dispose()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("failure,code", [
+    ("oserror", JobErrorCode.DISK_WRITE_FAILED),
+    ("changed", JobErrorCode.INTERNAL_ERROR),
+    ("path", JobErrorCode.INTERNAL_ERROR),
+    ("cleanup", JobErrorCode.DISK_WRITE_FAILED),
+])
+async def test_tagging_storage_errors_fail_child_without_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str, code: JobErrorCode,
+) -> None:
+    h = Harness(tmp_path)
+    try:
+        await h.seed("audio", output="mp3")
+        h.adapters.source = source() | TAGGED_PROBE
+        errors: dict[str, BaseException] = {
+            "oserror": OSError(28, "No space left on device"),
+            "changed": MediaFileTargetChangedError("swapped"),
+            "path": StoragePathError("escape"),
+        }
+        if failure == "cleanup":
+            # The typed TagError is captured, but removing the own copy fails:
+            # a storage error, never reported as an optional tag failure.
+            def refuse(dir_fd: int, name: str, identity: tuple[int, int]) -> None:
+                raise PermissionError(13, "denied")
+            monkeypatch.setattr(h.storage, "_remove_own_copy", refuse)
+        else:
+            async def broken(*args: Any, **kwargs: Any) -> StagedEditResult:
+                raise errors[failure]
+            monkeypatch.setattr(h.storage, "stage_edited_copy", broken)
+        committed: list[ActivityEvent] = []
+        with pytest.raises(JobError) as caught:
+            await h.run(committed=committed)
+        assert caught.value.code == code
+        facts = await h.facts()
+        assert facts[0] == "post_processing" and facts[2] == 0
+        assert facts[5] is None and facts[6] == []
+        assert committed == [] and await h.warnings() == []
+        assert published_files(h) == []
+        assert [n for n in staging_names(tmp_path) if n.startswith("converted-")]
+        assert not h.processes
+    finally:
+        await h.engine.dispose()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("edited", [True, False], ids=["tagged", "untouched"])
+async def test_replaced_pinned_selection_is_rejected_before_publish(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, edited: bool,
+) -> None:
+    h = Harness(tmp_path)
+    swapped: list[Path] = []
+
+    def swap(result: StagedEditResult) -> None:
+        assert result.edited is edited
+        result.path.unlink()
+        result.path.write_bytes(b"impostor")
+        swapped.append(result.path)
+
+    try:
+        await h.seed("audio", output="flac" if edited else "m4a")
+        h.adapters.source = source() | TAGGED_PROBE
+        h.adapters.convert_bytes = tiny_flac() if edited else UNSUPPORTED_M4A
+        edits = spy_tagging(h, monkeypatch, swap)
+        committed: list[ActivityEvent] = []
+        with pytest.raises(JobError) as caught:
+            await h.run(committed=committed)
+        assert caught.value.code == JobErrorCode.INTERNAL_ERROR
+        [(_, prepared, _result)] = edits
+        [path] = swapped
+        # Fail closed before copy/publish; the foreign file is never deleted.
+        assert path.read_bytes() == b"impostor"
+        assert published_files(h) == []
+        if edited:
+            assert prepared.read_bytes() == tiny_flac()  # prepared output untouched
+        facts = await h.facts()
+        assert facts[0] == "finalizing" and facts[5] is None and facts[6] == []
+        assert committed == [] and await h.warnings() == []
+    finally:
+        await h.engine.dispose()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("origin", ["caller", "parent"])
+@pytest.mark.parametrize("outcome", ["tagged", "typed_failure"])
+async def test_cancel_during_edit_drains_worker_and_publishes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, origin: str, outcome: str,
+) -> None:
+    h = Harness(tmp_path)
+    loop = asyncio.get_running_loop()
+    entered = asyncio.Event()
+    release, finished = threading.Event(), threading.Event()
+    real_editor = child_runner._text_tag_editor
+
+    def blocking_editor(
+        suffix: str, tags: TextTags, failures: list[TagError],
+    ) -> Callable[[BinaryIO], bool]:
+        real = real_editor(suffix, tags, failures)
+
+        def edit(handle: BinaryIO) -> bool:
+            loop.call_soon_threadsafe(entered.set)
+            assert release.wait(5), "test did not release the edit worker"
+            try:
+                return real(handle)
+            finally:
+                finished.set()
+
+        return edit
+
+    drained = asyncio.Event()
+    deliveries: list[bool] = []
+
+    class DrainProbe:
+        """Storage's ``asyncio`` namespace; records cancellation in its drain wait."""
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(asyncio, name)
+
+        async def wait(self, futures: Any, **kwargs: Any) -> Any:
+            try:
+                return await asyncio.wait(futures, **kwargs)
+            except asyncio.CancelledError:
+                # The real stage_edited_copy waiter was cancelled while its
+                # blocking worker is still running; it keeps draining.
+                deliveries.append(finished.is_set())
+                drained.set()
+                raise
+
+    monkeypatch.setattr(child_runner, "_text_tag_editor", blocking_editor)
+    monkeypatch.setattr(storage_service, "asyncio", DrainProbe())
+    transitions = record_transitions(monkeypatch)
+    tagged = outcome == "tagged"
+    task = None
+    try:
+        await h.seed("audio", output="flac" if tagged else "mp3")
+        h.adapters.source = source() | TAGGED_PROBE
+        if tagged:
+            h.adapters.convert_bytes = tiny_flac()
+        committed: list[ActivityEvent] = []
+        task = asyncio.create_task(h.run(committed=committed))
+        await asyncio.wait_for(entered.wait(), 2)
+        if origin == "parent":
+            # Only the parent signal: the watcher must deliver it to the owned
+            # execution, which reaches the staged-copy drain by itself.
+            h.adapters.cancel.set()
+            await asyncio.wait_for(drained.wait(), 2)
+        else:
+            task.cancel()
+            await asyncio.wait_for(drained.wait(), 2)
+            for _ in range(2):
+                task.cancel()
+                await loop_turn()
+        await loop_turn()
+        # Cancellation reached the drain while the worker was still blocked.
+        assert deliveries and not any(deliveries)
+        assert not task.done() and not finished.is_set()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, 2)
+        assert finished.is_set()
+        assert JobStatus.FINALIZING not in transitions
+        facts = await h.facts()
+        assert facts[0] == "post_processing" and facts[2] == 0
+        assert facts[5] is None and facts[6] == []
+        assert committed == [] and await h.warnings() == []
+        assert published_files(h) == []
+        names = staging_names(tmp_path)
+        assert not [n for n in names if n.startswith(".edit-")]  # own copy discarded
+        [prepared] = [n for n in names if n.startswith("converted-")]
+        assert (tmp_path / "staging" / "child-2" / prepared).read_bytes() == (
+            tiny_flac() if tagged else b"converted:media")
+        assert not h.processes
+    finally:
+        release.set()
+        if task is not None:
+            await asyncio.gather(task, return_exceptions=True)
+        await h.engine.dispose()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("failure", ["lost_claim", "catalog", "commit"])
+async def test_tag_fallback_warning_requires_committed_completion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str,
+) -> None:
+    from sqlalchemy import text
+
+    h = Harness(tmp_path)
+    try:
+        await h.seed("audio", output="mp3")
+        h.adapters.source = source() | TAGGED_PROBE  # typed TagError: fallback
+        if failure == "lost_claim":
+            async def lost(session: Any, *args: Any, **kwargs: Any) -> bool:
+                return False
+            monkeypatch.setattr(child_runner, "stage_child_completion", lost)
+        elif failure == "catalog":
+            async def fail_catalog(*args: Any, **kwargs: Any) -> None:
+                raise RuntimeError("catalog re-verification failure")
+            monkeypatch.setattr(
+                "app.services.collection_persistence.stage_media_catalog_reference",
+                fail_catalog)
+        else:
+            async with h.sessions() as session:
+                await session.execute(text(
+                    "CREATE TABLE child_commit_probe (id INTEGER PRIMARY KEY, "
+                    "parent_id INTEGER REFERENCES child_commit_probe(id) "
+                    "DEFERRABLE INITIALLY DEFERRED)"))
+                await session.commit()
+            real_completion = child_runner.stage_child_completion
+
+            async def staged(session: Any, *args: Any, **kwargs: Any) -> bool:
+                won = await real_completion(session, *args, **kwargs)
+                # Real SQLite COMMIT failure after the warning is staged.
+                await session.execute(text("INSERT INTO child_commit_probe VALUES (1, 2)"))
+                return won
+            monkeypatch.setattr(child_runner, "stage_child_completion", staged)
+        committed: list[ActivityEvent] = []
+        if failure == "lost_claim":
+            assert await h.run(committed=committed) == ChildResult.SKIPPED
+        else:
+            with pytest.raises(JobError) as caught:
+                await h.run(committed=committed)
+            assert caught.value.code == JobErrorCode.INTERNAL_ERROR
         facts = await h.facts()
         assert facts[0] == "finalizing" and facts[2] == 0 and facts[4] == 0
         assert facts[5] is None and facts[6] == []

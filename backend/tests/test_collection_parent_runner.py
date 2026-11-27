@@ -20,9 +20,14 @@ from app.services.collection_persistence import (
     stage_collection_cancel_request,
     stage_collection_retry,
 )
-from app.services.job_runner import _REMUX_FALLBACK_SAVED
+from app.services.job_runner import _REMUX_FALLBACK_SAVED, _TAG_FALLBACK_SAVED
 from tests.test_collection_cancel import RecordingBus, checkpoint, runtime
-from tests.test_collection_child_runner import Harness, exit_status, opus_source
+from tests.test_collection_child_runner import (
+    UNSUPPORTED_OPUS,
+    Harness,
+    exit_status,
+    opus_source,
+)
 from tests.test_collection_repository import child, parent
 from tests.test_prepared_media import source
 
@@ -137,7 +142,7 @@ async def test_selected_video_orders_keep_gaps_in_filenames(tmp_path: Path) -> N
 
 
 @pytest.mark.anyio
-async def test_retry_after_publication_before_catalog_skips_same_prefixed_path(
+async def test_retry_after_publication_before_catalog_publishes_numbered_copy(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from app.models.library import MediaFile
@@ -156,19 +161,28 @@ async def test_retry_after_publication_before_catalog_skips_same_prefixed_path(
         with pytest.raises(JobError) as caught:
             await run(h)
         assert caught.value.code == JobErrorCode.INTERNAL_ERROR
+        # The earlier publication is now an untracked file at the first name.
         target = h.storage.library_root / "video" / "02 - Same.mp4"
         published = (target.read_bytes(), target.stat().st_ino)
+        async with h.sessions() as session:
+            assert (await session.scalars(select(MediaFile.path))).all() == []
         # Simulated retry reset of the unfinished attempt (not under test here).
         async with h.sessions() as session:
             await session.execute(update(JobItem).values(status="queued"))
             await session.execute(update(DownloadJob).values(status="queued"))
             await session.commit()
         assert await run(h) == runner.ParentRunOutcome.EXHAUSTED
+        # v0.1 safe numbering (PRODUCT_SPEC §15): the untracked file is never
+        # overwritten or adopted; Retry publishes the next free `(2)` name.
+        numbered = target.parent / "02 - Same (2).mp4"
+        assert sorted(p.name for p in target.parent.iterdir()) == [
+            "02 - Same (2).mp4", "02 - Same.mp4"]
         assert (target.read_bytes(), target.stat().st_ino) == published
-        assert [p.name for p in target.parent.iterdir()] == ["02 - Same.mp4"]
+        assert numbered.read_bytes() == b"mediamedia"  # the retried merge output
+        assert numbered.stat().st_ino != published[1]
         async with h.sessions() as session:
             assert (await session.scalars(select(MediaFile.path))).all() == [
-                "video/02 - Same.mp4"]
+                "video/02 - Same (2).mp4"]
         assert await run(h) == runner.ParentRunOutcome.SKIPPED
         assert h.adapters.calls.count("probe") == 2
     finally:
@@ -826,6 +840,8 @@ def per_child(h: Harness, monkeypatch: pytest.MonkeyPatch, kinds: dict[str, str]
                 "guard": FFmpegError(FFmpegFailureKind.FAILED,
                                      cause=FFmpegFailureCause.OUTPUT_GUARD),
             }[kind]
+        # Remux success output the tag writer reports unsupported: no tag warning.
+        h.adapters.convert_bytes = UNSUPPORTED_OPUS if kind == "remux" else None
         return await real_probe(url)
 
     monkeypatch.setattr(h.adapters, "probe_child", probe)
@@ -1010,4 +1026,70 @@ async def test_parent_publishes_only_commit_confirmed_child_warning(
         release.set()
         if attempt is not None:
             await asyncio.gather(attempt, return_exceptions=True)
+        await h.engine.dispose()
+
+
+# --- M6.5-T4 Collection child text-tag warning publication -----------------------------
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("case", ["committed", "commit_failure"])
+async def test_parent_publishes_child_tag_warning_only_after_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str,
+) -> None:
+    h = Harness(tmp_path)
+    bus = RecordingBus()
+    real_completion = child_runner.stage_child_completion
+
+    async def staged(session: Any, *args: Any, **kwargs: Any) -> bool:
+        won = await real_completion(session, *args, **kwargs)
+        if case == "commit_failure":
+            # Real SQLite COMMIT failure after the tag warning is staged.
+            await session.execute(text("INSERT INTO tag_commit_probe VALUES (1, 2)"))
+        return won
+
+    monkeypatch.setattr(child_runner, "stage_child_completion", staged)
+    try:
+        async with h.sessions() as session:
+            await jobs.stage_collection_job(
+                session, parent(collection_mode="audio", output_profile="mp3"),
+                [child(2, title="A")], owner_id="owner")
+            await session.execute(text(
+                "CREATE TABLE tag_commit_probe (id INTEGER PRIMARY KEY, "
+                "parent_id INTEGER REFERENCES tag_commit_probe(id) "
+                "DEFERRABLE INITIALLY DEFERRED)"))
+            await session.commit()
+        # Fake MP3 output is not parsable: typed TagError, intact target kept.
+        h.adapters.source = source() | {"track": "Song"}
+        if case == "committed":
+            assert await run_with(h, bus) == runner.ParentRunOutcome.EXHAUSTED
+            assert await status(h) == "completed"
+            events = shape(bus)
+            # The committed warning precedes the child snapshot and settlement.
+            assert events[:2] == [("activity.created", "warning"), ("job.updated", None)]
+            assert events[-1] == ("job.completed", None)
+            assert [e for e in events if e[1] == "warning"] == [("activity.created", "warning")]
+            warning = bus.events[0]
+            assert (warning["data"]["job_id"], warning["data"]["event_type"],
+                    warning["data"]["message"]) == ("parent", "job", _TAG_FALLBACK_SAVED)
+            assert await warning_rows(h) == [("parent", _TAG_FALLBACK_SAVED,
+                                              {"child_id": "child-2"})]
+            async with h.sessions() as session:
+                ids = (await session.scalars(select(ActivityEvent.id).where(
+                    ActivityEvent.level == "warning"))).all()
+                paths = (await session.scalars(select(MediaFile.path))).all()
+            assert [warning["id"]] == list(ids) and paths == ["audio/A.mp3"]
+            assert (h.storage.library_root / "audio" / "A.mp3").read_bytes() == (
+                b"converted:media")
+        else:
+            with pytest.raises(JobError) as caught:
+                await run_with(h, bus)
+            assert caught.value.code == JobErrorCode.INTERNAL_ERROR
+            assert bus.events == [] and await warning_rows(h) == []
+            async with h.sessions() as session:
+                row = await session.get(JobItem, "child-2")
+                item = await session.get(LibraryItem, "child-2")
+            assert row is not None and row.status == "finalizing" and item is None
+        assert not h.processes
+    finally:
         await h.engine.dispose()

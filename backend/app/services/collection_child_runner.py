@@ -28,9 +28,11 @@ from app.domain.jobs import (
 )
 from app.domain.platforms import detect_platform
 from app.integrations.ffmpeg import FFmpegError, FFmpegProcessor
+from app.integrations.mutagen_tags import TAGGABLE_SUFFIXES, TagError
 from app.integrations.ytdlp import DownloadProgress, YtDlpAnalyzer, YtDlpDownloader, YtDlpError
 from app.models.jobs import ActivityEvent, DownloadJob, JobItem
 from app.repositories import activity
+from app.services.analysis_normalizer import normalize_source_metadata
 from app.services.collection_persistence import (
     stage_child_completion,
     stage_child_progress,
@@ -41,10 +43,13 @@ from app.services.conversion_plan import plan_conversion, resolve_output_profile
 from app.services.job_runner import (
     _FFMPEG_KIND_TO_JOB_CODE,
     _REMUX_FALLBACK_SAVED,
+    _TAG_FALLBACK_SAVED,
     _YT_DLP_KIND_TO_JOB_CODE,
+    _text_tag_editor,
 )
 from app.services.prepared_media import OriginalRemux, measure_final_dimensions, prepare_media
-from app.services.storage_service import PlacementCancelled, StorageService
+from app.services.storage_service import PlacementCancelled, StagedEditResult, StorageService
+from app.services.text_tags import intended_text_tags
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +80,19 @@ def _safe_duration_seconds(value: object) -> float | None:
     if not isfinite(seconds) or seconds < 0:
         return None
     return seconds
+
+
+def _tag_source_title(*candidates: object) -> str | None:
+    """First candidate the text-tag projection accepts as a source title.
+
+    Uses the projection's own rules (string, trimmed non-blank, no NUL,
+    UTF-8 encodable), so an unusable candidate falls through to the next one.
+    Only the embedded TITLE fallback is affected; naming/catalog are not.
+    """
+    for value in candidates:
+        if isinstance(value, str) and intended_text_tags(None, source_title=value) is not None:
+            return value
+    return None
 
 
 @dataclass(slots=True)
@@ -299,27 +317,70 @@ class _ChildExecution:
                     ffmpeg=self.deps.ffmpeg, check_cancelled=self.check,
                     on_process_started=self.register,
                 )
-            await self.transition(JobStatus.FINALIZING)
-            # Storage owns the shielded thread drain. Signal cancellation through
-            # its predicate, rather than racing task.cancel() against that drain.
-            # Filename order comes only from the persisted child row (video
-            # collections), never from fresh probe metadata.
-            self.placing = True
+            # M6.5 text tags (audio children, same gate as single downloads):
+            # a storage-owned staged copy is edited and verified; the prepared
+            # file itself is never touched. Tags come only from this owned
+            # probe: source track first, then the usable persisted child title,
+            # then the usable probe title (TITLE tag only; filename and catalog
+            # keep their own fallback); playlist order is never a track tag.
+            # ``selection`` pins the chosen inode (tagged copy or the rechecked
+            # prepared file) until placement and cleanup are finished.
+            selection: StagedEditResult | None = None
+            tag_fallback = False
             try:
-                placement = await self.deps.storage.place_child_final(
-                    child.id, media,
-                    media_kind="audio" if plan.selected.kind == "audio_only" else "video",
-                    title=child.title or "Untitled", cancel_requested=lambda: (
-                        self.cancel_event.is_set() or self.stopped.is_set()
-                    ), publish_guard=self.cancel_gate,
-                    source_order=(child.source_order
-                                  if parent.collection_mode == "video" else None),
-                    # Same measured short edge as the catalog; unmeasured: no suffix.
-                    video_short_edge=(None if dimensions is None
-                                      else dimensions.short_edge),
+                tags = intended_text_tags(
+                    normalize_source_metadata(source),
+                    source_title=_tag_source_title(child.title, source.get("title")),
                 )
+                if (
+                    plan.selected.kind == "audio_only"
+                    and not remux_fallback
+                    and tags is not None
+                    and media.suffix.lower() in TAGGABLE_SUFFIXES
+                ):
+                    await self.check()
+                    failures: list[TagError] = []
+                    selection = await self.deps.storage.stage_edited_copy(
+                        child.id, media, _text_tag_editor(media.suffix, tags, failures),
+                    )
+                    if failures:
+                        # Only a typed tag failure is optional: the intact
+                        # prepared output is published instead. Details stay
+                        # in the private log.
+                        logger.warning(
+                            "text tagging failed: job_id=%s child_id=%s kind=%s detail=%s",
+                            self.job_id, child.id, failures[0].kind.value,
+                            failures[0].detail,
+                        )
+                        tag_fallback = True
+                await self.transition(JobStatus.FINALIZING)
+                # Storage owns the shielded thread drain. Signal cancellation
+                # through its predicate, rather than racing task.cancel()
+                # against that drain. Filename order comes only from the
+                # persisted child row (video collections), never from fresh
+                # probe metadata.
+                self.placing = True
+                try:
+                    placement = await self.deps.storage.place_child_final(
+                        child.id, media if selection is None else selection.path,
+                        media_kind="audio" if plan.selected.kind == "audio_only" else "video",
+                        title=child.title or "Untitled", cancel_requested=lambda: (
+                            self.cancel_event.is_set() or self.stopped.is_set()
+                        ), publish_guard=self.cancel_gate,
+                        source_order=(child.source_order
+                                      if parent.collection_mode == "video" else None),
+                        # Same measured short edge as the catalog; unmeasured: no suffix.
+                        video_short_edge=(None if dimensions is None
+                                          else dimensions.short_edge),
+                        # The verified, still pinned inode must be the one published.
+                        source_identity=None if selection is None else selection.identity,
+                    )
+                finally:
+                    self.placing = False
             finally:
-                self.placing = False
+                if selection is not None:
+                    # Closes the pin; only an unpublished own copy is unlinked.
+                    selection.discard()
             await self.check()
             # Catalog facts come from this owned probe result only: the real
             # duration when representable, and the existing platform
@@ -335,14 +396,18 @@ class _ChildExecution:
                         platform=platform, plan=conversion, dimensions=dimensions,
                     ):
                         raise _LostClaim
-                    warning = None
-                    if remux_fallback:
-                        # Fixed shared text only; the child link lives in details.
-                        warning = await activity.add_activity_event(
-                            session, job_id=self.job_id, level="warning", event_type="job",
-                            message=_REMUX_FALLBACK_SAVED,
-                            details={"child_id": child.id},
-                        )
+                    warnings: list[ActivityEvent] = []
+                    for enabled, message in (
+                        (remux_fallback, _REMUX_FALLBACK_SAVED),
+                        (tag_fallback, _TAG_FALLBACK_SAVED),
+                    ):
+                        if enabled:
+                            # Fixed shared text only; the child link lives in details.
+                            warnings.append(await activity.add_activity_event(
+                                session, job_id=self.job_id, level="warning",
+                                event_type="job", message=message,
+                                details={"child_id": child.id},
+                            ))
                     await session.commit()
                 except BaseException:
                     # Persistence contract: a failed COMMIT leaves the SQLite
@@ -351,8 +416,8 @@ class _ChildExecution:
                     raise
                 # Committed facts only: the caller publishes this sink even if
                 # session close or a later step raises/cancels.
-                if warning is not None and self.committed_activities is not None:
-                    self.committed_activities.append(warning)
+                if self.committed_activities is not None:
+                    self.committed_activities.extend(warnings)
             self.deps.storage.remove_staging(child.id)
             return ChildResult.COMPLETED
         except _LostClaim:

@@ -5,7 +5,7 @@ import shutil
 import stat
 import threading
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 import pytest
 
@@ -14,6 +14,7 @@ from app.services.storage_service import (
     MediaFileNotRegularError,
     MediaFileTargetChangedError,
     PlacementCancelled,
+    StagedEditResult,
     StoragePathError,
     StorageService,
 )
@@ -851,3 +852,77 @@ def test_copy_failure_closes_descriptors_and_removes_temp(
             os.fstat(fd)
     assert source.read_bytes() == b"child content"
     assert not list((storage.library_root / "video").iterdir())
+
+
+# --- M6.5-T4 child placement bound to a pinned staged selection ------------------------
+
+
+def staged_selection(storage: StorageService, *, keep: bool) -> StagedEditResult:
+    """A pinned staged edit result: the edited copy (``keep``) or the original."""
+    def edit(handle: BinaryIO) -> bool:
+        if keep:
+            handle.write(b"TAGGED")
+        return keep
+
+    return asyncio.run(storage.stage_edited_copy("child", output(storage), edit))
+
+
+def staging_leftovers(storage: StorageService) -> list[str]:
+    return sorted(p.name for p in storage.job_staging_dir("child").iterdir())
+
+
+@pytest.mark.parametrize("keep", [True, False], ids=["edited", "untouched"])
+def test_bound_child_placement_publishes_the_pinned_selection(
+    storage: StorageService, keep: bool,
+) -> None:
+    selection = staged_selection(storage, keep=keep)
+    try:
+        result = place(storage, selection.path, source_identity=selection.identity)
+    finally:
+        selection.discard()
+    assert result.relative_path == "video/Title.mp4"
+    assert result.final_path.read_bytes() == (b"TAGGEDcontent" if keep else b"child content")
+    # Child placement still publishes an independent copy of the pinned inode.
+    assert result.identity != selection.identity
+    placed = result.final_path.stat()
+    assert result.identity == (placed.st_dev, placed.st_ino)
+    assert result.size_bytes == placed.st_size
+    # Only the published source is unlinked; an edit keeps the prepared output.
+    assert staging_leftovers(storage) == (["output.mp4"] if keep else [])
+    assert_no_temp(storage)
+
+
+@pytest.mark.parametrize("keep", [True, False], ids=["edited", "untouched"])
+@pytest.mark.parametrize("change", ["replaced", "mismatch"])
+def test_bound_child_placement_rejects_other_inode_before_copy(
+    storage: StorageService, monkeypatch: pytest.MonkeyPatch, keep: bool, change: str,
+) -> None:
+    copies: list[str] = []
+    real_copy = storage._copy_source_to_temp
+
+    def recorded_copy(*args: Any, **kwargs: Any) -> tuple[int, int]:
+        copies.append("copy")
+        return real_copy(*args, **kwargs)
+
+    monkeypatch.setattr(storage, "_copy_source_to_temp", recorded_copy)
+    selection = staged_selection(storage, keep=keep)
+    expected = selection.path.read_bytes()
+    try:
+        identity = selection.identity
+        if change == "replaced":
+            # The pinned inode stays alive, so the replacement gets a new number.
+            selection.path.unlink()
+            selection.path.write_bytes(b"impostor")
+            expected = b"impostor"
+        else:
+            identity = (identity[0], identity[1] + 1)
+        with pytest.raises(MediaFileTargetChangedError):
+            place(storage, selection.path, source_identity=identity)
+    finally:
+        selection.discard()
+    assert copies == []  # rejected before any copy or publish
+    assert not list((storage.library_root / "video").iterdir())
+    # The entry at the source name is never unlinked by the rejected placement.
+    if change == "replaced" or not keep:
+        assert selection.path.read_bytes() == expected
+    assert (storage.job_staging_dir("child") / "output.mp4").exists()

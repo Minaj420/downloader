@@ -540,6 +540,7 @@ class StorageService:
         publish_guard: AbstractContextManager[Any] | None = None,
         source_order: int | None = None,
         video_short_edge: int | None = None,
+        source_identity: tuple[int, int] | None = None,
     ) -> PlacementResult:
         """Place only a regular output owned by the backend child's staging key.
 
@@ -549,6 +550,12 @@ class StorageService:
         ``None`` the flat ``Title.ext`` target is unchanged.
         ``video_short_edge`` (video only) adds the measured ``(720p)``
         qualifier; a collision publishes the next free numbered candidate.
+
+        ``source_identity`` binds the no-follow pin to an already verified
+        inode (``StagedEditResult.identity``), as single placement does: a
+        different inode at the source name fails closed with
+        ``MediaFileTargetChangedError`` before any copy or publish, and is
+        never unlinked. The caller keeps that inode pinned until this returns.
 
         Source parents and file are pinned with no-follow descriptors. Always
         copy from the pinned file (also on the same filesystem): portable POSIX
@@ -582,6 +589,7 @@ class StorageService:
             child_staging_key, adapter_output_path, media_kind, title,
             cancel_requested or (lambda: False), publish_guard,
             source_order=source_order, video_short_edge=video_short_edge,
+            source_identity=source_identity,
         ))
         while True:
             try:
@@ -1136,9 +1144,14 @@ class StorageService:
         publish_guard: AbstractContextManager[Any] | None,
         source_order: int | None = None,
         video_short_edge: int | None = None,
+        source_identity: tuple[int, int] | None = None,
     ) -> PlacementResult:
         source = self._prepare_child_output(key, output)
         try:
+            if source_identity is not None and source.identity != source_identity:
+                # Handoff check: the verified, still pinned inode must be the
+                # one copied and published; a replacement is never unlinked.
+                raise MediaFileTargetChangedError(str(output))
             extension = output.suffix.lstrip(".") or "bin"
             names = self._candidate_names(
                 media_kind, title, extension,
