@@ -15,10 +15,10 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - M6-Q20 kapandı: Compose seçici/Ses PASS, Shorts 4/4, 1080×1920 doğrulandı; tavan dışı yedek otomatik PASS, uygun canlı kaynak yok, kullanıcı kapanışı onayladı. Katalog eşleşmesi (§16) gerekirse önce koleksiyonlarda.
 - M6-Q3 parkta (ARCHITECTURE §59 önceliği bayat); WIP dalı merge edilmez, staging silme/API yok.
 - M6.5-T2/T3 Fedora Compose PASS (Mutagen 1.48.1, MP3 etiket ve WAV); T3 hedefli 791 test/Ruff/mypy ve review PASS.
-- M6.5-T4 metin etiketleri tekil/koleksiyon hazır; macOS 27 Kasım hedefli 486 test, Ruff/mypy ve GPT review PASS. Kullanıcı onaylı tek ek tur yalnız video Retry `(2)` testiydi. Sırada gerçek kullanım Compose smoke; ARCH §14 probe başlığı notu should-fix.
+- M6.5-T4 macOS 27 Kasım hedefli 486 test/Ruff/mypy/review PASS; ek tur video Retry `(2)` testi. Kullanıcı Compose smoke PASS: Opus/MP3 etiket 2/2, MP3 oynatma, WAV 2/2 uyarısız, Shorts 2/2 oynatma ve dosya adı sırası; ses iptal 1/2 → Retry 2/2, kopya yok. M6.5 full gate bekliyor; ARCH §14 probe başlığı notu should-fix.
 - Accepted (M6.5-T2): düşen/yinelenen TXXX değişmeden reddedilebilir (ID3v2.4 dahil). Should-fix: seek hata ayrıntısı ve ses-önce çoklanmış Ogg testi.
 - Bekleyen toplu UI Compose smoke: Queue'da active/history; gezinme/F5 sonrası sunucudan iş erişimi.
-- Smoke: uygun Cancel/Retry, çift tık/pending; geçmiş iş detay/Activity, collection öğeleri; Load more ve yeniden bağlantıda güncellik.
+- Smoke: uygun Cancel/Retry, çift tık/pending; geçmiş iş detay/Activity, collection öğeleri; Load more ve yeniden bağlantıda güncellik. UI bulgusu: Queue Details panelinde Retry yok, eylem History satırında.
 - Smoke: Private video içeren playlist; satır devre dışı, Select All ve sayaç dışında.
 - Kullanıcı Compose PASS: Q2 Retry kaldığı yerden tamamlandı (22 Kasım); Q3-ACT eski Activity/Library, canlı Activity ve F5 sonrası geçmiş korundu (23 Kasım).
 ## Açık kararlar
@@ -55,7 +55,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - 2026-11-17 kullanıcı Fedora Compose Q18 PASS: single/collection5.5s, idle0.8s, Exit0/OOMfalse, exec doğrulandı.
 - Mix4 sabit seçim/completed korundu, auto-resume yok, Retry46→48; MKV VP9/Opus200s tam decode kullanıcı PASS.
 - Host RPM Fusion FFmpeg smoke 23 PASS/0 SKIP; container libx264 ayrıca görüldü. Sonraki skip'i bildir.
-- 2026-10-30 macOS full gate bayat; M6.4/5 kapanışı için full gate ve kullanıcı Compose smoke'u gerekir.
+- 2026-11-27 macOS M6.5 full gate FAIL, G1 sonrası bayat: backend 3118 geçti/14 `test_smoke_script` başarısız/29 atlandı (Bash, UTF-8 ve beklentiler); sırada backend smoke teşhisi. Frontend 233/1 eski Retry beklentisi G1'de düzeltildi; hedefli 16 test/lint/typecheck/review PASS. Tam paket yeniden çalışmalı.
 ## Bilinen riskler
 - Accepted: YouTube'da aynı gerçek başlık ve eksik availability yanlışlıkla elenebilir.
 - Accepted: smoke idle kontrolü atomik değil; testte başka iş başlatılmaz; kullanıcı ağ/restart kurtarma PASS.

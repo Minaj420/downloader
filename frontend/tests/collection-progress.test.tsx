@@ -144,14 +144,22 @@ describe("collection progress and parent controls", () => {
     expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
   });
 
-  it.each(["cancelled eligible", "failed ineligible", "unknown error", "no error", "single cancelled"])("uses backend eligibility for %s", async (kind) => {
-    const created = failure(kind.includes("cancelled") ? "cancelled" : "failed", kind !== "failed ineligible" && kind !== "unknown error");
+  // Expected Retry count per case (PRODUCT_SPEC §17 Q2: cancelled single is retryable).
+  const eligibilityCases = [
+    { kind: "cancelled eligible", status: "cancelled", retryable: true, expectedRetry: 1 },
+    { kind: "failed ineligible", status: "failed", retryable: false, expectedRetry: 0 },
+    { kind: "unknown error", status: "failed", retryable: false, expectedRetry: 0 },
+    { kind: "no error", status: "failed", retryable: true, expectedRetry: 0 },
+    { kind: "single cancelled", status: "cancelled", retryable: true, expectedRetry: 1 },
+  ] as const;
+  it.each(eligibilityCases)("uses backend eligibility for $kind", async ({ kind, status, retryable, expectedRetry }) => {
+    const created = failure(status, retryable);
     if (kind === "unknown error") created.error = { code: "unknown", message: "Unknown", retryable: false };
     if (kind === "no error") created.error = null;
     if (kind === "single cancelled") created.job_type = "single";
     harness({ create: () => created });
     await start();
-    expect(screen.queryAllByRole("button", { name: "Retry" })).toHaveLength(kind === "cancelled eligible" ? 1 : 0);
+    expect(screen.queryAllByRole("button", { name: "Retry" })).toHaveLength(expectedRetry);
   });
 
   it("enriches equal-time parent SSE without regressing it and fetches final children after polling stops", async () => {
