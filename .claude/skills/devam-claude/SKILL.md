@@ -22,8 +22,9 @@ Kurallar `docs/WORKFLOW.md`'dedir; "Geçici Claude-only modu" bölümü bu skill
 
 ## Döngü (tek iş; kullanıcı sayı verdiyse en fazla o kadar, üst sınır 5)
 
-- Milestone öncesi `bash scripts/claude-agent.sh consult '<odak>' --log` ile Opus görüşü zorunlu;
-  kullanıcıya "Opus önerisi / gerekçe / alternatif-risk + lead kararı" özetini ver.
+- Opus danışması WORKFLOW adım 2'deki risk ölçütlerine göredir (milestone tek başına
+  tetikleyici değil); gerekirse `bash scripts/claude-agent.sh consult '<odak>' --log` ile danış
+  ve kullanıcıya görüş + lead kararı özetini ver.
 - Her iş başında “Uygulayıcı: Sonnet/Opus; gerekçe...” de. WORKFLOW'daki seçim kuralları aynen geçerli.
 - Sen production kodu, test veya config yazmazsın; işi `bash scripts/claude-agent.sh implement '<görev>' --log`
   ile Sonnet/Opus'a ver. Doğrudan yazabildiğin tek dosya `STATE.md`'dir. Promptu tek argüman olarak

@@ -54,14 +54,18 @@ yüklenir; mevcut oturum reload olmuş sayılmaz.
 
 1. Önce "Oturum başlangıcı ve yerel Git kontrolü"; yerel durum açıklanmadıysa iş seçmeden
    dur. STATE ve `git status` oku; açıklanmayan değişiklikte dur, başkasının işine dokunma.
-2. **Her milestone öncesi Opus görüşü zorunlu.** Alınamazsa açık kullanıcı onayı
-   olmadan uygulama yok. Önemli mimari kararlar önce Opus'a, ürün tercihleri
-   kullanıcıya gider. Lead burada **Opus önerisi / gerekçe / alternatif-risk +
-   lead kararı** özetini kullanıcıya görünür verir. Milestone başına tek kısa Opus görüşü
-   yeterlidir; yeni önemli tasarım belirsizliği dışında tekrarlanmaz. Önemli mimari yönlendirme korunur.
+2. **Opus danışması riske göre.** Milestone tek başına tetikleyici değildir. Veri kaybı,
+   eşzamanlılık, migration, API sözleşmesi veya geri dönüşü pahalı mimari karar varsa
+   uygulamadan önce `consult` ile Opus'a danışılır; görüş alınamazsa açık kullanıcı onayı
+   olmadan o karar uygulanmaz. Soru tek karardır; yanıt **önerilen yol / elenen alternatif /
+   kaçırılan risk** biçimindedir. Prompta yalnız kararla ilgili dosyalar verilir; aynı karar
+   tekrar sorulmaz. Danışma yapıldığında lead görüşü ve kendi kararını kullanıcıya görünür
+   özetler. Ürün kararları Opus'a değil kullanıcıya gider (adım 3).
 3. Tek bounded iş tanımı: amaç, okunacaklar, izinli dosyalar, kabul kriterleri,
    yapılmayacaklar, exact hedefli kontrol komutları ve çalışma dizinleri.
-   Belgelenmemiş/çelişkili ürün gereksiniminde dur; soru ve en basit seçeneği raporla.
+   Belgelenmemiş/çelişkili ürün gereksiniminde dur; davranış, varsayılan ve kapsam
+   kararlarını en basit seçenek önerisiyle kullanıcıya sor. Onaylı kararın hangi yetkili
+   belgeye işleneceğini lead belirler ve metni doğrular; düzenlemeyi yetkili uygulayıcı yapar.
    Bayat durum/uygulama ayrıntısı için onay isteme; ürün/kapsam/geri alınamaz kararları
    tek mesajda topla. Bağlı düşük riskli işler tek işte birleştirilebilir.
    Yeni kalıcı alan ekleyen işte ilk talimat "Düzeltme öncesi etki analizi (KARAR)"
@@ -187,11 +191,11 @@ senkronize edip OpenCode'u yeniden başlatmadan review istisnası (madde 3) uygu
 Mevcut oturumun zorunlu review talimatları ve bu geçiş işinin implementer + bağımsız
 review akışı değişmez.
 
-1. **Küçük iş:** tek konulu, birkaç dosyalık, mimariye dokunmayan iş. Ayrı Opus KAPSAM
-   görüşü yoktur; tek ajan uygular, hedefli kontrol, tek bağımsız review, commit.
-   Milestone öncesi Opus görüşü ve önemli mimari/uzman-risk yönlendirmesi aynen sürer; ikisi
-   karıştırılmaz. Az dosya tek başına riskli/transaction/path/destructive işi küçük yapmaz
-   (adım 4'teki Opus kriterleri geçerli).
+1. **Küçük iş:** tek konulu, birkaç dosyalık, mimariye dokunmayan iş. Mevcut deseni
+   izleyen, geri alınabilir UI ve belge işlerinde Opus danışması yoktur; tek ajan uygular,
+   hedefli kontrol, tek bağımsız review, commit. Danışma yalnız adım 2'deki risk
+   ölçütlerinden biri varsa gerekir. Az dosya tek başına riskli/transaction/path/destructive
+   işi küçük yapmaz (adım 4'teki uygulayıcı seçimi kriterleri geçerli).
 2. **Duyuru:** her işin başında “Uygulayıcı: ...” satırıyla birlikte tek satır
    küçük/büyük sınıfı ve kısa neden; mevcut uygulayıcı/model duyurusu korunur.
 3. **Saf karar kaydı:** yalnız kullanıcının zaten verdiği kararı tek yetkili yerde kaydeden
@@ -362,7 +366,7 @@ tarafından çağrılır; model bu geçişi kendiliğinden başlatmaz. Ardından
 reviewer: Sonnet kodunu Opus `scripts/claude-review.sh` ile inceler; **Opus kodu bu modda
 review edilmez**, commit gövdesinde "GPT review pending" yazılır ve kullanıcıya bildirilir.
 STATE'te iş başına review/hash listesi yok. Luna/checker yoktur; lead hedefli kontrolleri
-ve milestone gate'lerini kendisi çalıştırır. Diğer tüm kurallar (Opus görüşü, tek yazıcı, bir review
+ve milestone gate'lerini kendisi çalıştırır. Diğer tüm kurallar (riske göre Opus danışması, tek yazıcı, bir review
 düzeltme turu, “Uygulayıcı: ...” duyurusu, otomatik commit, push yalnız kullanıcı) aynen geçerlidir.
 
 **STATE işareti.** İlk gerçek işten önce mevcut HEAD'in tam SHA'sı tek başlangıç sınırıdır;

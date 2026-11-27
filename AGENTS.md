@@ -7,9 +7,9 @@ This repository is developed with AI coding agents.
 - OpenCode lead is the sole orchestrator. Claude Code subscription CLI provides Opus
   read-only advice and scoped implementation through `scripts/claude-agent.sh`:
   Sonnet is the default implementer; lead selects explicit `--model opus` for expert work.
-  Before each milestone, obtain Opus advice or explicit user approval to proceed without it.
-  Important architecture decisions go to Opus first; product choices go to the user.
-  Lead exposes Opus recommendation/reason/alternatives-risk and its own decision.
+  When to consult Opus (risk-based, not per milestone): `docs/WORKFLOW.md` step 2.
+  Product decisions belong to the user.
+  When Opus is consulted, lead exposes its advice and lead's own decision.
   GPT reviewer independently reviews both Sonnet and Opus code. One writer, at most one review fix round by default (exceptions: doc-only second round, user-approved extra round for code; see WORKFLOW step 6); no quota/auth retry
   or silent model fallback. CLI permissions are not an OS sandbox (see WORKFLOW).
   Lead announces “Uygulayıcı: Sonnet/Opus; gerekçe...” at each task start. Sonnet handles

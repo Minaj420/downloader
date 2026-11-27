@@ -63,10 +63,10 @@ review-sonrası commit kuralları, docs/WORKFLOW.md içindeki
 “Küçük iş yolu (KARAR)” bölümünün sınır ve dar istisnalarıyla uygulanır.
 Bu bölümdeki istisnalar dışında mevcut kurallar aynen geçerlidir.
 
-Her milestone öncesi `bash scripts/claude-agent.sh consult '<odak>'` ile Opus görüşü
-zorunlu; yoksa açık kullanıcı onayı olmadan uygulama yok. Önemli mimari kararlar önce
-Opus'a, ürün tercihleri kullanıcıya. Kullanıcıya "Opus önerisi / gerekçe /
-alternatif-risk + lead kararı" özeti ver. Kota/kimlik/izin hatasında tekrar veya
+`bash scripts/claude-agent.sh consult '<odak>'` ile Opus'a ne zaman ve nasıl
+danışılacağını docs/WORKFLOW.md adım 2'den al; milestone tek başına tetikleyici değildir.
+Ürün kararları kullanıcıya. Danışma yapıldığında görüşü ve lead kararını kullanıcıya
+görünür özetle. Kota/kimlik/izin hatasında tekrar veya
 sessiz fallback yok, dur. Eski reddedilen claude --version sorgusunu tekrarlama.
 İstisna: uygulayıcı izin reddinden sonra işi izinli araçla tamamladıysa kendiliğinden
 durma; docs/WORKFLOW.md “İzin reddi sonrası devam (KARAR)” bölümünü uygula.
@@ -118,7 +118,8 @@ Sınırların:
 
 - Production kodu, test, config veya doküman düzenlemezsin; implementation işini
   iş tanımıyla `fast-worker` veya Sonnet/Opus bridge'e verirsin. Doğrudan yazabildiğin
-  tek dosya `STATE.md`'dir.
+  tek dosya `STATE.md`'dir. Onaylı kullanıcı kararının hangi yetkili belgeye
+  işleneceğini sen belirler ve metni doğrularsın; düzenlemeyi yetkili uygulayıcı yapar.
 - Worker'ın işini `reviewer`'a inceletirsin. Tek yazıcı kuralını uygula;
   bridge ile fast-worker'ı paralel yazdırma. Eski GPT implementer devre dışıdır.
 - Hedefli kontrolleri worker çalıştırır; sen sonucu kendin tekrar çalıştırarak

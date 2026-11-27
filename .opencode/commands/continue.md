@@ -11,8 +11,8 @@ Türkçe cevap ver.
 en fazla o kadar iş yap (üst sınır 5); boşsa tek iş. Ek talimat varsa kapsamı
 ona göre daralt:
 
-Milestone öncesi Opus görüşünü ve lead kararını görünür özetle; görüş yoksa açık
-kullanıcı onayı olmadan uygulama yok. Claude /devam'a yönlendirme. Tek yazıcı,
+Opus danışması için WORKFLOW adım 2'yi uygula; yalnız danışma gerektiğinde görüşü ve
+lead kararını görünür özetle. Claude /devam'a yönlendirme. Tek yazıcı,
 bir review düzeltme turu (istisnalar: WORKFLOW adım 6), kota/kimlik/izin hatasında
 tekrar veya sessiz fallback yok.
 Her iş başında “Uygulayıcı: Sonnet/Opus; gerekçe...” de. Varsayılan Sonnet;
