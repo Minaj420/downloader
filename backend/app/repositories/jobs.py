@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, cast
 
-from sqlalchemy import CursorResult, and_, case, func, inspect, or_, select, update
+from sqlalchemy import CursorResult, and_, case, delete, func, inspect, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.jobs import (
@@ -15,6 +15,7 @@ from app.domain.jobs import (
     job_error_code_retryable,
 )
 from app.models.jobs import DownloadJob, JobItem
+from app.repositories.activity import retry_marker
 
 
 def _now() -> datetime:
@@ -353,6 +354,113 @@ async def list_clear_history_candidates(
         )
         for job_id, job_type in types.items()
     ]
+
+
+@dataclass(frozen=True)
+class ClearHistoryMember:
+    """Immutable Clear History snapshot member and its fresh re-read form.
+
+    ``retry_marker`` is the attempt proof (``activity.retry_marker``); the
+    timestamps are only extra mismatch guards. Equality of two members is the
+    "still the same terminal attempt" test.
+    """
+
+    job_id: str
+    job_type: str
+    status: str
+    retry_marker: int | None
+    updated_at: datetime
+    completed_at: datetime | None
+
+
+def _clear_history_member_query(owner_id: str) -> Any:
+    marker = retry_marker(DownloadJob.id).correlate(DownloadJob)
+    return select(
+        DownloadJob.id, DownloadJob.job_type, DownloadJob.status, marker,
+        DownloadJob.updated_at, DownloadJob.completed_at,
+    ).where(DownloadJob.owner_id == owner_id).execution_options(autoflush=False)
+
+
+async def list_clear_history_snapshot(
+    session: AsyncSession, owner_id: str, *, include_cancelled: bool
+) -> list[ClearHistoryMember]:
+    """One read of the exact eligible owned members, ``created_at, id`` ASC.
+
+    Same owner/status filter as ``count_clear_history_candidates``; an unknown
+    ``job_type`` raises instead of assuming staging ownership.
+    """
+    result = await session.execute(
+        _clear_history_member_query(owner_id)
+        .where(*_clear_history_filter(owner_id, include_cancelled))
+        .order_by(DownloadJob.created_at.asc(), DownloadJob.id.asc())
+    )
+    members = [ClearHistoryMember(*row) for row in result]
+    for member in members:
+        if member.job_type not in ("single", "collection"):
+            raise ValueError(f"Unsupported job type for Clear History: {member.job_type!r}")
+    return members
+
+
+async def get_clear_history_member(
+    session: AsyncSession, job_id: str, owner_id: str
+) -> ClearHistoryMember | None:
+    """Fresh owner-scoped read of one member's fingerprint (any status)."""
+    row = (await session.execute(
+        _clear_history_member_query(owner_id).where(DownloadJob.id == job_id)
+    )).one_or_none()
+    return None if row is None else ClearHistoryMember(*row)
+
+
+async def list_clear_history_staging_keys(
+    session: AsyncSession, member: ClearHistoryMember, owner_id: str
+) -> tuple[str, ...]:
+    """DB-derived staging keys: the job id (single) or its ``job_items.id`` values."""
+    if member.job_type == "single":
+        return (member.job_id,)
+    if member.job_type != "collection":
+        raise ValueError(f"Unsupported job type for Clear History: {member.job_type!r}")
+    result = await session.execute(
+        select(JobItem.id)
+        .join(DownloadJob, JobItem.job_id == DownloadJob.id)
+        .where(DownloadJob.id == member.job_id, DownloadJob.owner_id == owner_id)
+        .order_by(JobItem.source_order.asc(), JobItem.id.asc())
+        .execution_options(autoflush=False)
+    )
+    return tuple(result.scalars().all())
+
+
+async def stage_clear_history_delete(
+    session: AsyncSession, member: ClearHistoryMember, owner_id: str
+) -> int:
+    """Conditional job DELETE (children cascade); caller owns Activity and commit.
+
+    Matches id, owner, type, status and timestamps, with the attempt marker
+    re-checked by null-safe equality (``IS``) in the same statement. Returns
+    the raw rowcount: only 1 may continue.
+    """
+    result = await session.execute(
+        delete(DownloadJob)
+        .where(
+            DownloadJob.id == member.job_id,
+            DownloadJob.owner_id == owner_id,
+            DownloadJob.job_type == member.job_type,
+            DownloadJob.status == member.status,
+            DownloadJob.updated_at == member.updated_at,
+            DownloadJob.completed_at.is_not_distinct_from(member.completed_at),
+            retry_marker(member.job_id).is_not_distinct_from(member.retry_marker),
+        )
+        .execution_options(autoflush=False, synchronize_session=False)
+    )
+    return int(cast(CursorResult[Any], result).rowcount)
+
+
+async def job_exists(session: AsyncSession, job_id: str, owner_id: str) -> bool:
+    row = await session.scalar(
+        select(DownloadJob.id)
+        .where(DownloadJob.id == job_id, DownloadJob.owner_id == owner_id)
+        .execution_options(autoflush=False)
+    )
+    return row is not None
 
 
 async def update_job(

@@ -9,8 +9,14 @@ format mapping stays backend-side in the stored analysis (ARCHITECTURE.md
 import asyncio
 import base64
 import json
+import logging
 import re
+import secrets
+import time
+from collections import OrderedDict
+from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any
 from uuid import uuid4
 
@@ -21,7 +27,12 @@ from app.domain.actors import Actor
 from app.domain.analysis import COLLECTION_SELECTED_ITEM_LIMIT, NormalizedAnalysis
 from app.domain.jobs import (
     ACTIVE_JOB_STATUSES,
+    CLEAR_HISTORY_WARNING_EVENT_TYPE,
+    CLEAR_HISTORY_WARNING_MESSAGE,
     ORIGINAL_OUTPUT_PROFILE,
+    RETRY_QUEUED_EVENT_TYPE,
+    RETRY_QUEUED_MESSAGE,
+    ClearHistoryError,
     CollectionProfile,
     JobError,
     JobErrorCode,
@@ -34,6 +45,7 @@ from app.models.analysis import AnalysisSession
 from app.models.jobs import DownloadJob, JobItem
 from app.repositories import activity
 from app.repositories import jobs as job_repo
+from app.repositories.jobs import ClearHistoryMember
 from app.services.collection_persistence import (
     CollectionCancelRequestOutcome,
     stage_collection_cancel_request,
@@ -44,14 +56,73 @@ from app.services.conversion_plan import plan_conversion, resolve_output_profile
 from app.services.event_bus import EventBus
 from app.services.job_runner import resolve_variant
 from app.services.queue_manager import QueueManager
+from app.services.storage_service import StorageService
 from app.utils.datetime import utc_isoformat
 
 APP_LIBRARY_DESTINATION = "app_library"
 SKIP_EXISTING_POLICY = "skip"
 HISTORY_DEFAULT_LIMIT = 50
 HISTORY_MAX_LIMIT = 100
+CLEAR_PREVIEW_TTL_SECONDS = 600.0
+CLEAR_PREVIEW_CAP = 16
 
 _CANCELLABLE_STATUSES = {JobStatus.QUEUED, *ACTIVE_JOB_STATUSES}
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ClearHistoryPreview:
+    """Process-local, single-use Clear History snapshot (ARCHITECTURE §59 Q3)."""
+
+    owner_id: str
+    include_cancelled: bool
+    created: float
+    members: tuple[ClearHistoryMember, ...]
+
+
+@dataclass(frozen=True)
+class ClearHistoryResult:
+    deleted_count: int
+    failed_count: int
+
+
+class _ClearOutcome(StrEnum):
+    DELETED = "deleted"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+    STOPPED = "stopped"
+
+
+class _ClearHistorySystemicError(Exception):
+    """Class (c): no further job may start; mapped to one fixed masked error."""
+
+
+# Primary SQLite result codes that mean the database as a whole cannot be
+# written (not a per-job condition): READONLY (8, incl. extended codes such as
+# READONLY_DBMOVED), IOERR (10), CORRUPT (11), FULL (13), CANTOPEN (14) and
+# NOTADB (26). BUSY/LOCKED stay per-job (contention, not a systemic failure).
+_SYSTEMIC_SQLITE_PRIMARY_CODES = frozenset({8, 10, 11, 13, 14, 26})
+
+
+def _is_systemic_db_error(exc: BaseException) -> bool:
+    """Classify by the DBAPI ``sqlite_errorcode`` (SQLAlchemy ``orig``), never text."""
+    seen: set[int] = set()
+    pending: list[BaseException | None] = [exc]
+    while pending:
+        current = pending.pop()
+        if current is None or id(current) in seen:
+            continue
+        seen.add(id(current))
+        code = getattr(current, "sqlite_errorcode", None)
+        if isinstance(code, int) and (code & 0xFF) in _SYSTEMIC_SQLITE_PRIMARY_CODES:
+            return True
+        orig = getattr(current, "orig", None)
+        pending.extend([
+            orig if isinstance(orig, BaseException) else None,
+            current.__cause__, current.__context__,
+        ])
+    return False
 
 
 class JobService:
@@ -60,10 +131,17 @@ class JobService:
         session_factory: async_sessionmaker[AsyncSession],
         queue_manager: QueueManager,
         bus: EventBus,
+        *,
+        storage: StorageService | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._queue_manager = queue_manager
         self._bus = bus
+        # Explicit Clear History storage dependency; without it confirm fails
+        # closed before consuming a preview or touching anything.
+        self._storage = storage
+        self._clear_previews: OrderedDict[str, ClearHistoryPreview] = OrderedDict()
+        self._clock = time.monotonic
 
     async def create_job(
         self,
@@ -366,8 +444,8 @@ class JobService:
                 session,
                 job_id=job_id,
                 level="info",
-                event_type="job",
-                message="Retry queued",
+                event_type=RETRY_QUEUED_EVENT_TYPE,
+                message=RETRY_QUEUED_MESSAGE,
             )
             record = await job_repo.get_job(session, job_id, actor.id)
             assert record is not None
@@ -539,6 +617,215 @@ class JobService:
     async def _get_any(self, job_id: str) -> DownloadJob | None:
         async with self._session_factory() as session:
             return await job_repo.get_job_any_owner(session, job_id)
+
+    # --- Clear History (ARCHITECTURE §59 Q3, PRODUCT_SPEC §17) ---------------
+
+    async def clear_history_preview(
+        self, actor: Actor, *, include_cancelled: bool
+    ) -> tuple[str, int]:
+        """Store the exact eligible owned members; the count is that same list."""
+        try:
+            async with self._session_factory() as session:
+                members = await job_repo.list_clear_history_snapshot(
+                    session, actor.id, include_cancelled=include_cancelled,
+                )
+        except Exception as exc:
+            logger.warning("Clear History preview read failed (%s)", type(exc).__name__)
+            raise ClearHistoryError(ClearHistoryError.FAILED) from None
+        # Synchronous from here: prune, evict oldest, insert.
+        now = self._clock()
+        self._prune_clear_previews(now)
+        while len(self._clear_previews) >= CLEAR_PREVIEW_CAP:
+            self._clear_previews.popitem(last=False)
+        preview_id = secrets.token_urlsafe(32)
+        self._clear_previews[preview_id] = ClearHistoryPreview(
+            actor.id, include_cancelled, now, tuple(members),
+        )
+        return preview_id, len(members)
+
+    def _prune_clear_previews(self, now: float) -> None:
+        expired = [
+            key for key, entry in self._clear_previews.items()
+            if now - entry.created >= CLEAR_PREVIEW_TTL_SECONDS
+        ]
+        for key in expired:
+            del self._clear_previews[key]
+
+    def _take_clear_preview(self, actor: Actor, preview_id: str) -> ClearHistoryPreview:
+        """Lookup -> expiry/owner check -> pop, one synchronous step.
+
+        A foreign owner gets the same error without consuming the entry.
+        """
+        self._prune_clear_previews(self._clock())
+        entry = self._clear_previews.get(preview_id)
+        if entry is None or entry.owner_id != actor.id:
+            raise ClearHistoryError(ClearHistoryError.PREVIEW_EXPIRED)
+        del self._clear_previews[preview_id]
+        return entry
+
+    async def clear_history_confirm(self, actor: Actor, preview_id: str) -> ClearHistoryResult:
+        if self._storage is None:
+            raise ClearHistoryError(ClearHistoryError.FAILED)
+        # Consumed before the first await: single use even under concurrency.
+        preview = self._take_clear_preview(actor, preview_id)
+        deleted = failed = 0
+        try:
+            async with self._queue_manager.runtime_operation():
+                for member in preview.members:
+                    async with self._queue_manager.lifecycle_lock(member.job_id):
+                        outcome = await self._await_owned(self._queue_manager.own_operation(
+                            self._clear_one(actor.id, member)))
+                    if outcome == _ClearOutcome.STOPPED:
+                        break
+                    if outcome == _ClearOutcome.DELETED:
+                        deleted += 1
+                    elif outcome == _ClearOutcome.FAILED:
+                        failed += 1
+        except _ClearHistorySystemicError:
+            raise ClearHistoryError(ClearHistoryError.FAILED) from None
+        return ClearHistoryResult(deleted, failed)
+
+    @staticmethod
+    async def _await_owned[T](operation: asyncio.Task[T]) -> T:
+        """Same shield loop as Retry/Cancel: repeated caller cancellation never
+        releases the lock before the owned operation has a definite outcome."""
+        cancelled = False
+        while True:
+            try:
+                result = await asyncio.shield(operation)
+                break
+            except asyncio.CancelledError:
+                if operation.cancelled():
+                    raise
+                cancelled = True
+            except Exception:
+                if cancelled:
+                    raise asyncio.CancelledError from None
+                raise
+        if cancelled:
+            raise asyncio.CancelledError
+        return result
+
+    async def _clear_one(self, owner_id: str, member: ClearHistoryMember) -> _ClearOutcome:
+        """Steps (2)-(7) for one job, under its lifecycle lock (caller)."""
+        if self._queue_manager.stopping:
+            return _ClearOutcome.STOPPED
+        fresh, _ = await self._clear_read(owner_id, member, with_keys=False)
+        if fresh != member:
+            # Lost race (Retried, changed, gone): silent skip, never a drain.
+            return _ClearOutcome.SKIPPED
+        await self._queue_manager.wait_for_attempt(member.job_id, retrieve_outcome=True)
+        fresh, keys = await self._clear_read(owner_id, member, with_keys=True)
+        if fresh != member:
+            return _ClearOutcome.SKIPPED
+        try:
+            await asyncio.to_thread(self._remove_clear_staging, keys)
+        except Exception as exc:
+            logger.warning(
+                "Clear History staging removal failed for job %s: %s (%s, errno=%s)",
+                member.job_id, getattr(exc, "reason", None), type(exc).__name__,
+                getattr(exc, "errno", None),
+            )
+            await self._write_clear_warning(owner_id, member.job_id)
+            return _ClearOutcome.FAILED
+        return await self._clear_database(owner_id, member)
+
+    async def _clear_read(
+        self, owner_id: str, member: ClearHistoryMember, *, with_keys: bool
+    ) -> tuple[ClearHistoryMember | None, tuple[str, ...]]:
+        try:
+            async with self._session_factory() as session:
+                fresh = await job_repo.get_clear_history_member(
+                    session, member.job_id, owner_id)
+                keys: tuple[str, ...] = ()
+                if with_keys and fresh == member:
+                    keys = await job_repo.list_clear_history_staging_keys(
+                        session, member, owner_id)
+        except Exception as exc:
+            logger.warning("Clear History read failed for job %s (%s)",
+                           member.job_id, type(exc).__name__)
+            raise _ClearHistorySystemicError from None
+        return fresh, keys
+
+    def _remove_clear_staging(self, keys: tuple[str, ...]) -> None:
+        """Worker thread; holds no SQL writer. DB-derived keys only."""
+        storage = self._storage
+        assert storage is not None
+        for key in keys:
+            storage.remove_staging_for_clear_history(key)
+
+    async def _clear_database(self, owner_id: str, member: ClearHistoryMember) -> _ClearOutcome:
+        """One short CAS transaction; a failure is decided by a fresh read."""
+        job_id = member.job_id
+        try:
+            async with self._session_factory() as session:
+                try:
+                    rowcount = await job_repo.stage_clear_history_delete(
+                        session, member, owner_id)
+                    if rowcount == 0:
+                        await session.rollback()
+                        return _ClearOutcome.SKIPPED
+                    if rowcount == 1:
+                        await activity.delete_events_for_job(session, job_id)
+                        await session.commit()
+                        return _ClearOutcome.DELETED
+                    await session.rollback()
+                    logger.warning("Clear History unexpected rowcount for job %s", job_id)
+                except BaseException:
+                    await session.rollback()
+                    raise
+        except Exception as exc:
+            logger.warning("Clear History database step failed for job %s (%s, code=%s)",
+                           job_id, type(exc).__name__,
+                           getattr(getattr(exc, "orig", None), "sqlite_errorcode", None))
+            if _is_systemic_db_error(exc):
+                # Database-wide write failure (also on COMMIT): stop with the
+                # masked error; no warning, count or further job is attempted.
+                raise _ClearHistorySystemicError from None
+        # Ambiguous per-job outcome: decided only through a fresh session.
+        if not await self._clear_job_present(owner_id, job_id):
+            return _ClearOutcome.DELETED
+        await self._write_clear_warning(owner_id, job_id)
+        return _ClearOutcome.FAILED
+
+    async def _clear_job_present(self, owner_id: str, job_id: str) -> bool:
+        try:
+            async with self._session_factory() as session:
+                return await job_repo.job_exists(session, job_id, owner_id)
+        except Exception as exc:
+            logger.warning("Clear History outcome unverifiable for job %s (%s)",
+                           job_id, type(exc).__name__)
+            raise _ClearHistorySystemicError from None
+
+    async def _write_clear_warning(self, owner_id: str, job_id: str) -> None:
+        """Best effort, fixed text, only on a remaining job.
+
+        Local failures are swallowed; a detected database-wide write failure
+        raises the systemic stop instead of continuing with the next job.
+        """
+        try:
+            async with self._session_factory() as session:
+                try:
+                    # Writer first, then the existence check in the same transaction.
+                    event = await activity.add_activity_event(
+                        session, job_id=job_id, level="warning",
+                        event_type=CLEAR_HISTORY_WARNING_EVENT_TYPE,
+                        message=CLEAR_HISTORY_WARNING_MESSAGE,
+                    )
+                    if not await job_repo.job_exists(session, job_id, owner_id):
+                        await session.rollback()
+                        return
+                    await session.commit()
+                except BaseException:
+                    await session.rollback()
+                    raise
+        except Exception as exc:
+            logger.warning("Clear History warning not written for job %s (%s)",
+                           job_id, type(exc).__name__)
+            if _is_systemic_db_error(exc):
+                raise _ClearHistorySystemicError from None
+            return
+        self._publish_collection_activities([event])
 
 
 class InvalidJobCursor(ValueError):

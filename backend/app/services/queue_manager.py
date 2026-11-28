@@ -64,6 +64,11 @@ class QueueManager:
     def started(self) -> bool:
         return self._started
 
+    @property
+    def stopping(self) -> bool:
+        """Orderly stop was requested: lifecycle work must not start new steps."""
+        return self._stop_event.is_set()
+
     async def start(self) -> None:
         if self._started:
             raise RuntimeError("queue manager already started")

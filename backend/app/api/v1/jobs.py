@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.api.dependencies import get_actor
 from app.domain.actors import Actor
-from app.domain.jobs import CollectionProfile, JobError, OutputProfile
+from app.domain.jobs import ClearHistoryError, CollectionProfile, JobError, OutputProfile
 from app.models.jobs import ActivityEvent, DownloadJob
 from app.repositories import activity
 from app.services.job_mapping import job_to_dto
@@ -147,6 +147,61 @@ async def list_jobs(
         "jobs": [job_to_dto(record).model_dump(mode="json") for record in records],
         "next_cursor": next_cursor,
     }
+
+
+class ClearHistoryPreviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    include_cancelled: bool = Field(default=False, strict=True)
+
+
+class ClearHistoryConfirmRequest(BaseModel):
+    # Only the server-issued token: no client job ids, counts or paths.
+    model_config = ConfigDict(extra="forbid")
+    preview_id: str = Field(min_length=1, max_length=128, strict=True)
+
+
+def _clear_error_response(exc: ClearHistoryError) -> JSONResponse:
+    return JSONResponse(
+        status_code=exc.http_status,
+        content={
+            "error": {
+                "code": exc.code,
+                "message": exc.message,
+                "retryable": exc.retryable,
+                "job_id": None,
+            }
+        },
+    )
+
+
+@router.post("/jobs/clear-history/preview")
+async def clear_history_preview(
+    request: ClearHistoryPreviewRequest,
+    http_request: Request,
+    actor: Actor = Depends(get_actor),
+) -> Any:
+    service: JobService = http_request.app.state.job_service
+    try:
+        preview_id, job_count = await service.clear_history_preview(
+            actor, include_cancelled=request.include_cancelled,
+        )
+    except ClearHistoryError as exc:
+        return _clear_error_response(exc)
+    return {"preview_id": preview_id, "job_count": job_count}
+
+
+@router.post("/jobs/clear-history/confirm")
+async def clear_history_confirm(
+    request: ClearHistoryConfirmRequest,
+    http_request: Request,
+    actor: Actor = Depends(get_actor),
+) -> Any:
+    service: JobService = http_request.app.state.job_service
+    try:
+        result = await service.clear_history_confirm(actor, request.preview_id)
+    except ClearHistoryError as exc:
+        return _clear_error_response(exc)
+    return {"deleted_count": result.deleted_count, "failed_count": result.failed_count}
 
 
 @router.get("/jobs/{job_id}")

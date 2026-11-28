@@ -14,6 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.analysis import NormalizedFormat
 from app.domain.jobs import (
     ACTIVE_JOB_STATUSES,
+    RETRY_QUEUED_EVENT_TYPE,
+    RETRY_QUEUED_MESSAGE,
     JobError,
     JobErrorCode,
     JobStatus,
@@ -173,8 +175,8 @@ async def stage_collection_retry(
     ).execution_options(autoflush=False, synchronize_session=False))
     if cast(CursorResult[Any], result).rowcount != 1:
         return False
-    await add_activity_event(session, job_id=job_id, level="info", event_type="job",
-                             message="Retry queued")
+    await add_activity_event(session, job_id=job_id, level="info",
+                             event_type=RETRY_QUEUED_EVENT_TYPE, message=RETRY_QUEUED_MESSAGE)
     return True
 
 

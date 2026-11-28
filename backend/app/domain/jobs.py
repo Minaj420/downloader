@@ -156,6 +156,39 @@ class JobError(Exception):
         super().__init__(self.message)
 
 
+# Fixed Activity written ONLY by the two successful-Retry writers (single
+# ``JobService._finalize_retry`` and collection ``stage_collection_retry``), in
+# the same transaction as their Retry CAS. Its ``MAX(activity_events.id)`` per
+# job is the Clear History attempt marker (ARCHITECTURE §59 Q3); no runner,
+# recovery or Clear path may emit it.
+RETRY_QUEUED_EVENT_TYPE = "job"
+RETRY_QUEUED_MESSAGE = "Retry queued"
+
+# Clear History fixed, path-free texts (ARCHITECTURE §59 Q3 failure classes).
+CLEAR_HISTORY_WARNING_EVENT_TYPE = "clear_history"
+CLEAR_HISTORY_WARNING_MESSAGE = "This job could not be deleted by Clear History."
+
+
+class ClearHistoryError(Exception):
+    """Clear History API error with a fixed message; never carries raw text."""
+
+    PREVIEW_EXPIRED = "clear_preview_expired"
+    FAILED = "clear_history_failed"
+
+    _MESSAGES = {
+        PREVIEW_EXPIRED: "This Clear History preview has expired. Preview again.",
+        FAILED: "Clear History could not finish. Refresh and preview again.",
+    }
+    _STATUS = {PREVIEW_EXPIRED: 409, FAILED: 500}
+
+    def __init__(self, code: str) -> None:
+        self.code = code
+        self.message = self._MESSAGES[code]
+        self.http_status = self._STATUS[code]
+        self.retryable = False
+        super().__init__(self.message)
+
+
 def job_error_code_retryable(code: str) -> bool:
     try:
         return JobErrorCode(code) in _RETRYABLE_JOB_CODES

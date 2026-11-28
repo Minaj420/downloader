@@ -64,7 +64,7 @@ def create_app(settings: Settings | None = None, analyzer: URLAnalyzer | None = 
             session_factory, child_analyzer, downloader, ffmpeg, storage,
         ),
     )
-    job_service = JobService(session_factory, queue_manager, bus)
+    job_service = JobService(session_factory, queue_manager, bus, storage=storage)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:

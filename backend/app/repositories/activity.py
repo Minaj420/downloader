@@ -1,11 +1,45 @@
 import json
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
-from sqlalchemy import func, select
+from sqlalchemy import CursorResult, ScalarSelect, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import InstrumentedAttribute
+from sqlalchemy.sql.elements import ColumnElement
 
+from app.domain.jobs import RETRY_QUEUED_EVENT_TYPE, RETRY_QUEUED_MESSAGE
 from app.models.jobs import ActivityEvent
+
+
+def retry_marker(
+    job_id: ColumnElement[str] | InstrumentedAttribute[str] | str,
+) -> ScalarSelect[int | None]:
+    """Clear History attempt marker: ``MAX(id)`` of this job's ``Retry queued`` rows.
+
+    Only the two successful-Retry writers emit that fixed Activity, so any
+    Retry after a preview changes this value. ``NULL`` means no marker row.
+    Callers compare it null-safely (``IS``); ``job_id`` is a bound id or a
+    correlated ``download_jobs.id`` column of an owner-scoped read.
+    """
+    return (
+        select(func.max(ActivityEvent.id))
+        .where(
+            ActivityEvent.job_id == job_id,
+            ActivityEvent.event_type == RETRY_QUEUED_EVENT_TYPE,
+            ActivityEvent.message == RETRY_QUEUED_MESSAGE,
+        )
+        .scalar_subquery()
+    )
+
+
+async def delete_events_for_job(session: AsyncSession, job_id: str) -> int:
+    """Stage removal of one job's Activity (child events share the parent id); no commit."""
+    result = await session.execute(
+        delete(ActivityEvent)
+        .where(ActivityEvent.job_id == job_id)
+        .execution_options(autoflush=False, synchronize_session=False)
+    )
+    return int(cast(CursorResult[Any], result).rowcount)
 
 
 async def max_event_id(session: AsyncSession) -> int:
