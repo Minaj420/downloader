@@ -321,7 +321,7 @@ Source selection and output choice are separate. The source selection picks whic
 - Opus
 - FLAC
 
-Each format uses one fixed quality profile; v0.1 has no bitrate slider. Exact codec, bitrate and quality parameters of those profiles are a later technical design item and are not decided here.
+Each format uses one fixed quality profile; v0.1 has no bitrate slider. The exact fixed encoding parameters of those profiles are recorded only in ARCHITECTURE.md (output profile section, "Fixed conversion encoding profiles"); they apply only when a stream is encoded, not to copied/remuxed streams or `Original`.
 
 Conversion is offered for compatibility, not quality. WAV and FLAC do not improve a lossy source, and a lossless target does not restore quality already lost in the source. By default `Original / Best Available` avoids unnecessary re-encoding; other output choices are not a quality increase. Copy/remux and lossless conversion can also preserve quality, while lossy re-encoding can add further loss, and no conversion restores quality already lost in the source. A different output choice does not by itself imply forced re-encoding or loss; the UI must still describe it as a conversion rather than an improvement.
 
@@ -375,7 +375,7 @@ Collection-level video profiles such as `Best Available` or `Up to 1080p` resolv
 Required first video output set for new downloads (approved; planned, not implemented):
 
 - `Original` (default): source-aware; merges stay in the existing mp4/mkv-style containers chosen for the source.
-- `MP4 (compatible)`: the result must be a real H.264/AAC MP4. Compatible streams are copied/remuxed where possible and transcoded only when needed.
+- `MP4 (compatible)`: the result must be a real H.264/AAC MP4. Compatible streams are copied/remuxed where possible and transcoded only when needed. The fixed x264/AAC encode settings used when transcoding are in ARCHITECTURE.md ("Fixed conversion encoding profiles").
 
 Explicit MKV and WebM outputs are outside the first set. Resolution/quality is limited to what the source offers, with no upscaling. For a collection, the one chosen output applies to all selected children, not per child. If an explicit MP4 selection cannot be produced, the job/child fails as described in §8. Transcoding is conversion for compatibility, not quality improvement.
 

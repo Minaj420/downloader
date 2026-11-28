@@ -7,8 +7,6 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - M6 kapandı: kullanıcı Compose smoke ve macOS tam gate; M6 kapsamında plansız v0.1 zorunluluğu yok.
 - M6.5 kapandı: metin etiketi, sunum UI ve temel hata metinleri; bu kapsamda plansız v0.1 zorunluluğu yok.
 - Uzlaştırma yedek dalı korunur; push yalnız açık kullanıcı talebi ve hedefle.
-- Onaylı sabit profillerin yetkili belgeye aktarımı bekliyor: MP3 V0, M4A AAC 256k,
-  Opus 160k, WAV/FLAC 16-bit; MP4 x264 CRF20 medium + AAC 192k. Yeni ürün kararı değil.
 - Onaylı, belgeye aktarılacak: videodan ses çıkarma yok; ses doğrudan ses akışından.
 ## Sıradaki iş
 - Bulgu 3a kapandı: Fedora Compose ffprobe 7.1.5; tekil 720p, dikey 1080p; ağ hatalı öğe Retry ile indi (4/4), sıra korundu. Hedefli 817 PASS/1 SKIP, Ruff/mypy ve review temiz; göreli girdi testi should-fix.
@@ -29,7 +27,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - M6.5 platform ikonları: YouTube Music/Shorts görsel PASS, Other yalnız otomatik test. Lisans/marka doğrulaması ertelendi.
 ## Açık bulgular
 - should-fix: eski conversion durumları PRODUCT_SPEC §8–9 ve ARCHITECTURE M6
-  kapanış paragrafında bayat; sabit profillerin yetkili belgeye aktarımı ayrı iş.
+  kapanış paragrafında bayat.
 - should-fix: collection başarılı convert/caller-cancel testi sleep(0) ile deterministik değil;
   single başarılı convert+iptal ek testi eksik. Üretim hatası bulunmadı.
 - Q3 should-fix: hata zincirinde yol gizleme ve fstat hatasında fd kapanış testi. M7/S1 bekliyor; M9-L tıklanabilirlik ve popup/satır içi genişleme açık.
