@@ -197,6 +197,42 @@ describe("reconcile", () => {
     expect(result.nextCursor).toBeNull();
   });
 
+  describe("several open-detail priors", () => {
+    const newer = (base: Job) => ({ ...base, status: "completed" as const, error: null, updated_at: "2026-11-20T12:00:00Z" });
+    const f = job("f", { status: "failed", created_at: "2026-11-20T09:00:00.5Z", error: { code: "x", message: "m", retryable: true } });
+    const g = job("g", { status: "failed", created_at: "2026-11-20T09:00:00.4Z", error: { code: "x", message: "m", retryable: true } });
+    const ghost = job("ghost", { status: "completed", updated_at: "2026-11-20T12:00:00Z" });
+    const priors = [newer(f), newer(g), ghost];
+
+    it("reset compares every prior and never adds a prior-only ID", () => {
+      const result = applyReset(lists([], [h1]), [], { jobs: [h1, f, g], next_cursor: null }, priors);
+      expect(ids(result.lists.history)).toEqual(["h1", "f", "g"]);
+      expect(result.lists.history.slice(1).map((entry) => entry.status)).toEqual(["completed", "completed"]);
+      expect(ids([...result.lists.active, ...result.lists.history])).not.toContain("ghost");
+    });
+
+    it("merge aligns held rows and fresh rows to every newer prior without inserting others", () => {
+      const result = applyMerge(lists([], [h1, f]), [], { jobs: [h1, g], next_cursor: null }, priors);
+      expect(result.reset).toBe(false);
+      expect(ids(result.lists.history)).toEqual(["h1", "f", "g"]);
+      expect(result.lists.history.slice(1).every((entry) => entry.status === "completed")).toBe(true);
+      expect(ids(result.lists.history)).not.toContain("ghost");
+    });
+
+    it("history page keeps every newer prior and drops no rows", () => {
+      const result = applyHistoryPage(lists([], [h1], "c2"), { jobs: [f, g], next_cursor: null }, priors);
+      expect(ids(result.history)).toEqual(["h1", "f", "g"]);
+      expect(result.history.slice(1).every((entry) => entry.status === "completed")).toBe(true);
+      expect(ids(result.history)).not.toContain("ghost");
+    });
+
+    it("an older prior never wins over a newer fresh row", () => {
+      const fresh = { ...f, status: "queued" as const, error: null, updated_at: "2026-11-20T13:00:00Z" };
+      const result = applyReset(EMPTY_QUEUE_LISTS, [fresh], { jobs: [], next_cursor: null }, priors);
+      expect(ids(result.lists.active)).toEqual(["f"]);
+    });
+  });
+
   it("disjointness: a job in both fresh responses lands in one list", () => {
     const moved = { ...h1, status: "queued" as const, updated_at: "2026-11-20T12:00:00Z" };
     const result = applyReset(EMPTY_QUEUE_LISTS, [moved], { jobs: [h1], next_cursor: null });

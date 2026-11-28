@@ -1,16 +1,27 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { ActivityPanel } from "../features/new-download/ActivityPanel";
 import { CollectionProgress } from "../features/new-download/CollectionProgress";
 import { QueueJobRow } from "../features/queue/QueueJobRow";
 import { findJob, newestSnapshot, QUEUE_STATUS_LABELS } from "../features/queue/queueState";
-import { useQueue, type QueueController, type QueueDetail, type QueueView } from "../features/queue/useQueue";
+import {
+  findDetail,
+  useQueue,
+  type QueueController,
+  type QueueDetail,
+  type QueueView,
+} from "../features/queue/useQueue";
 import { canRetryJob, type Job } from "../api/jobs";
+
+// Several details can be on the page at once: DOM ids are per job ID (one
+// open detail per ID), so every row toggle/Activity toggle controls its own.
+const detailDomId = (id: string) => `queue-detail-${id}`;
+const activityDomId = (id: string) => `queue-activity-${id}`;
 
 function JobRows({ jobs, view, controller, renderDetail }: {
   jobs: Job[];
   view: QueueView;
   controller: QueueController;
-  /** Inline panel for a row (History only); Active details stay at the top. */
+  /** Inline panel for a row (History only); the Active detail stays at the top. */
   renderDetail?: (job: Job) => ReactNode;
 }) {
   return (
@@ -21,7 +32,8 @@ function JobRows({ jobs, view, controller, renderDetail }: {
           job={job}
           pendingAction={view.pending[job.id]}
           error={view.errorSurfaces[job.id] === "detail" ? undefined : view.errors[job.id]}
-          detailOpen={view.detail?.id === job.id}
+          detailOpen={findDetail(view, job.id) != null}
+          detailId={detailDomId(job.id)}
           onCancel={() => controller.cancel(job.id)}
           onRetry={() => controller.retry(job.id, "row")}
           onToggleDetail={() => controller.openDetail(job.id)}
@@ -33,7 +45,6 @@ function JobRows({ jobs, view, controller, renderDetail }: {
   );
 }
 
-// Only one detail is open at a time: ActivityPanel uses a fixed DOM id.
 function JobDetail({
   detail, view, controller, onRetry, onClose, activityExpanded, onActivityExpandedChange,
 }: {
@@ -53,7 +64,7 @@ function JobDetail({
   // One live alert: the panel shows only Retry errors placed on it.
   const error = view.errorSurfaces[detail.id] === "detail" ? view.errors[detail.id] : undefined;
   return (
-    <section className="job-progress" id="queue-detail" aria-label="Job details" tabIndex={-1}>
+    <section className="job-progress" id={detailDomId(detail.id)} aria-label="Job details" tabIndex={-1}>
       <header className="job-progress-header">
         <h2>{job.title}</h2>
         <span className={`badge badge-status badge-status-${job.status}`}>
@@ -89,84 +100,88 @@ function JobDetail({
         <CollectionProgress job={job} loadStatus={detail.itemsStatus} />
       )}
       <ActivityPanel
-        key={job.id}
+        key={detail.slot}
         events={detail.events}
         loadStatus={detail.activityStatus}
-        onRefresh={() => controller.refreshActivity()}
+        onRefresh={() => controller.refreshActivity(detail.id)}
         expanded={activityExpanded}
         onExpandedChange={onActivityExpandedChange}
+        listId={activityDomId(detail.id)}
       />
     </section>
   );
 }
 
-// Focus is only moved after the user's own Retry inside the panel, never on
-// background updates.
+// Focus is only moved after the user's own Retry inside an inline panel,
+// never on background updates.
 type FocusRequest = { kind: "panel"; id: string };
 
 export function QueuePage() {
   const { view, controller } = useQueue();
   const { lists } = view;
   const loading = view.listStatus === "loading";
-  const rootRef = useRef<HTMLElement>(null);
   const focusRequest = useRef<FocusRequest | null>(null);
-  // Activity expanded is UI state of the selected job only: it survives the
-  // panel moving between inline/top, and resets when the detail closes
-  // (toggle, panel close, 404, same ID reopen) or another job is selected.
-  const [activityExpandedId, setActivityExpandedId] = useState<string | null>(null);
-  if (activityExpandedId !== null && view.detail?.id !== activityExpandedId) {
-    setActivityExpandedId(null);
-  }
+  // Activity expanded is UI state of one opening (detail slot): it survives
+  // the panel moving between inline/top, and is collapsed again on any new
+  // opening (toggle, panel close, 404, same ID reopen). Each detail is
+  // independent of the others.
+  const [expandedSlots, setExpandedSlots] = useState<ReadonlySet<number>>(() => new Set());
 
-  // Inline only while the selected row is in History; otherwise (Active row,
-  // row absent after reset/pagination) the single panel stays at the top.
-  const inlineId = view.detail != null && lists.history.some((job) => job.id === view.detail?.id)
-    ? view.detail.id
-    : null;
+  // The controller keeps the top invariant (never a History-row detail).
+  const top = view.topId == null ? undefined : findDetail(view, view.topId);
 
   useEffect(() => {
     const request = focusRequest.current;
     if (!request) return;
-    const root = rootRef.current;
-    if (view.detail?.id !== request.id) {
+    const inline = lists.history.some((job) => job.id === request.id);
+    if (findDetail(view, request.id) == null) {
       focusRequest.current = null;
-    } else if (inlineId == null) {
-      // Retry relocated the panel to the top: its inline copy (and focus) is gone.
+    } else if (!inline) {
       focusRequest.current = null;
-      // The inline panel (and its focus) is gone; only take focus when nothing
-      // else holds it, so a control the user moved to meanwhile is kept.
+      // Retry relocated the panel to the top: its inline copy (and focus) is
+      // gone; only take focus when nothing else holds it, so a control the
+      // user moved to meanwhile is kept.
       const active = document.activeElement;
-      if (active == null || active === document.body) {
-        root?.querySelector<HTMLElement>("#queue-detail")?.focus();
+      if (view.topId === request.id && (active == null || active === document.body)) {
+        document.getElementById(detailDomId(request.id))?.focus();
       }
     } else if (view.pending[request.id] == null) {
       focusRequest.current = null;
     }
   });
 
-  function requestFocus(request: FocusRequest) {
-    focusRequest.current = request;
+  // Event handler only (panel Retry click); never called during render.
+  const retryFromPanel = useCallback((id: string, inline: boolean) => {
+    if (inline) focusRequest.current = { kind: "panel", id };
+    controller.retry(id, "detail");
+  }, [controller]);
+
+  function setActivityExpanded(slot: number, expanded: boolean) {
+    const open = new Set(view.details.map((detail) => detail.slot));
+    setExpandedSlots((previous) => {
+      const next = new Set([...previous].filter((entry) => open.has(entry) && entry !== slot));
+      if (expanded) next.add(slot);
+      return next;
+    });
   }
 
   function renderDetail(detail: QueueDetail, inline: boolean) {
     return (
       <JobDetail
+        key={detail.slot}
         detail={detail}
         view={view}
         controller={controller}
-        activityExpanded={activityExpandedId === detail.id}
-        onActivityExpandedChange={(expanded) => setActivityExpandedId(expanded ? detail.id : null)}
-        onRetry={() => {
-          if (inline) requestFocus({ kind: "panel", id: detail.id });
-          controller.retry(detail.id, "detail");
-        }}
-        onClose={inline ? undefined : () => controller.closeDetail()}
+        activityExpanded={expandedSlots.has(detail.slot)}
+        onActivityExpandedChange={(expanded) => setActivityExpanded(detail.slot, expanded)}
+        onRetry={() => retryFromPanel(detail.id, inline)}
+        onClose={inline ? undefined : () => controller.closeDetail(detail.id)}
       />
     );
   }
 
   return (
-    <section className="queue-page" ref={rootRef}>
+    <section className="queue-page">
       <h1>Queue</h1>
       {view.listError && (
         <div className="error-banner" role="alert">
@@ -182,7 +197,7 @@ export function QueuePage() {
       )}
       {loading && !view.listError && <p role="status">Loading queue…</p>}
 
-      {view.detail && inlineId == null && renderDetail(view.detail, false)}
+      {top && renderDetail(top, false)}
 
       <section className="queue-section" aria-label="Active and queued">
         <h2>Active and queued</h2>
@@ -199,9 +214,10 @@ export function QueuePage() {
               jobs={lists.history}
               view={view}
               controller={controller}
-              renderDetail={(job) => (
-                view.detail && job.id === inlineId ? renderDetail(view.detail, true) : null
-              )}
+              renderDetail={(job) => {
+                const detail = findDetail(view, job.id);
+                return detail ? renderDetail(detail, true) : null;
+              }}
             />
           )
           : !loading && <p className="queue-empty">No finished downloads yet.</p>}

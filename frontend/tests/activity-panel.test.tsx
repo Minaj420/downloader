@@ -66,6 +66,32 @@ describe("ActivityPanel", () => {
     }
   });
 
+  it("keeps the default list id and accepts a unique one per panel", async () => {
+    const user = userEvent.setup();
+    render(
+      <>
+        <ActivityPanel events={[activityEvent()]} loadStatus="loaded" onRefresh={vi.fn()} />
+        <ActivityPanel
+          events={[activityEvent({ id: 2, message: "Other" })]}
+          loadStatus="loaded"
+          onRefresh={vi.fn()}
+          listId="queue-activity-x"
+        />
+      </>,
+    );
+    const [first, second] = screen.getAllByRole("button", { name: /Activity/ });
+    expect(first).toHaveAttribute("aria-controls", "activity-list");
+    expect(second).toHaveAttribute("aria-controls", "queue-activity-x");
+
+    // Independent expansion: only the toggled panel opens its own list.
+    await user.click(second);
+    expect(first).toHaveAttribute("aria-expanded", "false");
+    expect(document.getElementById("queue-activity-x")).toHaveTextContent("Other");
+    expect(document.getElementById("activity-list")).toBeNull();
+    await user.click(first);
+    expect(document.getElementById("activity-list")).toHaveTextContent("Queued");
+  });
+
   it("shows an empty state when there is no activity", async () => {
     render(<ActivityPanel events={[]} loadStatus="loaded" onRefresh={vi.fn()} />);
     const user = userEvent.setup();

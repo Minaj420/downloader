@@ -2262,9 +2262,17 @@ Labels: **APPROVED** = user decision (planned, not implemented unless stated); *
     (6) Snapshots with collection `items == null` never delete loaded items.
       An open collection detail re-reads `GET /jobs/{id}` coalesced (one in flight, latest key, like `refreshCollection`);
       open Activity merges `activity.created` by `job_id`.
-      The open detail is keyed by job ID, not by list membership:
-      every reset re-reads its `GET /jobs/{id}` and `GET /jobs/{id}/activity` (404 closes it),
-      so it stays correct even if its row was on a dropped deeper page.
+      Open details are keyed by job ID, not by list membership:
+      every reset re-reads each open detail's `GET /jobs/{id}` and `GET /jobs/{id}/activity` (404 closes only that detail),
+      so each stays correct even if its row was on a dropped deeper page.
+      Several details may be open (presentation rules: PRODUCT_SPEC §17, M6.5-UI-History-Multi):
+      each opening gets a new job-keyed slot identity with its own coalesced detail read and Activity generation,
+      so a stale response after a close/reopen of the same ID, or of another ID, is discarded;
+      the single top slot is allocated in the controller from the winning row/detail snapshot (per (1)):
+      a detail that is Active by it (Active row, or rowless after an SSE/GET/Retry response, with no list membership change) takes the top
+      and closes only previous Active selections; a displaced terminal fallback stays open but hidden and returns inline with its row;
+      a fallback for dropped History rows (terminal winning snapshot only) is chosen only at a reset boundary (most recently opened), never per render.
+      Every open detail snapshot is a newest-wins comparison base for reset, merge and Load more, never list membership.
     (7) History is rendered sorted by `created_at DESC, id DESC` with ID dedup;
       Load more appends `next_cursor` pages (one in flight; an error keeps the cursor for manual retry).
       A Load more response is applied only if the history generation is unchanged

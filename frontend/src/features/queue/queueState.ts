@@ -83,7 +83,7 @@ export function decideSnapshot(
 }
 
 /**
- * The winning snapshot for the open detail's ID across its list row and the
+ * The winning snapshot for an open detail's ID across its list row and the
  * detail record: the existing newest-wins comparison (rule 1), so an older
  * row never wins and `items: null` never drops the detail's loaded items
  * (rule 6). Equal time keeps the detail record.
@@ -114,28 +114,40 @@ function byId(jobs: Iterable<Job>): Map<string, Job> {
   return map;
 }
 
+/**
+ * Open-detail snapshots (`priors`, one per open job ID) used only as
+ * newest-wins comparison bases; they never add an ID to a list by themselves.
+ */
+type Priors = ReadonlyMap<string, Job>;
+
+function priorMap(priors: readonly Job[]): Priors {
+  return byId(priors);
+}
+
 /** Applies fresh REST rows newest-wins onto `known`, inserting unknown IDs. */
-function considerFresh(known: Map<string, Job>, fresh: readonly Job[], prior?: Job): void {
+function considerFresh(known: Map<string, Job>, fresh: readonly Job[], priors: Priors): void {
   for (const job of fresh) {
-    const current = withPrior(known.get(job.id), job.id, prior);
+    const current = withPrior(known.get(job.id), job.id, priors);
     known.set(job.id, decideSnapshot(current, job, true) ?? (current as Job));
   }
 }
 
 /**
- * Comparison base for one ID: the held list snapshot and the open detail's
- * snapshot (`prior`), the newer one by `newestSnapshot`. The detail only
- * serves as a base; it never adds an ID to a list by itself.
+ * Comparison base for one ID: the held list snapshot and that ID's open
+ * detail snapshot, the newer one by `newestSnapshot`.
  */
-function withPrior(held: Job | undefined, id: string, prior: Job | undefined): Job | undefined {
-  if (prior == null || prior.id !== id) return held;
+function withPrior(held: Job | undefined, id: string, priors: Priors): Job | undefined {
+  const prior = priors.get(id);
+  if (prior == null) return held;
   return held == null ? prior : newestSnapshot(held, prior);
 }
 
-/** Lets an already listed row follow a strictly newer open-detail snapshot. */
-function alignPrior(known: Map<string, Job>, prior: Job | undefined): void {
-  const held = prior == null ? undefined : known.get(prior.id);
-  if (prior != null && held != null) known.set(prior.id, newestSnapshot(held, prior));
+/** Lets already listed rows follow strictly newer open-detail snapshots. */
+function alignPriors(known: Map<string, Job>, priors: Priors): void {
+  for (const [id, prior] of priors) {
+    const held = known.get(id);
+    if (held != null) known.set(id, newestSnapshot(held, prior));
+  }
 }
 
 export interface SnapshotResult {
@@ -195,17 +207,18 @@ export function applyReset(
   lists: QueueLists,
   active: readonly Job[],
   head: ScopedJobList,
-  prior?: Job,
+  priors: readonly Job[] = [],
 ): ReconcileResult {
+  const bases = priorMap(priors);
   const local = byId([...lists.active, ...lists.history]);
   const headIds = new Set(head.jobs.map((job) => job.id));
   const known = new Map<string, Job>();
   for (const job of [...active, ...head.jobs]) {
-    const current = known.get(job.id) ?? withPrior(local.get(job.id), job.id, prior);
+    const current = known.get(job.id) ?? withPrior(local.get(job.id), job.id, bases);
     known.set(job.id, decideSnapshot(current, job, true) ?? (current as Job));
   }
   for (const job of lists.active) {
-    if (!known.has(job.id)) known.set(job.id, withPrior(job, job.id, prior) as Job);
+    if (!known.has(job.id)) known.set(job.id, withPrior(job, job.id, bases) as Job);
   }
   const kept = [...known.values()].filter((job) => isActiveJob(job.status) || headIds.has(job.id));
   const next = build(kept, head.next_cursor);
@@ -243,24 +256,30 @@ export function applyMerge(
   lists: QueueLists,
   active: readonly Job[],
   head: ScopedJobList,
-  prior?: Job,
+  priors: readonly Job[] = [],
 ): ReconcileResult {
   const last = head.jobs[head.jobs.length - 1];
   if (head.next_cursor != null && last != null &&
     !lists.history.some((job) => job.id === last.id)) {
-    return applyReset(lists, active, head, prior);
+    return applyReset(lists, active, head, priors);
   }
+  const bases = priorMap(priors);
   const known = byId([...lists.active, ...lists.history]);
-  alignPrior(known, prior);
-  considerFresh(known, [...active, ...head.jobs], prior);
+  alignPriors(known, bases);
+  considerFresh(known, [...active, ...head.jobs], bases);
   const next = build(known.values(), lists.nextCursor);
   return { lists: next, missingActiveIds: missingActive(next, active, head.jobs), reset: false };
 }
 
 /** A Load more page (already generation/cursor guarded): dedup, sort, new cursor. */
-export function applyHistoryPage(lists: QueueLists, page: ScopedJobList, prior?: Job): QueueLists {
+export function applyHistoryPage(
+  lists: QueueLists,
+  page: ScopedJobList,
+  priors: readonly Job[] = [],
+): QueueLists {
+  const bases = priorMap(priors);
   const known = byId([...lists.active, ...lists.history]);
-  alignPrior(known, prior);
-  considerFresh(known, page.jobs, prior);
+  alignPriors(known, bases);
+  considerFresh(known, page.jobs, bases);
   return build(known.values(), page.next_cursor);
 }

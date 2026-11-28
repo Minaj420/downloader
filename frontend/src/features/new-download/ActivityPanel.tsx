@@ -14,6 +14,11 @@ interface ActivityPanelProps {
    */
   expanded?: boolean;
   onExpandedChange?: (expanded: boolean) => void;
+  /**
+   * DOM id of the event list (aria-controls target). Must be unique when
+   * several panels are on one page (Queue); New Download keeps the default.
+   */
+  listId?: string;
 }
 
 /**
@@ -27,6 +32,7 @@ export function ActivityPanel({
   onRefresh,
   expanded: controlledExpanded,
   onExpandedChange,
+  listId = "activity-list",
 }: ActivityPanelProps) {
   const [localExpanded, setLocalExpanded] = useState(false);
   const controlled = controlledExpanded !== undefined;
@@ -42,13 +48,13 @@ export function ActivityPanel({
         type="button"
         className="button-quiet activity-toggle"
         aria-expanded={expanded}
-        aria-controls="activity-list"
+        aria-controls={listId}
         onClick={() => setExpanded(!expanded)}
       >
         Activity {expanded ? "▾" : "▸"}
       </button>
       {expanded && (
-        <ol className="activity-list" id="activity-list">
+        <ol className="activity-list" id={listId}>
           {loadStatus === "loading" && events.length === 0 && (
             <li className="activity-empty">Loading activity…</li>
           )}

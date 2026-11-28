@@ -23,6 +23,7 @@ import {
   decideSnapshot,
   EMPTY_QUEUE_LISTS,
   findJob,
+  isHistoryJob,
   newestSnapshot,
   removeJob,
   snapshotTime,
@@ -38,9 +39,14 @@ export type LoadMoreStatus = "idle" | "loading" | "error";
 /** Where a Retry error is shown; Cancel errors have no entry (row only). */
 export type ErrorSurface = "row" | "detail";
 
-/** The single open on-demand detail, keyed by job ID (not list membership). */
+/**
+ * One open on-demand detail, keyed by job ID (not list membership). `slot`
+ * is the opening's identity: a new value on every open, kept while the panel
+ * moves between inline/top/hidden, so a close/reopen never reuses it.
+ */
 export interface QueueDetail {
   id: string;
+  slot: number;
   job: Job;
   itemsStatus: ItemsLoadStatus;
   events: ActivityEvent[];
@@ -57,7 +63,14 @@ export interface QueueView {
   errors: Readonly<Record<string, string>>;
   /** Transient UI placement of a Retry error (one surface at a time). */
   errorSurfaces: Readonly<Record<string, ErrorSurface>>;
-  detail: QueueDetail | null;
+  /** Open details in opening order (one per job ID). */
+  details: readonly QueueDetail[];
+  /**
+   * The single upper panel: an Active job's detail, or a History detail whose
+   * row is not loaded. Never a History detail whose row is loaded (that one
+   * is inline). Open details that are neither inline nor top stay hidden.
+   */
+  topId: string | null;
 }
 
 export const INITIAL_QUEUE_VIEW: QueueView = {
@@ -69,8 +82,22 @@ export const INITIAL_QUEUE_VIEW: QueueView = {
   pending: {},
   errors: {},
   errorSurfaces: {},
-  detail: null,
+  details: [],
+  topId: null,
 };
+
+export function findDetail(view: QueueView, id: string): QueueDetail | undefined {
+  return view.details.find((detail) => detail.id === id);
+}
+
+function inHistory(lists: QueueLists, id: string): boolean {
+  return lists.history.some((job) => job.id === id);
+}
+
+/** Rendered somewhere: inline under its History row, or as the top panel. */
+function detailVisible(view: QueueView, id: string): boolean {
+  return findDetail(view, id) != null && (view.topId === id || inHistory(view.lists, id));
+}
 
 const LIST_ERROR = "Could not refresh the queue. Check your connection and try again.";
 const ACTION_ERRORS: Record<QueueAction, string> = {
@@ -88,12 +115,21 @@ function without<T>(record: Readonly<Record<string, T>>, id: string): Record<str
   return next;
 }
 
+/** Per-opening request state; a continuation is current only for its own slot object. */
+interface DetailSlot {
+  readonly serial: number;
+  request: object | null;
+  wanted: string | null;
+  resets: number;
+  activityGeneration: number;
+}
+
 /**
  * Queue page controller implementing the Q1 live-update rules
  * (ARCHITECTURE §59): one global SSE subscription, reset/merge reconciles
- * with a history generation, guarded Load more, on-demand detail and
+ * with a history generation, guarded Load more, on-demand details and
  * Cancel/Retry without optimistic changes or automatic repeats. Every async
- * continuation checks the session (start/stop) and its own generation.
+ * continuation checks the session (start/stop) and its own generation/slot.
  */
 export class QueueController {
   private view: QueueView = INITIAL_QUEUE_VIEW;
@@ -111,11 +147,9 @@ export class QueueController {
   // Synchronous per-ID guard: closes the double-click window before render.
   private readonly pendingActions = new Map<string, QueueAction>();
   private readonly errorFloors = new Map<string, string>();
-  private detailEpoch = 0;
-  private detailRequest: object | null = null;
-  private detailWanted: string | null = null;
-  private detailResets = 0;
-  private activityGeneration = 0;
+  // One slot per open detail ID; replaced (new identity) on every open.
+  private readonly slots = new Map<string, DetailSlot>();
+  private slotSerial = 0;
 
   constructor(publish: (view: QueueView) => void) {
     this.publish = publish;
@@ -130,7 +164,10 @@ export class QueueController {
     this.loadMoreRequest = null;
     this.missingReads.clear();
     this.pendingActions.clear();
-    this.detailRequest = null;
+    for (const slot of this.slots.values()) {
+      slot.request = null;
+      slot.wanted = null;
+    }
     const session = this.session;
     // Subscribe first; every REST read happens after it (mount reset below).
     this.unsubscribe = subscribeToJobUpdates(
@@ -150,8 +187,6 @@ export class QueueController {
     this.unsubscribe = null;
     if (this.pollTimer != null) clearInterval(this.pollTimer);
     this.pollTimer = null;
-    this.detailEpoch += 1;
-    this.activityGeneration += 1;
   }
 
   private alive(session: number): boolean {
@@ -159,10 +194,54 @@ export class QueueController {
   }
 
   private emit(patch: Partial<QueueView>): void {
-    this.view = this.alignErrorSurfaces({ ...this.view, ...patch });
+    this.view = this.alignErrorSurfaces(this.placeDetails({ ...this.view, ...patch }));
     if (!this.live) return;
     this.publish(this.view);
     this.syncPolling();
+  }
+
+  /**
+   * Top-panel invariant, applied at every state change (no fallback
+   * promotion here; that only happens at a reset boundary). Status comes
+   * from the winning snapshot of the row and the detail (`newestSnapshot`),
+   * so a stale row/response never decides placement, and placement never
+   * changes list membership:
+   * - a top detail whose row is in History is shown inline, so the top frees;
+   * - an open detail that is Active by its winning snapshot (Active row, or
+   *   rowless after an SSE/GET/Retry response) takes the single top panel.
+   *   When it arrives there, only previous Active selections (the old top
+   *   when Active, any other Active detail) are closed, so they cannot pop
+   *   back. A displaced terminal fallback stays open but hidden (slot,
+   *   Activity and expanded state kept) and returns inline with its row; it
+   *   is never put back on top except by a later reset fallback.
+   */
+  private placeDetails(view: QueueView): QueueView {
+    const { lists, details } = view;
+    const activeNow = (detail: QueueDetail) =>
+      isActiveJob(newestSnapshot(findJob(lists, detail.id), detail.job).status);
+    // A History-row detail is always inline (never also on top).
+    const topEligible = (detail: QueueDetail) => activeNow(detail) && !inHistory(lists, detail.id);
+    let topId = view.topId;
+    if (topId != null && (!details.some((detail) => detail.id === topId) || inHistory(lists, topId))) {
+      topId = null;
+    }
+    let winner: QueueDetail | null = null;
+    for (const detail of details) {
+      if (detail.id !== topId && topEligible(detail) && (winner == null || detail.slot > winner.slot)) {
+        winner = detail;
+      }
+    }
+    let kept = details;
+    if (winner != null) {
+      const winnerId = winner.id;
+      kept = details.filter((detail) => detail.id === winnerId || !topEligible(detail));
+      for (const detail of details) {
+        if (!kept.includes(detail)) this.slots.delete(detail.id);
+      }
+      topId = winnerId;
+    }
+    if (topId === view.topId && kept === details) return view;
+    return { ...view, details: kept, topId };
   }
 
   // A Retry error stays where the action started. Only when that surface is
@@ -176,7 +255,7 @@ export class QueueController {
         next = null;
       } else {
         const hasRow = findJob(view.lists, id) != null;
-        const hasDetail = view.detail?.id === id;
+        const hasDetail = detailVisible(view, id);
         if (surface === "row" && !hasRow && hasDetail) next = "detail";
         else if (surface === "detail" && !hasDetail && hasRow) next = "row";
       }
@@ -234,32 +313,35 @@ export class QueueController {
     this.clearSupersededErrors();
   }
 
-  /** Newest-wins for one snapshot into the lists and the open detail. */
+  /** Newest-wins for one snapshot into the lists and that ID's open detail. */
   private offer(job: Job, rich: boolean): void {
     this.commitLists(applySnapshot(this.view.lists, job, { rich, insert: false }).lists);
     this.offerDetail(job, rich);
   }
 
   private offerDetail(job: Job, rich: boolean): void {
-    const detail = this.view.detail;
-    if (detail?.id !== job.id) return;
+    const detail = findDetail(this.view, job.id);
+    if (detail == null) return;
     const next = decideSnapshot(detail.job, job, rich);
     if (next == null) return;
     const collection = next.job_type === "collection";
-    this.emit({
-      detail: {
-        ...detail,
-        job: next,
-        itemsStatus: collection ? (job.items != null ? "loaded" : "loading") : detail.itemsStatus,
-      },
+    this.replaceDetail({
+      ...detail,
+      job: next,
+      itemsStatus: collection ? (job.items != null ? "loaded" : "loading") : detail.itemsStatus,
     });
     this.clearSupersededErrors();
     // A snapshot without children triggers one coalesced detail read.
-    if (collection && job.items == null) void this.refreshDetail();
+    if (collection && job.items == null) void this.refreshDetail(job.id);
+  }
+
+  /** Every open detail snapshot: comparison bases only, never list membership. */
+  private priors(): Job[] {
+    return this.view.details.map((detail) => detail.job);
   }
 
   private newestTime(id: string): string | null {
-    const times = [findJob(this.view.lists, id), this.view.detail?.id === id ? this.view.detail.job : undefined]
+    const times = [findJob(this.view.lists, id), findDetail(this.view, id)?.job]
       .filter((job): job is Job => job != null)
       .map(snapshotTime)
       .sort();
@@ -303,11 +385,10 @@ export class QueueController {
         for (const job of active.jobs) this.offer(job, true);
         return;
       }
-      // The open detail's snapshot is only a comparison base (never membership).
-      const prior = this.view.detail?.job;
+      const priors = this.priors();
       const result = kind === "reset"
-        ? applyReset(this.view.lists, active.jobs, head, prior)
-        : applyMerge(this.view.lists, active.jobs, head, prior);
+        ? applyReset(this.view.lists, active.jobs, head, priors)
+        : applyMerge(this.view.lists, active.jobs, head, priors);
       if (result.reset && kind === "merge") this.generation += 1;
       this.commitLists(result.lists);
       this.emit({
@@ -315,9 +396,10 @@ export class QueueController {
         listError: null,
         ...(result.reset ? { loadMoreStatus: "idle" as const } : {}),
       });
+      if (result.reset) this.promoteMissingDetail();
       for (const job of [...active.jobs, ...head.jobs]) this.offerDetail(job, true);
       for (const id of result.missingActiveIds) void this.readMissing(id, !result.reset);
-      if (result.reset) this.reloadDetail();
+      if (result.reset) this.reloadDetails();
     } catch {
       if (this.alive(session) && generation === this.generation) {
         this.emit({
@@ -333,6 +415,24 @@ export class QueueController {
         if (next != null) void this.runReconcile(next);
       }
     }
+  }
+
+  /**
+   * Reset boundary only: when the top panel is free, the most recently opened
+   * open detail whose row is in neither list and whose winning snapshot is
+   * terminal is shown there (an Active one already holds the top through
+   * placeDetails). Other such details stay open (hidden) and return inline
+   * when their row returns. A manual or 404 close of the top never promotes
+   * until the next reset.
+   */
+  private promoteMissingDetail(): void {
+    if (this.view.topId != null) return;
+    let latest: QueueDetail | null = null;
+    for (const detail of this.view.details) {
+      if (findJob(this.view.lists, detail.id) != null || !isHistoryJob(detail.job.status)) continue;
+      if (latest == null || detail.slot > latest.slot) latest = detail;
+    }
+    if (latest != null) this.emit({ topId: latest.id });
   }
 
   /**
@@ -377,7 +477,7 @@ export class QueueController {
     try {
       const page = await listHistoryJobs({ cursor: request.cursor });
       if (!current()) return;
-      this.commitLists(applyHistoryPage(this.view.lists, page, this.view.detail?.job));
+      this.commitLists(applyHistoryPage(this.view.lists, page, this.priors()));
       this.emit({ loadMoreStatus: "idle" });
       for (const job of page.jobs) this.offerDetail(job, true);
     } catch {
@@ -391,108 +491,131 @@ export class QueueController {
     }
   }
 
+  /** Row toggle: opens this ID's detail, or closes it when already open. */
   openDetail(id: string): void {
     if (!this.live) return;
-    if (this.view.detail?.id === id) {
-      this.closeDetail();
+    if (findDetail(this.view, id) != null) {
+      this.closeDetail(id);
       return;
     }
     const job = findJob(this.view.lists, id);
     if (job == null) return;
-    this.detailEpoch += 1;
-    this.activityGeneration += 1;
-    this.detailRequest = null;
-    this.detailWanted = null;
+    const slot: DetailSlot = {
+      serial: ++this.slotSerial,
+      request: null,
+      wanted: null,
+      resets: 0,
+      activityGeneration: 0,
+    };
+    this.slots.set(id, slot);
+    // A History row opens inline; an Active row takes the top (placeDetails).
     this.emit({
-      detail: {
+      details: [...this.view.details, {
         id,
+        slot: slot.serial,
         job,
         itemsStatus: job.job_type === "collection" && job.items == null ? "loading" : "loaded",
         events: [],
         activityStatus: "idle",
-      },
+      }],
     });
-    void this.refreshDetail();
-    void this.refreshActivity();
+    void this.refreshDetail(id);
+    void this.loadActivity(id);
   }
 
-  closeDetail(): void {
-    this.detailEpoch += 1;
-    this.activityGeneration += 1;
-    this.detailRequest = null;
-    this.detailWanted = null;
-    this.emit({ detail: null });
+  /** Closes only this ID's detail; never promotes another one. */
+  closeDetail(id: string): void {
+    if (findDetail(this.view, id) == null) return;
+    this.slots.delete(id);
+    this.emit({
+      details: this.view.details.filter((detail) => detail.id !== id),
+      ...(this.view.topId === id ? { topId: null } : {}),
+    });
+  }
+
+  private replaceDetail(next: QueueDetail): void {
+    this.emit({ details: this.view.details.map((detail) => (detail.id === next.id ? next : detail)) });
   }
 
   private patchDetail(id: string, patch: (detail: QueueDetail) => Partial<QueueDetail>): void {
-    const detail = this.view.detail;
-    if (detail?.id === id) this.emit({ detail: { ...detail, ...patch(detail) } });
+    const detail = findDetail(this.view, id);
+    if (detail != null) this.replaceDetail({ ...detail, ...patch(detail) });
   }
 
-  private reloadDetail(): void {
-    if (this.view.detail == null) return;
-    this.detailResets += 1;
-    void this.refreshDetail();
-    void this.refreshActivity();
+  private slotCurrent(id: string, slot: DetailSlot, session: number): boolean {
+    return this.alive(session) && this.slots.get(id) === slot;
   }
 
-  // One detail read in flight; bursts coalesce to the latest key.
-  private async refreshDetail(): Promise<void> {
-    const detail = this.view.detail;
-    if (!this.live || detail == null) return;
+  // Rule 6: every reset re-reads each open detail (hidden ones too; 404 closes).
+  private reloadDetails(): void {
+    for (const detail of this.view.details) {
+      const slot = this.slots.get(detail.id);
+      if (slot == null) continue;
+      slot.resets += 1;
+      void this.refreshDetail(detail.id);
+      void this.loadActivity(detail.id);
+    }
+  }
+
+  // Per ID: one detail read in flight; bursts coalesce to the latest key.
+  private async refreshDetail(id: string): Promise<void> {
+    const slot = this.slots.get(id);
+    const detail = findDetail(this.view, id);
+    if (!this.live || slot == null || detail == null) return;
     const session = this.session;
-    const epoch = this.detailEpoch;
-    const keyOf = (open: QueueDetail) => `${open.id}:${snapshotTime(open.job)}:${this.detailResets}`;
+    const keyOf = (open: QueueDetail) => `${snapshotTime(open.job)}:${slot.resets}`;
     const key = keyOf(detail);
-    this.detailWanted = key;
-    if (this.detailRequest != null) return;
+    slot.wanted = key;
+    if (slot.request != null) return;
     const request = {};
-    this.detailRequest = request;
-    const current = () => this.alive(session) && epoch === this.detailEpoch;
+    slot.request = request;
+    const current = () => this.slotCurrent(id, slot, session);
     try {
-      const fresh = await getJob(detail.id);
+      const fresh = await getJob(id);
       if (current()) this.offer(fresh, true);
     } catch (error) {
       if (!current()) return;
-      if (isNotFound(error)) this.closeDetail();
+      if (isNotFound(error)) {
+        this.closeDetail(id);
+        return;
+      }
       // Only a still-current request may flag its items: a newer snapshot or
       // reset since then (e.g. a rich REST response with items) stays as is.
-      else if (this.detailWanted === key && this.view.detail != null &&
-        keyOf(this.view.detail) === key) {
-        this.patchDetail(detail.id, () => ({ itemsStatus: "error" }));
+      const open = findDetail(this.view, id);
+      if (slot.wanted === key && open != null && keyOf(open) === key) {
+        this.patchDetail(id, () => ({ itemsStatus: "error" }));
       }
     } finally {
-      if (this.detailRequest === request) {
-        this.detailRequest = null;
-        if (current() && this.detailWanted !== key) void this.refreshDetail();
+      if (slot.request === request) {
+        slot.request = null;
+        if (current() && slot.wanted !== key) void this.refreshDetail(id);
       }
     }
   }
 
-  refreshActivity(): void {
-    void this.loadActivity();
+  /** Manual Activity reload for one open detail. */
+  refreshActivity(id: string): void {
+    void this.loadActivity(id);
   }
 
-  private async loadActivity(): Promise<void> {
-    const detail = this.view.detail;
-    if (!this.live || detail == null) return;
+  private async loadActivity(id: string): Promise<void> {
+    const slot = this.slots.get(id);
+    if (!this.live || slot == null || findDetail(this.view, id) == null) return;
     const session = this.session;
-    const epoch = this.detailEpoch;
-    const generation = ++this.activityGeneration;
-    const current = () => this.alive(session) && epoch === this.detailEpoch &&
-      generation === this.activityGeneration;
-    this.patchDetail(detail.id, () => ({ activityStatus: "loading" }));
+    const generation = ++slot.activityGeneration;
+    const current = () => this.slotCurrent(id, slot, session) && generation === slot.activityGeneration;
+    this.patchDetail(id, () => ({ activityStatus: "loading" }));
     try {
-      const events = await getJobActivity(detail.id);
+      const events = await getJobActivity(id);
       if (!current()) return;
-      this.patchDetail(detail.id, (open) => ({
+      this.patchDetail(id, (open) => ({
         events: mergeActivityEvents(open.events, events),
         activityStatus: "loaded",
       }));
     } catch (error) {
       if (!current()) return;
-      if (isNotFound(error)) this.closeDetail();
-      else this.patchDetail(detail.id, () => ({ activityStatus: "error" }));
+      if (isNotFound(error)) this.closeDetail(id);
+      else this.patchDetail(id, () => ({ activityStatus: "error" }));
     }
   }
 
@@ -509,9 +632,9 @@ export class QueueController {
     if (!this.live || this.pendingActions.has(id)) return;
     // Retry also works for a row-less job with the matching open detail, using
     // the same winning snapshot the panel renders.
-    const detail = this.view.detail;
+    const detail = findDetail(this.view, id);
     const row = findJob(this.view.lists, id);
-    const current = action === "retry" && detail?.id === id ? newestSnapshot(row, detail.job) : row;
+    const current = action === "retry" && detail != null ? newestSnapshot(row, detail.job) : row;
     if (current == null || (action === "cancel" ? !isActiveJob(current.status) : !canRetryJob(current))) return;
     const session = this.session;
     const floor = snapshotTime(current);

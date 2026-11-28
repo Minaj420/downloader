@@ -9,6 +9,8 @@ interface QueueJobRowProps {
   pendingAction: QueueAction | undefined;
   error: string | undefined;
   detailOpen: boolean;
+  /** DOM id of this job's detail panel (inline or top), for aria-controls. */
+  detailId: string;
   onCancel: () => void;
   onRetry: () => void;
   onToggleDetail: () => void;
@@ -22,6 +24,7 @@ export function QueueJobRow({
   pendingAction,
   error,
   detailOpen,
+  detailId,
   onCancel,
   onRetry,
   onToggleDetail,
@@ -79,7 +82,7 @@ export function QueueJobRow({
             type="button"
             className="button-quiet"
             aria-expanded={detailOpen}
-            aria-controls={detailOpen ? "queue-detail" : undefined}
+            aria-controls={detailOpen ? detailId : undefined}
             onClick={onToggleDetail}
           >
             {detailOpen ? "Hide details" : "Details"}

@@ -17,7 +17,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - M6.5-T2/T3 Fedora Compose PASS (Mutagen 1.48.1, MP3 etiket ve WAV); T3 hedefli 791 test/Ruff/mypy ve review PASS.
 - M6.5 metin etiketi kapandı: Compose Opus/MP3 etiket 2/2, MP3 oynatma, WAV 2/2 uyarısız, Shorts 2/2 oynatma/sıra, ses iptal 1/2 → Retry 2/2 kopyasız. Bu kapsamda plansız v0.1 zorunluluğu yok; M6.5 sunum UI/hata metinleri ayrı açık. ARCH §14 probe başlığı notu should-fix.
 - Accepted (M6.5-T2): düşen/yinelenen TXXX değişmeden reddedilebilir (ID3v2.4 dahil). Should-fix: seek hata ayrıntısı ve ses-önce çoklanmış Ogg testi.
-- Toplu UI Compose smoke: Queue gezinme/F5, Load more, yeniden bağlantıda açık Activity; History satırında tek Details/Hide, üst panelde Close.
+- Toplu UI Compose smoke: gezinme/F5, Load more; History'de çoklu bağımsız Details/Activity; yeniden bağlantı ve Retry'da tek üst panel, diğer seçimler korunur.
 - Smoke (M6.5-UI-Retry): Details ve History'de uygun Retry, ortak pending/çift tık, hatanın başlatıldığı yerde görünmesi ve başarıda Active'e geçiş; uygun Cancel.
 - Smoke: Private playlist öğesi devre dışı, Select All ve sayaç dışında; restart/ağ hatalı çocukta Queue detayında ve New Download'da yalnız kullanıcı mesajı.
 - Kullanıcı Compose PASS: Q2 Retry kaldığı yerden tamamlandı (22 Kasım); Q3-ACT eski Activity/Library, canlı Activity ve F5 sonrası geçmiş korundu (23 Kasım).
@@ -34,7 +34,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
   single başarılı convert+iptal ek testi eksik. Üretim hatası bulunmadı.
 - Audit (ARCH §59): Settings → S1/M7; son seçim localStorage v0.1. Library detay (M9-L): başlığa tıklanabilirlik belirsiz, detay sayfa sonunda; popup/satır içi genişleme kararı açık.
 - New Download adı v0.1'de kalır; K2 v0.2. M6.5-UI-History should-fix: yeniden bağlantıda taşınan panel içindeki klavye odağı kaybolabilir.
-- Kullanıcı UI smoke PASS (28 Kasım): yatay/dikey Media Preview, `Best Available`, `Up to 1080p` → 1080×1920 ve ayrı çıktı; History tek panel/koleksiyon/Activity.
+- Kullanıcı UI smoke PASS (28 Kasım): Preview/kalite 1080×1920, History temel detay/Activity. Çoklu History test takibi: yalnız canlı Activity olayı ve Retry'a uygun toplu fixture.
 - network_error/Deno bağı kanıtsız. Analiz +25/hepsi v0.2. Should-fix M6.5-UI-Errors: Queue detayında çocuk hata metni için doğrudan test.
 - Fedora Python 3.14: child storage pidfd testi düzeltme diff'inde geçti; full gate çalışmadı.
 - should-fix: child Skip Existing Activity uyarısı yok; ayrı lifecycle/transaction işi. Queue satırsız kayıp Retry yanıtı + polling testi açık.

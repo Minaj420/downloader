@@ -524,7 +524,9 @@ describe("QueuePage detail", () => {
     expect(screen.queryByRole("region", { name: "Job details" })).not.toBeInTheDocument();
   });
 
-  it("ignores a stale detail response after the selection changes", async () => {
+  // Previously "after the selection changes": with several History details
+  // open, opening y no longer closes x, so the stale case is x's own close.
+  it("ignores a stale detail response after its detail closed, leaving another open detail alone", async () => {
     server.pages.set("", {
       jobs: [job("x", { status: "completed", created_at: at(5) }), job("y", { status: "completed", created_at: at(4) })],
       next_cursor: null,
@@ -536,12 +538,15 @@ describe("QueuePage detail", () => {
     const { user } = await mount();
     await user.click(row("Job x").getByRole("button", { name: "Details" }));
     await user.click(row("Job y").getByRole("button", { name: "Details" }));
+    await user.click(row("Job x").getByRole("button", { name: "Hide details" }));
     slowJob.resolve(json(job("x", { status: "completed", title: "Late x", updated_at: at(40) })));
     slowActivity.resolve(json({ events: [activity(9, "x", "Late")] }));
     await settle();
+    expect(screen.getAllByRole("region", { name: "Job details" })).toHaveLength(1);
     const detail = within(screen.getByRole("region", { name: "Job details" }));
     expect(detail.getByRole("heading", { name: "Job y" })).toBeInTheDocument();
     expect(screen.queryByText("Late x")).not.toBeInTheDocument();
+    expect(row("Job x").getByRole("button", { name: "Details" })).toHaveAttribute("aria-expanded", "false");
   });
 
   it("keeps collection items on items:null snapshots and coalesces detail refreshes", async () => {
@@ -744,7 +749,7 @@ describe("QueuePage inline History details", () => {
     }
   }
 
-  it("renders the History panel inside the selected row only, with one panel and linked toggle", async () => {
+  it("renders the History panel inside the selected row only, with a linked toggle; another row opens its own", async () => {
     seed();
     const { user } = await mount();
     await user.click(row("Job f").getByRole("button", { name: "Details" }));
@@ -752,7 +757,7 @@ describe("QueuePage inline History details", () => {
 
     const panel = screen.getByRole("region", { name: "Job details" });
     expect(screen.getAllByRole("region", { name: "Job details" })).toHaveLength(1);
-    expect(document.querySelectorAll("#queue-detail")).toHaveLength(1);
+    expect(document.querySelectorAll("#queue-detail-f")).toHaveLength(1);
     expect(rowItem("Job f")).toContainElement(panel);
     expect(rowItem("Job g")).not.toContainElement(panel);
     expect(within(rowItem("Job f")).getAllByRole("region", { name: "Job details" })).toHaveLength(1);
@@ -763,17 +768,19 @@ describe("QueuePage inline History details", () => {
 
     const toggle = row("Job f").getByRole("button", { name: "Hide details" });
     expect(toggle).toHaveAttribute("aria-expanded", "true");
-    expect(toggle).toHaveAttribute("aria-controls", "queue-detail");
+    expect(toggle).toHaveAttribute("aria-controls", "queue-detail-f");
     expect(toggle.getAttribute("aria-controls")).toBe(panel.id);
     expect(row("Job g").getByRole("button", { name: "Details" })).toHaveAttribute("aria-expanded", "false");
 
-    // Switching rows moves the single panel.
+    // Previously the single panel moved; now another History row opens its
+    // own inline panel and the first one stays open.
     await user.click(row("Job g").getByRole("button", { name: "Details" }));
     await settle();
-    expect(screen.getAllByRole("region", { name: "Job details" })).toHaveLength(1);
-    expect(rowItem("Job g")).toContainElement(screen.getByRole("region", { name: "Job details" }));
-    expect(within(rowItem("Job f")).queryByRole("region", { name: "Job details" })).not.toBeInTheDocument();
-    expect(row("Job f").getByRole("button", { name: "Details" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getAllByRole("region", { name: "Job details" })).toHaveLength(2);
+    expect(within(rowItem("Job g")).getAllByRole("region", { name: "Job details" })).toHaveLength(1);
+    expect(within(rowItem("Job f")).getAllByRole("region", { name: "Job details" })).toHaveLength(1);
+    expect(row("Job f").getByRole("button", { name: "Hide details" })).toHaveAttribute("aria-expanded", "true");
+    expect(row("Job g").getByRole("button", { name: "Hide details" })).toHaveAttribute("aria-controls", "queue-detail-g");
   });
 
   it("keeps the Active panel at the top, outside the row", async () => {
@@ -789,7 +796,8 @@ describe("QueuePage inline History details", () => {
     expect(within(activeRegion().getByRole("list")).queryByRole("region", { name: "Job details" })).not.toBeInTheDocument();
     expect(panel.compareDocumentPosition(screen.getByRole("region", { name: "Active and queued" })))
       .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
-    expect(row("Job a").getByRole("button", { name: "Hide details" })).toHaveAttribute("aria-controls", "queue-detail");
+    expect(row("Job a").getByRole("button", { name: "Hide details" })).toHaveAttribute("aria-controls", "queue-detail-a");
+    expect(panel.id).toBe("queue-detail-a");
   });
 
   it("closes inline via the row Hide details only, keeps focus on it and keeps on-demand reads single", async () => {
@@ -806,7 +814,7 @@ describe("QueuePage inline History details", () => {
     expect(screen.queryByRole("button", { name: "Close details" })).not.toBeInTheDocument();
     const hide = row("Job f").getByRole("button", { name: "Hide details" });
     expect(hide).toHaveAttribute("aria-expanded", "true");
-    expect(hide).toHaveAttribute("aria-controls", "queue-detail");
+    expect(hide).toHaveAttribute("aria-controls", "queue-detail-f");
 
     await user.click(hide);
     expect(screen.queryByRole("region", { name: "Job details" })).not.toBeInTheDocument();
@@ -892,7 +900,7 @@ describe("QueuePage inline History details", () => {
     await settle();
     expect(screen.getAllByRole("region", { name: "Job details" })).toHaveLength(1);
     expect(rowItem("Job f")).toContainElement(screen.getByRole("region", { name: "Job details" }));
-    expect(document.querySelectorAll("#queue-detail")).toHaveLength(1);
+    expect(document.querySelectorAll("#queue-detail-f")).toHaveLength(1);
   });
 
   it("relocates the panel to the top on inline Retry, keeps one panel and moves focus to it", async () => {
@@ -912,7 +920,7 @@ describe("QueuePage inline History details", () => {
     expect(rowItem("Job f")).not.toContainElement(panel);
     expect(panel).toHaveFocus();
     expect(detailRegion().getByText("Queued")).toBeInTheDocument();
-    expect(row("Job f").getByRole("button", { name: "Hide details" })).toHaveAttribute("aria-controls", "queue-detail");
+    expect(row("Job f").getByRole("button", { name: "Hide details" })).toHaveAttribute("aria-controls", "queue-detail-f");
   });
 
   it("shows an inline panel-started Retry error once, inside the panel and not in the row summary", async () => {
@@ -993,37 +1001,45 @@ describe("QueuePage Activity expanded state and Retry focus", () => {
     expect(detailRegion().getByText("Saw f")).toBeInTheDocument();
   });
 
-  it("resets Activity to collapsed on another job and on every close/reopen, including the same ID", async () => {
+  // Previously a second job replaced the first; now both stay open with
+  // independent Activity state, and every close/reopen still collapses.
+  it("keeps Activity per open detail: another job starts collapsed, close/reopen (same ID, 404) resets", async () => {
     seed();
     const { stream, user } = await mount();
     await openExpanded(user, "Job f");
+    const toggleIn = (title: string) =>
+      within(within(rowItem(title)).getByRole("region", { name: "Job details" })).getByRole("button", { name: /Activity/ });
 
     await user.click(row("Job g").getByRole("button", { name: "Details" }));
     await settle();
-    expect(activityToggle()).toHaveAttribute("aria-expanded", "false");
+    expect(toggleIn("Job g")).toHaveAttribute("aria-expanded", "false");
+    expect(toggleIn("Job f")).toHaveAttribute("aria-expanded", "true");
 
-    await user.click(activityToggle());
+    await user.click(toggleIn("Job g"));
+    await user.click(row("Job g").getByRole("button", { name: "Hide details" }));
+    expect(toggleIn("Job f")).toHaveAttribute("aria-expanded", "true");
+    await user.click(row("Job g").getByRole("button", { name: "Details" }));
+    await settle();
+    expect(toggleIn("Job g")).toHaveAttribute("aria-expanded", "false");
+
+    await user.click(toggleIn("Job g"));
     await user.click(row("Job g").getByRole("button", { name: "Hide details" }));
     await user.click(row("Job g").getByRole("button", { name: "Details" }));
     await settle();
-    expect(activityToggle()).toHaveAttribute("aria-expanded", "false");
+    expect(toggleIn("Job g")).toHaveAttribute("aria-expanded", "false");
 
-    await user.click(activityToggle());
-    await user.click(row("Job g").getByRole("button", { name: "Hide details" }));
-    await user.click(row("Job g").getByRole("button", { name: "Details" }));
-    await settle();
-    expect(activityToggle()).toHaveAttribute("aria-expanded", "false");
-
-    // A 404 close also resets.
-    await user.click(activityToggle());
+    // A 404 close also resets, and only for that job.
+    await user.click(toggleIn("Job g"));
     server.jobs.delete("g");
     stream.open();
     await settle();
-    expect(screen.queryByRole("region", { name: "Job details" })).not.toBeInTheDocument();
+    expect(within(rowItem("Job g")).queryByRole("region", { name: "Job details" })).not.toBeInTheDocument();
+    expect(toggleIn("Job f")).toHaveAttribute("aria-expanded", "true");
     server.jobs.set("g", job("g", { status: "completed", created_at: at(8) }));
     await user.click(row("Job g").getByRole("button", { name: "Details" }));
     await settle();
-    expect(activityToggle()).toHaveAttribute("aria-expanded", "false");
+    expect(toggleIn("Job g")).toHaveAttribute("aria-expanded", "false");
+    expect(toggleIn("Job f")).toHaveAttribute("aria-expanded", "true");
   });
 
   it("keeps focus on another control chosen while the inline Retry is pending", async () => {
@@ -1083,18 +1099,21 @@ describe("QueuePage detail Retry", () => {
       server.activity.set(entry.id, []);
     }
     const { user } = await mount();
+    // Several History details are open at once: scope to each job's panel.
+    const panelOf = (id: string) => within(document.getElementById(`queue-detail-${id}`) as HTMLElement);
 
     await openDetail(user, "Job f");
-    expect(detailRegion().getByRole("button", { name: "Retry" })).toBeEnabled();
+    expect(panelOf("f").getByRole("button", { name: "Retry" })).toBeEnabled();
     await openDetail(user, "Job c1");
-    expect(detailRegion().getByRole("button", { name: "Retry" })).toBeEnabled();
-    for (const title of ["Job n", "Job done", "Job act"]) {
+    expect(panelOf("c1").getByRole("button", { name: "Retry" })).toBeEnabled();
+    for (const [title, id] of [["Job n", "n"], ["Job done", "done"], ["Job act", "act"]]) {
       await openDetail(user, title);
-      expect(detailRegion().queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
+      expect(panelOf(id).queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
     }
+    expect(screen.getAllByRole("region", { name: "Job details" })).toHaveLength(5);
     expect(count((url) => url.endsWith("/retry"))).toBe(0);
-    // The History row Details button stays as is.
-    expect(row("Job f").getByRole("button", { name: "Details" })).toBeInTheDocument();
+    // The History row toggle stays as is (still open: History details stay open together).
+    expect(row("Job f").getByRole("button", { name: "Hide details" })).toHaveAttribute("aria-controls", "queue-detail-f");
   });
 
   it("shares pending with the row, sends one POST on a double trigger and moves the job to active", async () => {
@@ -1469,6 +1488,507 @@ describe("QueuePage detail Retry", () => {
       await tick(4000);
       expect(rowTitles(activeRegion())).toEqual(["Job f"]);
       expect(count((url) => url === "/api/v1/jobs/f/retry")).toBe(1);
+    });
+  });
+});
+
+describe("QueuePage multiple History details", () => {
+  const failedJob = (id: string, overrides: Partial<Job> = {}) =>
+    job(id, { status: "failed", error: retryable, updated_at: at(5), ...overrides });
+  const panelEl = (id: string) => document.getElementById(`queue-detail-${id}`);
+  const panel = (id: string) => {
+    const element = panelEl(id);
+    if (!element) throw new Error(`No detail panel for ${id}`);
+    return within(element);
+  };
+  const regions = () => screen.queryAllByRole("region", { name: "Job details" });
+  // The single upper panel: outside both list sections.
+  const topPanels = () => regions().filter((element) =>
+    !screen.getByRole("region", { name: "History" }).contains(element) &&
+    !screen.getByRole("region", { name: "Active and queued" }).contains(element));
+  const inlineIn = (title: string) => within(rowItem(title)).queryAllByRole("region", { name: "Job details" });
+
+  function seed(history: Job[], active: Job[] = []) {
+    server.active = active;
+    server.pages.set("", { jobs: history, next_cursor: null });
+    for (const entry of [...history, ...active]) {
+      server.jobs.set(entry.id, entry);
+      server.activity.set(entry.id, [activity(1, entry.id, `Saw ${entry.id}`)]);
+    }
+  }
+  const threeHistory = () => [
+    failedJob("f", { created_at: at(9) }),
+    job("g", { status: "completed", created_at: at(8) }),
+    job("k", { status: "completed", created_at: at(7) }),
+  ];
+
+  async function open(user: ReturnType<typeof userEvent.setup>, title: string) {
+    await user.click(row(title).getByRole("button", { name: "Details" }));
+    await settle();
+  }
+
+  async function reset(stream: FakeEventSource, history: Job[], nextCursor: string | null = "c2") {
+    server.pages.set("", { jobs: history, next_cursor: nextCursor });
+    stream.open();
+    await settle();
+  }
+
+  it("opens several History details inline and closes each independently with its own toggle", async () => {
+    seed(threeHistory());
+    const { user } = await mount();
+    for (const title of ["Job f", "Job g", "Job k"]) await open(user, title);
+
+    expect(regions()).toHaveLength(3);
+    expect(topPanels()).toHaveLength(0);
+    for (const id of ["f", "g", "k"]) {
+      expect(inlineIn(`Job ${id}`)).toHaveLength(1);
+      expect(count((url) => url === `/api/v1/jobs/${id}`)).toBe(1);
+      expect(count((url) => url === `/api/v1/jobs/${id}/activity`)).toBe(1);
+    }
+    expect(screen.queryByRole("button", { name: "Close details" })).not.toBeInTheDocument();
+
+    await user.click(row("Job g").getByRole("button", { name: "Hide details" }));
+    expect(row("Job g").getByRole("button", { name: "Details" })).toHaveFocus();
+    expect(inlineIn("Job g")).toHaveLength(0);
+    expect(inlineIn("Job f")).toHaveLength(1);
+    expect(inlineIn("Job k")).toHaveLength(1);
+    await settle();
+    // Closing one never re-reads or reloads the others.
+    for (const id of ["f", "k"]) {
+      expect(count((url) => url === `/api/v1/jobs/${id}`)).toBe(1);
+      expect(count((url) => url === `/api/v1/jobs/${id}/activity`)).toBe(1);
+    }
+    await user.click(row("Job f").getByRole("button", { name: "Hide details" }));
+    expect(regions()).toHaveLength(1);
+    expect(inlineIn("Job k")).toHaveLength(1);
+  });
+
+  it("uses unique detail/Activity DOM ids with matching aria-controls and independent Activity expansion", async () => {
+    seed(threeHistory().slice(0, 2));
+    const { stream, user } = await mount();
+    await open(user, "Job f");
+    await open(user, "Job g");
+
+    const ids = regions().map((element) => element.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const id of ["f", "g"]) {
+      expect(row(`Job ${id}`).getByRole("button", { name: "Hide details" }).getAttribute("aria-controls")).toBe(`queue-detail-${id}`);
+      expect(panelEl(id)).not.toBeNull();
+    }
+    const activityToggle = (id: string) => panel(id).getByRole("button", { name: /Activity/ });
+    expect(activityToggle("f").getAttribute("aria-controls")).toBe("queue-activity-f");
+    expect(activityToggle("g").getAttribute("aria-controls")).toBe("queue-activity-g");
+
+    await user.click(activityToggle("f"));
+    expect(activityToggle("f")).toHaveAttribute("aria-expanded", "true");
+    expect(activityToggle("g")).toHaveAttribute("aria-expanded", "false");
+    expect(document.getElementById("queue-activity-f")).toHaveTextContent("Saw f");
+    expect(document.getElementById("queue-activity-g")).toBeNull();
+    await user.click(activityToggle("g"));
+    expect(document.getElementById("queue-activity-g")).toHaveTextContent("Saw g");
+    expect(document.querySelectorAll("#activity-list")).toHaveLength(0);
+
+    // Live Activity lands only in its own job's panel.
+    stream.emit("activity.created", activity(2, "g", "Only g"));
+    expect(panel("g").getByText("Only g")).toBeInTheDocument();
+    expect(panel("f").queryByText("Only g")).not.toBeInTheDocument();
+    await user.click(activityToggle("f"));
+    expect(activityToggle("f")).toHaveAttribute("aria-expanded", "false");
+    expect(activityToggle("g")).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("isolates overlapping per-ID reads and ignores old responses after a same-ID close/reopen", async () => {
+    seed(threeHistory().slice(0, 2));
+    const slowF = onceFor((url) => url === "/api/v1/jobs/f");
+    const slowFActivity = onceFor((url) => url === "/api/v1/jobs/f/activity");
+    const slowG = onceFor((url) => url === "/api/v1/jobs/g");
+    const { user } = await mount();
+    await open(user, "Job f");
+    await open(user, "Job g");
+    expect(count((url) => url === "/api/v1/jobs/g")).toBe(1);
+
+    // g's read resolves while f's is still in flight: each applies to its own ID.
+    slowG.resolve(json(job("g", { status: "completed", created_at: at(8), title: "Fresh g", updated_at: at(30) })));
+    await settle();
+    expect(panel("g").getByRole("heading", { name: "Fresh g" })).toBeInTheDocument();
+    expect(panel("f").getByRole("heading", { name: "Job f" })).toBeInTheDocument();
+
+    await user.click(row("Job f").getByRole("button", { name: "Hide details" }));
+    await open(user, "Job f");
+    expect(count((url) => url === "/api/v1/jobs/f")).toBe(2);
+    await user.click(panel("f").getByRole("button", { name: /Activity/ }));
+    expect(panel("f").getByText("Saw f")).toBeInTheDocument();
+
+    slowF.resolve(json(failedJob("f", { created_at: at(9), title: "Late f", updated_at: at(40) })));
+    slowFActivity.resolve(json({ events: [activity(9, "f", "Late")] }));
+    await settle();
+    expect(screen.queryByText("Late f")).not.toBeInTheDocument();
+    expect(panel("f").queryByText("Late")).not.toBeInTheDocument();
+    expect(panel("f").getByRole("heading", { name: "Job f" })).toBeInTheDocument();
+    expect(panel("g").getByRole("heading", { name: "Fresh g" })).toBeInTheDocument();
+    expect(regions()).toHaveLength(2);
+  });
+
+  it("on reset shows only the most recently opened dropped detail at the top; Close and 404 never promote", async () => {
+    seed(threeHistory());
+    const { stream, user } = await mount();
+    for (const title of ["Job f", "Job g", "Job k"]) await open(user, title);
+
+    await reset(stream, [job("h", { status: "completed", created_at: at(10) })]);
+    expect(rowTitles(historyRegion())).toEqual(["Job h"]);
+    expect(regions()).toHaveLength(1);
+    expect(topPanels()).toHaveLength(1);
+    expect(panel("k").getByRole("heading", { name: "Job k" })).toBeInTheDocument();
+    expect(panel("k").getByRole("button", { name: "Close details" })).toBeInTheDocument();
+    // Every open detail (hidden ones too) is re-read on the reset.
+    for (const id of ["f", "g", "k"]) {
+      expect(count((url) => url === `/api/v1/jobs/${id}`)).toBe(2);
+      expect(count((url) => url === `/api/v1/jobs/${id}/activity`)).toBe(2);
+    }
+
+    // Manual Close frees the top without promoting another hidden detail.
+    await user.click(panel("k").getByRole("button", { name: "Close details" }));
+    await settle();
+    expect(regions()).toHaveLength(0);
+
+    // The next reset promotes the most recently opened remaining one.
+    await reset(stream, [job("h", { status: "completed", created_at: at(10) })]);
+    expect(regions()).toHaveLength(1);
+    expect(panel("g").getByRole("heading", { name: "Job g" })).toBeInTheDocument();
+
+    // A 404 close of the top does not promote f within the same reset.
+    server.jobs.delete("g");
+    await reset(stream, [job("h", { status: "completed", created_at: at(10) })]);
+    expect(regions()).toHaveLength(0);
+    expect(panelEl("g")).toBeNull();
+
+    // f was kept selected: its row returns with its still-open panel inline.
+    await reset(stream, [failedJob("f", { created_at: at(9) })], null);
+    expect(regions()).toHaveLength(1);
+    expect(inlineIn("Job f")).toHaveLength(1);
+    expect(topPanels()).toHaveLength(0);
+    expect(panel("f").queryByRole("button", { name: "Close details" })).not.toBeInTheDocument();
+    expect(row("Job f").getByRole("button", { name: "Hide details" })).toHaveAttribute("aria-controls", "queue-detail-f");
+  });
+
+  it("keeps dropped History selections while an Active top is open and returns them inline", async () => {
+    const history = threeHistory().slice(0, 2);
+    seed(history, [job("a", { status: "downloading" })]);
+    const { stream, user } = await mount();
+    for (const title of ["Job a", "Job f", "Job g"]) await open(user, title);
+    expect(topPanels()).toHaveLength(1);
+    expect(regions()).toHaveLength(3);
+
+    await reset(stream, [job("h", { status: "completed", created_at: at(10) })]);
+    expect(regions()).toHaveLength(1);
+    expect(panel("a").getByRole("button", { name: "Close details" })).toBeInTheDocument();
+
+    await reset(stream, history, null);
+    expect(regions()).toHaveLength(3);
+    expect(inlineIn("Job f")).toHaveLength(1);
+    expect(inlineIn("Job g")).toHaveLength(1);
+    expect(topPanels()).toEqual([panelEl("a")]);
+  });
+
+  it("moves a delayed inline Retry into the top, closes the replaced Active detail and keeps other History details", async () => {
+    seed(threeHistory().slice(0, 2), [job("a", { status: "downloading" })]);
+    const retry = deferred();
+    server.actions.set("/api/v1/jobs/f/retry", () => retry.promise);
+    const { stream, user } = await mount();
+    for (const title of ["Job a", "Job f", "Job g"]) await open(user, title);
+
+    await user.click(panel("f").getByRole("button", { name: "Retry" }));
+    expect(topPanels()).toEqual([panelEl("a")]);
+    expect(inlineIn("Job f")).toHaveLength(1);
+    retry.resolve(json(job("f", { status: "queued", created_at: at(9), updated_at: at(9) })));
+    await settle();
+
+    expect(rowTitles(activeRegion())).toEqual(["Job a", "Job f"]);
+    expect(topPanels()).toEqual([panelEl("f")]);
+    expect(panel("f").getByRole("button", { name: "Close details" })).toBeInTheDocument();
+    expect(panelEl("f")).toHaveFocus();
+    expect(panelEl("a")).toBeNull();
+    expect(row("Job a").getByRole("button", { name: "Details" })).toHaveAttribute("aria-expanded", "false");
+    expect(inlineIn("Job g")).toHaveLength(1);
+    expect(regions()).toHaveLength(2);
+    expect(count((url) => url === "/api/v1/jobs/f/retry")).toBe(1);
+
+    // Back to History: inline again; the closed Active detail does not pop back.
+    stream.emit("job.completed", job("f", { status: "completed", created_at: at(9), updated_at: at(20) }));
+    expect(inlineIn("Job f")).toHaveLength(1);
+    expect(topPanels()).toHaveLength(0);
+    expect(panelEl("a")).toBeNull();
+    expect(regions()).toHaveLength(2);
+  });
+
+  it("follows an authoritative SSE or reconcile move to Active into the single top panel", async () => {
+    seed(threeHistory(), [job("a", { status: "downloading" })]);
+    const { stream, user } = await mount();
+    await open(user, "Job a");
+    await open(user, "Job g");
+    await open(user, "Job k");
+
+    stream.emit("job.updated", job("g", { status: "queued", created_at: at(8), updated_at: at(20) }));
+    expect(topPanels()).toEqual([panelEl("g")]);
+    expect(panelEl("a")).toBeNull();
+    expect(inlineIn("Job k")).toHaveLength(1);
+
+    const queuedK = job("k", { status: "queued", created_at: at(7), updated_at: at(30) });
+    server.active = [job("a", { status: "downloading" }), queuedK];
+    server.jobs.set("g", job("g", { status: "queued", created_at: at(8), updated_at: at(20) }));
+    server.jobs.set("k", queuedK);
+    await reset(stream, [failedJob("f", { created_at: at(9) })], null);
+    expect(topPanels()).toEqual([panelEl("k")]);
+    expect(panelEl("g")).toBeNull();
+    expect(regions()).toHaveLength(1);
+    // No mutation was sent for these authoritative moves.
+    expect(count((url) => url.endsWith("/retry"))).toBe(0);
+  });
+
+  it("keeps one Active top panel: opening another Active row replaces it", async () => {
+    seed([], [job("a", { status: "downloading" }), job("b", { status: "downloading", created_at: at(1) })]);
+    const { user } = await mount();
+    await open(user, "Job a");
+    await open(user, "Job b");
+    expect(regions()).toHaveLength(1);
+    expect(topPanels()).toEqual([panelEl("b")]);
+    expect(row("Job a").getByRole("button", { name: "Details" })).toHaveAttribute("aria-expanded", "false");
+    expect(row("Job b").getByRole("button", { name: "Hide details" })).toHaveAttribute("aria-controls", "queue-detail-b");
+    await user.click(panel("b").getByRole("button", { name: "Close details" }));
+    expect(regions()).toHaveLength(0);
+  });
+
+  it("keeps a displaced terminal fallback (Activity expanded) hidden after a Retry takes the top, without returning after Close/404", async () => {
+    const x = failedJob("x", { created_at: at(9) });
+    const t = job("t", { status: "completed", created_at: at(8) });
+    seed([x, t]);
+    const queuedX = job("x", { status: "queued", created_at: at(9), updated_at: at(9) });
+    server.actions.set("/api/v1/jobs/x/retry", () => Promise.resolve(json(queuedX)));
+    const { stream, user } = await mount();
+    await open(user, "Job t");
+    await open(user, "Job x");
+    // t's row drops: it becomes the terminal fallback on top.
+    await reset(stream, [x], null);
+    expect(topPanels()).toEqual([panelEl("t")]);
+    await user.click(panel("t").getByRole("button", { name: /Activity/ }));
+    expect(panel("t").getByText("Saw t")).toBeInTheDocument();
+
+    server.active = [queuedX];
+    server.jobs.set("x", queuedX);
+    await user.click(panel("x").getByRole("button", { name: "Retry" }));
+    await settle();
+    expect(topPanels()).toEqual([panelEl("x")]);
+    expect(regions()).toHaveLength(1);
+    // Hidden, not closed: no panel for t is rendered anywhere.
+    expect(panelEl("t")).toBeNull();
+
+    // Manual Close of the new top does not bring t back.
+    await user.click(panel("x").getByRole("button", { name: "Close details" }));
+    await settle();
+    expect(regions()).toHaveLength(0);
+
+    // Reopened x closes via 404 at a reset that still lacks t's row: t stays hidden.
+    await open(user, "Job x");
+    expect(topPanels()).toEqual([panelEl("x")]);
+    server.jobs.delete("x");
+    await reset(stream, [], null);
+    expect(regions()).toHaveLength(0);
+
+    // t's row returns: its still-open panel is inline with Activity data and expanded state kept.
+    await reset(stream, [t], null);
+    expect(inlineIn("Job t")).toHaveLength(1);
+    expect(topPanels()).toHaveLength(0);
+    expect(panel("t").getByRole("button", { name: /Activity/ })).toHaveAttribute("aria-expanded", "true");
+    expect(panel("t").getByText("Saw t")).toBeInTheDocument();
+    expect(count((url) => url === "/api/v1/jobs/x/retry")).toBe(1);
+  });
+
+  it("puts a rowless detail on top from its winning Active SSE/GET snapshot with the listing held, one top throughout", async () => {
+    seed([failedJob("f", { created_at: at(9) }), job("g", { status: "completed", created_at: at(8) })]);
+    const { stream, user } = await mount();
+    await open(user, "Job f");
+    await open(user, "Job g");
+    await reset(stream, [job("h", { status: "completed", created_at: at(10) })]);
+    expect(topPanels()).toEqual([panelEl("g")]);
+
+    // SSE reports f (rowless, hidden) active while the scoped listing is held.
+    const heldActive = onceFor((url) => url === "/api/v1/jobs?scope=active");
+    stream.emit("job.updated", job("f", { status: "queued", created_at: at(9), updated_at: at(20) }));
+    expect(topPanels()).toEqual([panelEl("f")]);
+    expect(regions()).toHaveLength(1);
+    expect(panel("f").getByText("Queued")).toBeInTheDocument();
+    // No list membership from SSE; the displaced terminal g stays hidden.
+    expect(rowTitles(activeRegion())).toEqual([]);
+    expect(panelEl("g")).toBeNull();
+
+    heldActive.resolve(json({ jobs: [], next_cursor: null }));
+    await settle();
+    expect(topPanels()).toEqual([panelEl("f")]);
+    expect(rowTitles(activeRegion())).toEqual([]);
+
+    // A reset's detail GET reports g active: g takes the top, the active f selection closes.
+    server.jobs.set("g", job("g", { status: "queued", created_at: at(8), updated_at: at(30) }));
+    await reset(stream, [job("h", { status: "completed", created_at: at(10) })]);
+    expect(topPanels()).toEqual([panelEl("g")]);
+    expect(regions()).toHaveLength(1);
+    expect(panelEl("f")).toBeNull();
+    expect(rowTitles(activeRegion())).toEqual([]);
+
+    // A stale terminal snapshot never reverses the placement.
+    stream.emit("job.failed", failedJob("g", { created_at: at(8), updated_at: at(6) }));
+    expect(topPanels()).toEqual([panelEl("g")]);
+    expect(panel("g").getByText("Queued")).toBeInTheDocument();
+  });
+
+  it("keeps one top through reversed concurrent Retries of separate IDs with one POST each", async () => {
+    seed(threeHistory(), [job("a", { status: "downloading" })]);
+    server.pages.set("", {
+      jobs: [failedJob("f", { created_at: at(9) }), failedJob("g", { created_at: at(8) }), job("k", { status: "completed", created_at: at(7) })],
+      next_cursor: null,
+    });
+    const retryF = deferred();
+    const retryG = deferred();
+    server.actions.set("/api/v1/jobs/f/retry", () => retryF.promise);
+    server.actions.set("/api/v1/jobs/g/retry", () => retryG.promise);
+    const { user } = await mount();
+    for (const title of ["Job a", "Job f", "Job g", "Job k"]) await open(user, title);
+
+    await user.click(panel("f").getByRole("button", { name: "Retry" }));
+    await user.click(panel("g").getByRole("button", { name: "Retry" }));
+    expect(topPanels()).toEqual([panelEl("a")]);
+
+    retryG.resolve(json(job("g", { status: "queued", created_at: at(8), updated_at: at(20) })));
+    await settle();
+    expect(topPanels()).toEqual([panelEl("g")]);
+    expect(panelEl("a")).toBeNull();
+    expect(inlineIn("Job f")).toHaveLength(1);
+
+    retryF.resolve(json(job("f", { status: "queued", created_at: at(9), updated_at: at(21) })));
+    await settle();
+    expect(topPanels()).toEqual([panelEl("f")]);
+    expect(panelEl("g")).toBeNull();
+    expect(panelEl("a")).toBeNull();
+    expect(inlineIn("Job k")).toHaveLength(1);
+    expect(regions()).toHaveLength(2);
+    expect(count((url) => url === "/api/v1/jobs/f/retry")).toBe(1);
+    expect(count((url) => url === "/api/v1/jobs/g/retry")).toBe(1);
+  });
+
+  it("keeps a single top when one scoped reply moves several open History details to Active", async () => {
+    seed(threeHistory(), [job("a", { status: "downloading" })]);
+    const { stream, user } = await mount();
+    for (const title of ["Job a", "Job f", "Job g", "Job k"]) await open(user, title);
+
+    const moved = [
+      job("f", { status: "queued", created_at: at(9), updated_at: at(20) }),
+      job("g", { status: "queued", created_at: at(8), updated_at: at(20) }),
+    ];
+    server.active = [job("a", { status: "downloading" }), ...moved];
+    for (const entry of moved) server.jobs.set(entry.id, entry);
+    await reset(stream, [job("k", { status: "completed", created_at: at(7) })], null);
+
+    // Invariant only: exactly one of the moved details is on top, the others closed.
+    const tops = topPanels();
+    expect(tops).toHaveLength(1);
+    expect(["queue-detail-f", "queue-detail-g"]).toContain(tops[0].id);
+    expect([panelEl("f"), panelEl("g")].filter((element) => element != null)).toHaveLength(1);
+    expect(panelEl("a")).toBeNull();
+    expect(inlineIn("Job k")).toHaveLength(1);
+    expect(regions()).toHaveLength(2);
+  });
+
+  it("does not show a hidden detail's Retry error anywhere and shows it once on the right surface when its row returns", async () => {
+    seed([failedJob("f", { created_at: at(9) }), job("g", { status: "completed", created_at: at(8) })]);
+    server.actions.set("/api/v1/jobs/f/retry", () => Promise.resolve(serverError()));
+    const { stream, user } = await mount();
+    await open(user, "Job g");
+    await open(user, "Job f");
+    await reset(stream, [job("h", { status: "completed", created_at: at(10) })]);
+    expect(topPanels()).toEqual([panelEl("f")]);
+
+    await user.click(panel("f").getByRole("button", { name: "Retry" }));
+    await settle();
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    expect(panel("f").getByRole("alert")).toHaveTextContent("Server exploded.");
+
+    // g (rowless) goes Active via SSE: f is displaced and hidden.
+    stream.emit("job.updated", job("g", { status: "queued", created_at: at(8), updated_at: at(20) }));
+    await settle();
+    expect(topPanels()).toEqual([panelEl("g")]);
+    expect(panelEl("f")).toBeNull();
+    expect(screen.queryAllByRole("alert")).toHaveLength(0);
+
+    await reset(stream, [failedJob("f", { created_at: at(9) })], null);
+    expect(inlineIn("Job f")).toHaveLength(1);
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    expect(panel("f").getByRole("alert")).toHaveTextContent("Server exploded.");
+    expect(row("Job f").queryByRole("alert")).not.toBeInTheDocument();
+    expect(count((url) => url === "/api/v1/jobs/f/retry")).toBe(1);
+  });
+
+  describe("newest-wins across several open detail snapshots", () => {
+    async function openTwoDropped() {
+      seed([failedJob("f", { created_at: at(9) }), failedJob("g", { created_at: at(8) })]);
+      const mounted = await mount();
+      await open(mounted.user, "Job f");
+      await open(mounted.user, "Job g");
+      await reset(mounted.stream, [job("h", { status: "completed", created_at: at(10) })]);
+      expect(rowTitles(historyRegion())).toEqual(["Job h"]);
+      return mounted;
+    }
+    const stale = () => [failedJob("f", { created_at: at(9) }), failedJob("g", { created_at: at(8) })];
+    const completedBoth = (stream: FakeEventSource) => {
+      for (const [id, created] of [["f", 9], ["g", 8]] as const) {
+        stream.emit("job.completed", job(id, { status: "completed", created_at: at(created), updated_at: at(20) }));
+      }
+    };
+    function expectBothCompleted() {
+      expect(row("Job f").getByText("Completed")).toBeInTheDocument();
+      expect(row("Job g").getByText("Completed")).toBeInTheDocument();
+      expect(screen.queryAllByRole("button", { name: "Retry" })).toHaveLength(0);
+    }
+
+    it("merge: a delayed older head re-adding both rows keeps both newer snapshots", async () => {
+      const { stream } = await openTwoDropped();
+      const held = onceFor((url) => url === "/api/v1/jobs?scope=history");
+      completedBoth(stream);
+      expect(screen.queryByRole("listitem", { name: "Job f" })).not.toBeInTheDocument();
+      held.resolve(json({ jobs: [job("h", { status: "completed", created_at: at(10) }), ...stale()], next_cursor: "c2" }));
+      await settle();
+      expectBothCompleted();
+    });
+
+    it("reset: an older head keeps both newer snapshots and returns both inline", async () => {
+      const { stream } = await openTwoDropped();
+      completedBoth(stream);
+      await settle();
+      for (const entry of stale()) server.jobs.set(entry.id, entry);
+      await reset(stream, stale(), null);
+      expectBothCompleted();
+      expect(inlineIn("Job f")).toHaveLength(1);
+      expect(inlineIn("Job g")).toHaveLength(1);
+    });
+
+    it("Load more: a delayed older page keeps both newer snapshots", async () => {
+      const { stream, user } = await openTwoDropped();
+      const held = onceFor((url) => isHistoryCursor("c2")(url));
+      await user.click(screen.getByRole("button", { name: "Load more" }));
+      completedBoth(stream);
+      await settle();
+      held.resolve(json({ jobs: stale(), next_cursor: null }));
+      await settle();
+      expectBothCompleted();
+    });
+
+    it("prior snapshots never create list membership", async () => {
+      const { stream } = await openTwoDropped();
+      completedBoth(stream);
+      await settle();
+      await reset(stream, [job("h", { status: "completed", created_at: at(10) })]);
+      expect(rowTitles(historyRegion())).toEqual(["Job h"]);
+      expect(rowTitles(activeRegion())).toEqual([]);
+      expect(screen.queryByRole("listitem", { name: "Job f" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("listitem", { name: "Job g" })).not.toBeInTheDocument();
     });
   });
 });
