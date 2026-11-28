@@ -27,6 +27,7 @@ import asyncio
 import errno
 import logging
 import os
+import re
 import secrets
 import shutil
 import stat
@@ -102,6 +103,169 @@ class StagingRootVerificationError(Exception):
     def __init__(self, reason: str) -> None:
         super().__init__(f"staging root verification failed: {reason}")
         self.reason = reason
+
+
+class ClearHistoryStorageError(Exception):
+    """The Q3 staging removal refused or failed (fail closed).
+
+    ``reason`` is a fixed token (``invalid_key``, ``rmtree_unsafe``,
+    ``roots_unverified``, ``root_overlap``, ``alias_through_staging``,
+    ``optional_root_unverifiable``, ``target_not_directory``,
+    ``mountinfo_unavailable``, ``mountinfo_malformed``, ``sub_mount``,
+    ``mount_unverifiable``, ``mount_ambiguous``, ``bind_overlap``,
+    ``device_boundary``,
+    ``inspect_failed`` or ``delete_failed``). The message is fixed and
+    never carries a path or raw error text.
+    """
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(f"clear history staging removal failed: {reason}")
+        self.reason = reason
+
+
+_MOUNTINFO_PATH = "/proc/self/mountinfo"
+_DELETED_SUFFIX = " (deleted)"
+_OCTAL_DIGITS = b"01234567"
+_OPTIONAL_MOUNT_FIELD = re.compile(rb"(?:shared|master|propagate_from):[0-9]+|unbindable")
+_ACCESS_MODES = (b"rw", b"ro")
+
+
+@dataclass(frozen=True, slots=True)
+class _MountEntry:
+    """One parsed ``/proc/self/mountinfo`` line (decoded, never resolved)."""
+
+    mount_id: int
+    parent_id: int
+    device: str  # filesystem identity ``major:minor``
+    root: str  # path inside that filesystem shown at ``point``
+    point: Path
+    # Spelling without the kernel's `` (deleted)`` suffix, else ``None``.
+    stripped: Path | None
+
+    def spellings(self) -> tuple[Path, ...]:
+        if self.stripped is None:
+            return (self.point,)
+        return (self.point, self.stripped)
+
+
+def _single_slash(path: str) -> Path:
+    """Absolute POSIX path with the implementation-defined ``//`` collapsed."""
+    return Path("/" + path.lstrip("/"))
+
+
+def _unescape_mount_field(field: bytes) -> str:
+    """Decode a kernel-escaped mountinfo field (``\\ooo`` octal escapes).
+
+    Any backslash not followed by exactly three octal digits, an escaped
+    value above one byte or a NUL byte is malformed (fail closed).
+    """
+    out = bytearray()
+    i = 0
+    while i < len(field):
+        byte = field[i]
+        if byte == 0x5C:
+            code = field[i + 1:i + 4]
+            if len(code) != 3 or any(c not in _OCTAL_DIGITS for c in code):
+                raise ClearHistoryStorageError("mountinfo_malformed")
+            value = int(code, 8)
+            if value > 0xFF:
+                raise ClearHistoryStorageError("mountinfo_malformed")
+            out.append(value)
+            i += 4
+        else:
+            out.append(byte)
+            i += 1
+    if 0 in out:
+        raise ClearHistoryStorageError("mountinfo_malformed")
+    return os.fsdecode(bytes(out))
+
+
+def _parse_mountinfo(raw: bytes) -> list[_MountEntry]:
+    """Strictly parse ``/proc/self/mountinfo`` content.
+
+    Every line must be exactly ``id parent major:minor root mountpoint
+    options [optional...] - fstype source superoptions``: six mandatory
+    fields, only known optional tags, the separator, then exactly three
+    non-empty fields. Mount and super options must start with ``rw``/``ro``,
+    ids must be unique digits. Any shifted, truncated or otherwise
+    malformed line, and empty content, raises
+    ``ClearHistoryStorageError("mountinfo_malformed")``.
+    """
+    lines = raw.split(b"\n")
+    if lines and lines[-1] == b"":
+        lines.pop()
+    if not lines:
+        raise ClearHistoryStorageError("mountinfo_malformed")
+    entries: list[_MountEntry] = []
+    seen: set[int] = set()
+    for line in lines:
+        fields = line.split(b" ")
+        try:
+            separator = fields.index(b"-", 6)
+        except ValueError as exc:
+            raise ClearHistoryStorageError("mountinfo_malformed") from exc
+        major, colon, minor = fields[2].partition(b":")
+        if (
+            len(fields) != separator + 4
+            or any(not field for field in fields)
+            or not fields[0].isdigit()
+            or not fields[1].isdigit()
+            or not colon
+            or not major.isdigit()
+            or not minor.isdigit()
+            or fields[5].split(b",")[0] not in _ACCESS_MODES
+            or fields[separator + 3].split(b",")[0] not in _ACCESS_MODES
+            or any(
+                not _OPTIONAL_MOUNT_FIELD.fullmatch(optional)
+                for optional in fields[6:separator]
+            )
+        ):
+            raise ClearHistoryStorageError("mountinfo_malformed")
+        mount_id = int(fields[0])
+        if mount_id in seen:
+            raise ClearHistoryStorageError("mountinfo_malformed")
+        seen.add(mount_id)
+        root = _unescape_mount_field(fields[3])
+        point = _unescape_mount_field(fields[4])
+        if not point.startswith("/"):
+            raise ClearHistoryStorageError("mountinfo_malformed")
+        stripped: Path | None = None
+        if point.endswith(_DELETED_SUFFIX):
+            stripped = _single_slash(point[: -len(_DELETED_SUFFIX)])
+        entries.append(_MountEntry(
+            mount_id, int(fields[1]), f"{int(major)}:{int(minor)}", root,
+            _single_slash(point), stripped,
+        ))
+    return entries
+
+
+def _mount_backing(path: Path, mounts: Sequence[_MountEntry]) -> tuple[str, Path]:
+    """``(major:minor, path inside that filesystem)`` backing a canonical path.
+
+    The most specific visible mount is chosen on whole path components.
+    The mounts covering ``path`` must form one unambiguous chain from ``/``:
+    exactly one mount per mount point, each the child of the previous one
+    (a stacked, shadowed or orphaned mount breaks the chain), no
+    `` (deleted)`` mount on the way, and the chosen mount must expose an
+    absolute, non-deleted root. Anything else raises
+    ``ClearHistoryStorageError("mount_ambiguous")``.
+    """
+    for mount in mounts:
+        if mount.stripped is not None and path.is_relative_to(mount.stripped):
+            raise ClearHistoryStorageError("mount_ambiguous")
+    covering = sorted(
+        (m for m in mounts if m.stripped is None and path.is_relative_to(m.point)),
+        key=lambda m: len(m.point.parts),
+    )
+    if not covering or covering[0].point != Path("/"):
+        raise ClearHistoryStorageError("mount_ambiguous")
+    for outer, inner in zip(covering, covering[1:], strict=False):
+        if inner.point == outer.point or inner.parent_id != outer.mount_id:
+            raise ClearHistoryStorageError("mount_ambiguous")
+    top = covering[-1]
+    if not top.root.startswith("/") or top.root.endswith(_DELETED_SUFFIX):
+        raise ClearHistoryStorageError("mount_ambiguous")
+    return top.device, _single_slash(top.root) / path.relative_to(top.point)
 
 
 def _component_open_error(component: str, exc: OSError) -> Exception:
@@ -1349,6 +1513,470 @@ class StorageService:
                 getattr(cause, "errno", None),
             )
         raise StagingRootVerificationError(reason) from cause
+
+    def remove_staging_for_clear_history(self, staging_key: str) -> bool:
+        """Q3-only removal of one DB-derived single/child staging tree.
+
+        ``staging_key`` must be a trusted, DB-derived ``download_jobs.id`` or
+        ``job_items.id`` (caller trust boundary); it is still validated as
+        one path segment (no NUL, separator, traversal or absolute form)
+        before any filesystem call. Then, fail closed and before the first
+        mutation: ``shutil.rmtree`` must avoid symlink attacks, the staging
+        root must still be the startup root
+        (``verify_staging_root_for_clear_history``), the static Library/Plex
+        roots may not be the same as or nested with staging in either
+        direction and none of their configured access chains (aliases
+        included, reused from the startup capture) may pass through
+        staging, all decided by ``(st_dev, st_ino)`` of the roots and their
+        real ancestors, never by path text; an optional root missing at
+        startup must still be normally missing. Media root and access
+        component identities found inside the job tree are refused too. The
+        target is the canonical startup root plus the key and is never
+        resolved: a missing key returns ``False`` (idempotent), a
+        top-level symlink or non-directory is refused. ``/proc/self/mountinfo``
+        filesystem identity and mount roots map the staging root and every
+        media access path (chain, root and mounts below the root) to their
+        backing locations: a media path backed inside staging, or a media
+        root backed equal to, inside or around staging on the same
+        filesystem, is refused, as is an ambiguous mapping. Every mount
+        point's ``(st_dev, st_ino)`` is collected (unreadable fails closed);
+        the target and every entry below it must match none of them and
+        stay on the root's ``st_dev``. The preflight uses ``scandir`` with
+        no-follow ``stat`` and descends only into real directories, so
+        symlinks are never followed, not even for metadata. Only then is the
+        tree removed with one ``shutil.rmtree`` (nested symlinks are
+        unlinked as names, never followed) and ``True`` is returned.
+
+        Refusals and operational errors raise ``ClearHistoryStorageError``
+        (or the root check's ``StagingRootVerificationError``) with a fixed
+        reason; an error while removing, including a vanished sub-entry, is
+        never reported as a missing key. External filesystem or mount
+        changes during the removal are out of scope (PRODUCT_SPEC.md §17).
+        """
+        if (
+            not isinstance(staging_key, str)
+            or "\x00" in staging_key
+            or not staging_key
+            or staging_key in {".", ".."}
+            or "/" in staging_key
+            or "\\" in staging_key
+            or Path(staging_key).name != staging_key
+        ):
+            self._reject_clear_history("invalid_key")
+        if getattr(shutil.rmtree, "avoids_symlink_attacks", False) is not True:
+            self._reject_clear_history("rmtree_unsafe")
+        self.verify_staging_root_for_clear_history()
+        snapshot = self._staging_snapshot
+        assert snapshot is not None  # verified above
+        staging_root = snapshot.resolved
+        media, media_ids = self._check_static_roots_for_clear_history(
+            staging_root, snapshot.identity
+        )
+
+        target = staging_root / staging_key
+        try:
+            entry = os.lstat(target)
+        except FileNotFoundError:
+            return False
+        except OSError as exc:
+            self._reject_clear_history("inspect_failed", exc)
+        if not stat.S_ISDIR(entry.st_mode):
+            self._reject_clear_history("target_not_directory")
+        root_dev = snapshot.identity[0]
+        if entry.st_dev != root_dev:
+            self._reject_clear_history("device_boundary")
+
+        try:
+            raw = self._read_mountinfo()
+        except OSError as exc:
+            self._reject_clear_history("mountinfo_unavailable", exc)
+        try:
+            mounts = _parse_mountinfo(raw)
+        except ClearHistoryStorageError as exc:
+            self._reject_clear_history(exc.reason)
+
+        # Sub-mounts are detected by identity, never by mount point text: a
+        # mount point spelled differently still matches the entry it covers.
+        # The staging root itself is not checked, so its own mount is fine.
+        mount_map = self._mount_point_identities(mounts)
+        self._check_bind_sources(staging_root, mounts, mount_map, media)
+
+        def forbidden(identity: tuple[int, int]) -> None:
+            if identity in mount_map:
+                self._reject_clear_history("sub_mount")
+            if identity in media_ids:
+                # A Library/Plex root or access component inside this job.
+                self._reject_clear_history("root_overlap")
+
+        forbidden((entry.st_dev, entry.st_ino))
+        pending = [target]
+        try:
+            while pending:
+                with os.scandir(pending.pop()) as entries:
+                    for item in entries:
+                        info = item.stat(follow_symlinks=False)
+                        if info.st_dev != root_dev:
+                            self._reject_clear_history("device_boundary")
+                        forbidden((info.st_dev, info.st_ino))
+                        if stat.S_ISDIR(info.st_mode):
+                            pending.append(Path(item.path))
+        except OSError as exc:
+            self._reject_clear_history("inspect_failed", exc)
+
+        try:
+            shutil.rmtree(target)
+        except OSError as exc:
+            self._reject_clear_history("delete_failed", exc)
+        return True
+
+    @staticmethod
+    def _read_mountinfo() -> bytes:
+        """Plain read of the process mount table (Linux)."""
+        with open(_MOUNTINFO_PATH, "rb") as handle:
+            return handle.read()
+
+    def _mount_point_identities(
+        self, mounts: Sequence[_MountEntry]
+    ) -> dict[tuple[int, int], set[Path]]:
+        """``(st_dev, st_ino)`` of every visible mount point (no-follow leaf).
+
+        Maps each identity to the mount point spellings showing it. A mount
+        point shows the mounted root (directory or bind-mounted file), which
+        is what the no-follow tree scan sees at that entry. Any mount point
+        whose identity cannot be read fails closed with
+        ``mount_unverifiable``; only a `` (deleted)`` mount, whose detached
+        mount point is unreachable by any path, may be absent.
+        """
+        identities: dict[tuple[int, int], set[Path]] = {}
+        for mount in mounts:
+            for spelling in mount.spellings():
+                try:
+                    info = os.lstat(spelling)
+                except FileNotFoundError as exc:
+                    if mount.stripped is not None:
+                        continue
+                    self._reject_clear_history("mount_unverifiable", exc)
+                except OSError as exc:
+                    self._reject_clear_history("mount_unverifiable", exc)
+                identities.setdefault((info.st_dev, info.st_ino), set()).add(spelling)
+        return identities
+
+    def _lstat_identity(
+        self, path: str, reason: str, *, missing_ok: bool = False
+    ) -> tuple[int, int] | None:
+        """No-follow ``(st_dev, st_ino)`` of ``path``; errors fail closed."""
+        try:
+            info = os.lstat(path)
+        except FileNotFoundError as exc:
+            if missing_ok:
+                return None
+            self._reject_clear_history(reason, exc)
+        except OSError as exc:
+            self._reject_clear_history(reason, exc)
+        return (info.st_dev, info.st_ino)
+
+    def _real_lineage(
+        self, path: Path, reason: str, *, missing_ok: bool = False,
+        directory: bool = False,
+    ) -> set[tuple[int, int]] | None:
+        """Identities of ``path`` (no-follow leaf) and all its real ancestors.
+
+        Ancestors are reached through the kernel's ``.`` and ``..`` from the
+        directory that holds the entry, never by trimming path text, so an
+        alternate spelling (letter case, aliases on the way) still yields
+        the real ancestor directories up to ``/``. With ``directory`` the
+        walk starts at the directory ``path`` designates (``path/.``).
+        ``missing_ok`` returns ``None`` for a vanished path; any other error
+        fails closed.
+        """
+        lineage: set[tuple[int, int]] = set()
+        if directory:
+            current = os.path.join(str(path), ".")
+        else:
+            leaf = self._lstat_identity(str(path), reason, missing_ok=missing_ok)
+            if leaf is None:
+                return None
+            lineage.add(leaf)
+            current = os.path.join(str(path.parent), ".")
+        for _ in range(4096):
+            here = self._lstat_identity(current, reason, missing_ok=missing_ok)
+            if here is None:
+                return None
+            lineage.add(here)
+            parent = os.path.join(current, "..")
+            above = self._lstat_identity(parent, reason, missing_ok=missing_ok)
+            if above is None:
+                return None
+            if above == here:
+                return lineage
+            current = parent
+        self._reject_clear_history(reason)
+
+    def _check_static_roots_for_clear_history(
+        self, staging_root: Path, staging_identity: tuple[int, int]
+    ) -> tuple[list[tuple[list[Path], Path | None, tuple[int, int] | None]],
+               set[tuple[int, int]]]:
+        """Refuse Library/Plex roots that overlap or route through staging.
+
+        Decisions use identities, never path text: a media root equal to the
+        staging root or one of its real ancestors (``/`` included), a media
+        root whose real ancestry contains the staging root (inside any job),
+        and any access chain component (directory or alias) located in
+        staging are refused, whatever their spelling. Captured roots reuse
+        the startup walk steps and must still show the captured root inode.
+        A configured optional root that was not captured is probed
+        read-only: normally missing outside staging is accepted, anything
+        reachable now, invalid or ambiguous fails closed. Returns each media
+        root's access paths, canonical root and root identity (``None`` when
+        missing) for the mount backing check, and the identities of every
+        media root and access component for the tree preflight.
+        """
+        app_library = MediaStorageType.APP_LIBRARY.value
+        if app_library not in self._delete_roots:
+            self._reject_clear_history("roots_unverified")
+        staging_lineage = self._real_lineage(staging_root, "inspect_failed")
+        assert staging_lineage is not None
+        media: list[tuple[list[Path], Path | None, tuple[int, int] | None]] = []
+        media_ids: set[tuple[int, int]] = set()
+        for storage_type in (
+            app_library,
+            MediaStorageType.PLEX_MUSIC.value,
+            MediaStorageType.PLEX_VIDEO.value,
+        ):
+            try:
+                configured = self.storage_root_for(storage_type)
+            except StorageTargetError:
+                continue  # unconfigured optional root
+            captured = self._delete_roots.get(storage_type)
+            if captured is None:
+                visited = self._probe_uncaptured_root(configured, staging_identity)
+                for path in visited:
+                    identity = self._lstat_identity(
+                        str(path), "optional_root_unverifiable"
+                    )
+                    assert identity is not None
+                    media_ids.add(identity)
+                media.append((visited, None, None))
+                continue
+            resolved = _single_slash(str(captured.resolved))
+            # The canonical path must still designate the captured root inode.
+            if self._lstat_identity(
+                os.path.join(str(resolved), "."), "roots_unverified"
+            ) != captured.identity:
+                self._reject_clear_history("roots_unverified")
+            root_lineage = self._real_lineage(
+                resolved, "roots_unverified", directory=True
+            )
+            assert root_lineage is not None
+            if captured.identity in staging_lineage or staging_identity in root_lineage:
+                self._reject_clear_history("root_overlap")
+            media_ids.add(captured.identity)
+            chain = self._chain_paths(captured.steps)
+            for path in chain:
+                lineage = self._real_lineage(path, "roots_unverified")
+                assert lineage is not None
+                if staging_identity in lineage:
+                    self._reject_clear_history("alias_through_staging")
+                identity = self._lstat_identity(str(path), "roots_unverified")
+                assert identity is not None
+                media_ids.add(identity)
+            media.append((chain, resolved, captured.identity))
+        return media, media_ids
+
+    @staticmethod
+    def _chain_paths(steps: tuple[_RootStep, ...]) -> list[Path]:
+        """Canonical directories and alias names reached by a startup walk.
+
+        An absolute anchor component (``/`` or Linux's ``//`` from an alias
+        target) restarts at the single-slash root, so every reported path is
+        comparable with the canonical staging root.
+        """
+        current = Path("/")
+        visited: list[Path] = []
+        for step in steps:
+            component = step.component
+            if step.alias_identity is not None:
+                visited.append(current / component)
+                continue
+            if component.startswith("/"):
+                current = Path("/")
+            elif component == "..":
+                current = current.parent
+            else:
+                current = current / component
+            visited.append(current)
+        return visited
+
+    def _probe_uncaptured_root(
+        self, root: Path, staging_identity: tuple[int, int]
+    ) -> list[Path]:
+        """Read-only lexical probe of an optional root missing at startup.
+
+        Every existing component (directory or alias) whose real ancestry
+        contains the staging root is refused by identity. Returns the
+        existing directories and alias names walked before the normally
+        missing component.
+        """
+        pending = list(root.absolute().parts[1:])
+        current = Path("/")
+        visited: list[Path] = [current]
+        aliases = 0
+        while pending:
+            component = pending.pop(0)
+            if component.startswith("/"):
+                current = Path("/")
+                continue
+            if component == "..":
+                current = current.parent
+                continue
+            candidate = current / component
+            try:
+                entry = os.lstat(candidate)
+            except FileNotFoundError:
+                return visited  # normally missing optional root
+            except OSError as exc:
+                self._reject_clear_history("optional_root_unverifiable", exc)
+            lineage = self._real_lineage(candidate, "optional_root_unverifiable")
+            assert lineage is not None
+            if staging_identity in lineage:
+                self._reject_clear_history("alias_through_staging")
+            visited.append(candidate)
+            if stat.S_ISLNK(entry.st_mode):
+                aliases += 1
+                if aliases > 40:
+                    self._reject_clear_history("optional_root_unverifiable")
+                try:
+                    target = os.readlink(candidate)
+                except OSError as exc:
+                    self._reject_clear_history("optional_root_unverifiable", exc)
+                if not target or "\x00" in target:
+                    self._reject_clear_history("optional_root_unverifiable")
+                pending = list(Path(target).parts) + pending
+                continue
+            if not stat.S_ISDIR(entry.st_mode):
+                self._reject_clear_history("optional_root_unverifiable")
+            current = candidate
+        # Reachable now although it was not captured at startup.
+        self._reject_clear_history("optional_root_unverifiable")
+
+    def _verify_mount_spelling(
+        self, path: Path, mount_map: dict[tuple[int, int], set[Path]]
+    ) -> None:
+        """Fail closed unless ``path`` maps onto mount points by its text.
+
+        The mount table is matched on path text, so the text must be the
+        kernel's spelling: every prefix must be a real directory (the leaf
+        may be an alias), its lexical parent must be its real ``..`` parent,
+        and a prefix showing a mount point's identity must be spelled as
+        that mount point. Otherwise equivalence cannot be established and
+        ``mount_ambiguous`` is raised.
+        """
+        for prefix in (path, *path.parents):
+            text = str(prefix)
+            try:
+                info = os.lstat(text)
+            except OSError as exc:
+                self._reject_clear_history("mount_unverifiable", exc)
+            is_dir = stat.S_ISDIR(info.st_mode)
+            if prefix != path and not is_dir:
+                self._reject_clear_history("mount_ambiguous")
+            points = mount_map.get((info.st_dev, info.st_ino))
+            if points is not None and prefix not in points:
+                self._reject_clear_history("mount_ambiguous")
+            if is_dir and prefix != prefix.parent:
+                real_parent = self._lstat_identity(
+                    os.path.join(text, ".."), "mount_unverifiable"
+                )
+                if real_parent != self._lstat_identity(
+                    str(prefix.parent), "mount_unverifiable"
+                ):
+                    self._reject_clear_history("mount_ambiguous")
+
+    def _check_bind_sources(
+        self,
+        staging_root: Path,
+        mounts: Sequence[_MountEntry],
+        mount_map: dict[tuple[int, int], set[Path]],
+        media: Sequence[tuple[list[Path], Path | None, tuple[int, int] | None]],
+    ) -> None:
+        """Refuse media paths whose mount backing relates to staging's.
+
+        Backing locations are ``(major:minor, path inside the filesystem)``
+        from ``_mount_backing``; every mapped path must first prove its
+        spelling (``_verify_mount_spelling``). On the same filesystem
+        identity: any media access path backed equal to or inside the
+        staging backing, a media root backed around it, and any mount whose
+        real ancestry contains a media root's identity (at or below it, by
+        identity) with a source root equal to, inside or around it raise
+        ``bind_overlap``. Separate sibling sources (e.g. Compose binds)
+        pass. Unmappable entries raise ``mount_ambiguous``.
+        """
+
+        def backing_of(path: Path) -> tuple[str, Path]:
+            self._verify_mount_spelling(path, mount_map)
+            try:
+                return _mount_backing(path, mounts)
+            except ClearHistoryStorageError as exc:
+                self._reject_clear_history(exc.reason)
+
+        device, backing = backing_of(staging_root)
+
+        def related(other_device: str, other: Path, *, around: bool) -> bool:
+            if other_device != device:
+                return False
+            return other.is_relative_to(backing) or (
+                around and backing.is_relative_to(other)
+            )
+
+        lineages: dict[int, set[tuple[int, int]] | None] = {}
+
+        def mount_lineage(mount: _MountEntry) -> set[tuple[int, int]]:
+            if mount.mount_id not in lineages:
+                found: set[tuple[int, int]] = set()
+                for spelling in mount.spellings():
+                    lineage = self._real_lineage(
+                        spelling, "mount_unverifiable",
+                        missing_ok=mount.stripped is not None,
+                    )
+                    found |= lineage or set()
+                lineages[mount.mount_id] = found
+            return lineages[mount.mount_id] or set()
+
+        for chain, root, root_identity in media:
+            for path in chain:
+                if related(*backing_of(path), around=False):
+                    self._reject_clear_history("bind_overlap")
+            if root is None or root_identity is None:
+                continue
+            if related(*backing_of(root), around=True):
+                self._reject_clear_history("bind_overlap")
+            for mount in mounts:
+                if root_identity not in mount_lineage(mount):
+                    continue
+                if (
+                    mount.stripped is not None
+                    or not mount.root.startswith("/")
+                    or mount.root.endswith(_DELETED_SUFFIX)
+                ):
+                    self._reject_clear_history("mount_ambiguous")
+                if related(mount.device, _single_slash(mount.root), around=True):
+                    self._reject_clear_history("bind_overlap")
+
+    @staticmethod
+    def _reject_clear_history(
+        reason: str, cause: BaseException | None = None
+    ) -> NoReturn:
+        """Log a path-free reason (class/errno only) and raise the typed error."""
+        if cause is None:
+            logger.warning("Clear History staging removal refused: %s", reason)
+        else:
+            logger.warning(
+                "Clear History staging removal refused: %s (%s, errno=%s)",
+                reason,
+                type(cause).__name__,
+                getattr(cause, "errno", None),
+            )
+        raise ClearHistoryStorageError(reason) from cause
 
     def _capture_root_descriptor(
         self, root: Path, resolved: Path
