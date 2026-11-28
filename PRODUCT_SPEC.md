@@ -654,6 +654,8 @@ Required actions where appropriate:
 - Never touched: Library media files and catalog records, active and queued jobs. There is no per-job DELETE, no filesystem scan for unknown/orphan staging, and no byte calculation.
 - Current behaviour: a cancelled single job is retryable and keeps its partial data (Q2, implemented; smoke status: STATE.md); a cancelled collection can be retried and resumes (unchanged). Q2 is plan item 1 and Clear History (Q3) plan item 3 in ARCHITECTURE §59; Q3 is a separate task from the finding 3 naming work.
 
+**Clear History storage threat model:** Protect against invalid or miscomputed staging paths, staging and Library/Plex roots that are the same or nested (including aliases), and symlinks inside staging; never follow such symlinks during deletion. Library/Plex access paths that pass through staging are rejected even when the roots themselves are not nested. External filesystem or mount changes during deletion are out of scope. Stop the application before changing storage roots, aliases, or mounts. This does not relax in-app Retry/Cancel coordination or Library protection.
+
 **Progress display (approved; planned, not implemented).** Conversion shows its real progress percentage; when it is unknown the bar is indeterminate. Source transfer at 100% is not conversion at 100%, and no smoothing is promised. Observed, unfixed (finding 7): during conversion the UI showed 100% for minutes while ffmpeg ran at about 1000% CPU.
 
 Example:
