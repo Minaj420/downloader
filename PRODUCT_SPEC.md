@@ -7,10 +7,10 @@
 
 ---
 
-**v0.1 / v0.2 scope split (approved user decision; authoritative where older text below conflicts; deferred items are NOT implemented).** The v0.1 order is the active plan in ARCHITECTURE §59 (plan items 1–10): Q2, finding 3 naming/collision plus collection ceilings, Q3 Clear History, M6.5 text tags, M6.5 presentation/basic error texts/platform icons, last-selection memory, M7 opening (write check + S1), Plex Music/Videos with Library extra copy and safe delete, one focused security round, final fresh gate and Compose acceptance. Deferred to **v0.2** (section where each is specified):
+**v0.1 / v0.2 scope split (approved user decision; authoritative where older text below conflicts; deferred items are NOT implemented).** The v0.1 order is the active plan in ARCHITECTURE §59 (plan items 1–11): Q2, finding 3 naming/collision plus collection ceilings, Q3 Clear History, M6.5 text tags, M6.5 presentation/basic error texts/platform icons, last-selection memory, M7 opening (write check + S1), Plex Music/Videos with Library extra copy and safe delete, M6.7 track artwork embedding (user-moved after M7; §14), one focused security round, final fresh gate and Compose acceptance. Deferred to **v0.2** (section where each is specified):
 
 - M6.6 album grouping, Various Artists and album/disc audio numbering (§13, §14)
-- M6.7 source artwork embedding (§14), M6.8 metadata selection/editing (§13, §14), M6.9 external cover search (§14)
+- M6.8 metadata selection/editing (§13, §14), M6.9 external cover search (§14)
 - M8 Download to this device (§11, §31, §35 item 12)
 - M9-C Replace / Keep Both choice surface (§16)
 - mobile polish beyond basic usability (§34; basic phone usability stays v0.1, §31)
@@ -543,7 +543,7 @@ Where metadata can be determined reliably, files should contain embedded metadat
 - Year/date where available
 - Artwork where available and appropriate
 
-Users should be able to inspect or correct important album metadata before the download when automatic metadata is uncertain (the M6.8 edit UI and embedded artwork are v0.2; v0.1 writes the M6.5 text tags only).
+Users should be able to inspect or correct important album metadata before the download when automatic metadata is uncertain (the M6.8 edit UI is v0.2; v0.1 writes the M6.5 text tags and, scheduled after M7, M6.7 track artwork for supported new audio tracks).
 
 M6.5 text tags (approved; implemented for single audio downloads in M6.5-T3 and for audio collection children in M6.5-T4; M6.5 stays open for the user's real-use Docker Compose smoke result and the full gates): embedded text tags are written with the existing third-party Mutagen library, not by hand-written format code: MP3 ID3v2.4, M4A MP4 atoms, FLAC / Ogg Vorbis / Opus Vorbis comments. Minimum fields only; there is no genre/composer field and no provider framework.
 
@@ -552,11 +552,11 @@ M6.5 text tags (approved; implemented for single audio downloads in M6.5-T3 and 
 - Preservation (user decision): only supplied fields are updated. Other embedded tags stay, including managed fields with no supplied value, existing artwork and already known track/disc totals.
 - WAV and the Original WebM fallback (§14 remux fallback) are outside tags and artwork. Video and other unsupported containers are outside this audio-tag scope. An unsupported format is not presented as an error, and no remux or transcode is done just to carry a tag.
 
-M6.7 source artwork (approved; deferred to v0.2; not implemented): by default a track's own thumbnail image is embedded as a square crop; the general playlist image is not used. A missing or broken cover never blocks the download. The user removes or replaces the cover on the M6.8 selection screen. The earlier rule that every source cover requires an explicit selection is superseded and is not an active rule. An album-wide `cover.jpg` is not chosen automatically when tracks have different thumbnail covers; the `cover.jpg` example in §13 is conditional, and the album-wide selection detail stays an open M6.7 design follow-up. For a playlist with different albums, one cover is never applied automatically to all tracks. Format support is not guaranteed.
+M6.7 track artwork (approved; v0.1, user-moved to run after M7 Plex work and before focused hardening and the final gate so newly downloaded audio tracks carry their embedded source thumbnail; not implemented): by default a track's own source thumbnail image is embedded as a square crop; the general playlist image is not used. It applies to supported new single audio tracks and audio collection children; existing Library items are not reprocessed. A missing or broken cover never blocks the download. WAV, the Original WebM fallback, video and other unsupported containers stay outside artwork (see above), and the tag/artwork failure policy below is unchanged. Embedding a track's own thumbnail does not depend on album grouping (M6.6). Removing or replacing a cover is future M6.8 functionality (v0.2) on its selection screen. The earlier rule that every source cover requires an explicit selection is superseded and is not an active rule. An album-wide `cover.jpg` is not chosen automatically when tracks have different thumbnail covers; the `cover.jpg` example in §13 is conditional on an album folder under the existing rules, and the album-wide selection detail stays an open follow-up (not a v0.1 acceptance requirement; its timing is not decided). For a playlist with different albums, one cover is never applied automatically to all tracks. Format support is not guaranteed.
 
 Alternative cover search (M6.9; approved; deferred to v0.2; not implemented): external search runs only when the user explicitly asks for it on the M6.8 selection screen, never automatically. The UI offers editable artist/album fields and searches an external catalog. Candidates are shown with source/release information and, where verifiable, resolution; the user still chooses the external candidate. High pixel size is not proof of the correct release. There is no silent search, selection, or replacement, and choosing a cover does not change other metadata on its own. A failed search or a missing cover never blocks the download. This is the last separate M6 sub-task and is not started: provider and rights terms must be clarified when M6.9 integration is reached; no new rights research or provider decision is made now.
 
-Order of work: M6.5 text tags (v0.1) → M6.6 grouping decision and paths → M6.7 source artwork → M6.8 selection/editing → M6.9 user-triggered external search (M6.6–M6.9 are v0.2 and not withdrawn).
+Order of work: M6.5 text tags (v0.1) → M7 Plex work (v0.1) → M6.7 track artwork (v0.1, after M7) → focused hardening and final gate (v0.1). Deferred to v0.2 and not withdrawn: M6.6 grouping decision and paths → M6.8 selection/editing → M6.9 user-triggered external search.
 
 Library note: Mutagen is GPL-2.0-or-later. That is not a blocker for personal use; a distribution/project-license compatibility note remains open, and this is not a legal approval.
 
@@ -1236,7 +1236,7 @@ The product is considered functionally ready for v0.1 when a user can:
 19. Explicitly delete a physical file after confirmation (Delete modal, checkbox ON; §21).
 20. Restart the Docker application without losing persistent Library state.
 
-Release gate: this functional readiness is complemented by a one-time v0.1 Release Security Hardening / Audit stage (ARCHITECTURE section 59), run after the v0.1 feature plan (ARCHITECTURE §59 plan items 1–8) and before final v0.1 release acceptance; unresolved validated Critical/Important security findings block the release.
+Release gate: this functional readiness is complemented by a one-time v0.1 Release Security Hardening / Audit stage (ARCHITECTURE section 59), run after the v0.1 feature plan (ARCHITECTURE §59 plan items 1–9) and before final v0.1 release acceptance; unresolved validated Critical/Important security findings block the release.
 
 ---
 

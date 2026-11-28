@@ -12,6 +12,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - Q3b-2 ve 3c Already exists v0.1 sonrası; güvenli numara ve çözünürlük eki kalır. Aday ve açık review bulguları `wip/already-exists` dalında.
 - M6-Q20 kapandı: Compose seçici/Ses PASS, Shorts 4/4, 1080×1920 doğrulandı; tavan dışı yedek otomatik PASS, uygun canlı kaynak yok, kullanıcı kapanışı onayladı. Katalog eşleşmesi (§16) gerekirse önce koleksiyonlarda.
 - Main'e birleştirme kullanıcı yetkisi bekliyor; ardından M7 yazılabilirlik probu. Compose Q3 UI PASS: 18/20 önizleme, varsayılan ve iptaller dahil silme, restart sonrası eski önizleme reddi, Library katalog kaydı; düğme geometrisi ve oynatma denenmedi.
+- M7 sonrası v0.1: M6.7 yeni ses parçalarına gömülü kaynak görseli (ARCH §59); henüz başlanmadı.
 - M6.5-T2/T3 Fedora Compose PASS (Mutagen 1.48.1, MP3 etiket ve WAV); T3 hedefli 791 test/Ruff/mypy ve review PASS.
 - M6.5 metin etiketi Compose PASS: Opus/MP3 etiket 2/2, MP3 oynatma, WAV 2/2 uyarısız, Shorts 2/2 oynatma/sıra, ses iptal 1/2 → Retry 2/2 kopyasız. ARCH §14 probe başlığı notu should-fix.
 - Accepted (M6.5-T2): düşen/yinelenen TXXX değişmeden reddedilebilir (ID3v2.4 dahil). Should-fix: seek hata ayrıntısı ve ses-önce çoklanmış Ogg testi.
