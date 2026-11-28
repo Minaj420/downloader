@@ -97,6 +97,9 @@ def create_app(settings: Settings | None = None, analyzer: URLAnalyzer | None = 
 
     app = FastAPI(title="Downloader", version="0.1.0", lifespan=lifespan)
 
+    # The same resolved object every service above was built from; the
+    # read-only Settings API reports effective values from it.
+    app.state.settings = resolved_settings
     app.state.engine = engine
     app.state.sessionmaker = session_factory
     app.state.event_bus = bus

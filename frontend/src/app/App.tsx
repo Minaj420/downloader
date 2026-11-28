@@ -1,16 +1,19 @@
+import { useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, NavLink, Route, Routes } from "react-router-dom";
 import { BackendStatus } from "../components/BackendStatus";
+import { StartupStorageWarning } from "../components/StartupStorageWarning";
 import { LibraryPage } from "../pages/LibraryPage";
 import { NewDownloadPage } from "../pages/NewDownloadPage";
 import { QueuePage } from "../pages/QueuePage";
 import { SettingsPage } from "../pages/SettingsPage";
 
-const queryClient = new QueryClient({
-  defaultOptions: { queries: { retry: false } },
-});
-
 export function App() {
+  // One client per App instance (the app mounts once); keeps cached reads
+  // such as the startup warning from leaking between separate renders.
+  const [queryClient] = useState(
+    () => new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+  );
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
@@ -31,6 +34,7 @@ export function App() {
             <BackendStatus />
           </header>
           <main className="app-main">
+            <StartupStorageWarning />
             <Routes>
               <Route path="/" element={<NewDownloadPage />} />
               <Route path="/queue" element={<QueuePage />} />

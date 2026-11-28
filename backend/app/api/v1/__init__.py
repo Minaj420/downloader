@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.api.v1 import analysis, events, health, jobs, library
+from app.api.v1 import analysis, events, health, jobs, library, settings
 
 api_router = APIRouter()
 api_router.include_router(health.router)
@@ -8,3 +8,4 @@ api_router.include_router(analysis.router)
 api_router.include_router(jobs.router)
 api_router.include_router(library.router)
 api_router.include_router(events.router)
+api_router.include_router(settings.router)

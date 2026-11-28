@@ -12,7 +12,8 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - Q3b-2 ve 3c Already exists v0.1 sonrası; güvenli numara ve çözünürlük eki kalır. Aday ve açık review bulguları `wip/already-exists` dalında.
 - M6-Q20 kapandı: Compose seçici/Ses PASS, Shorts 4/4, 1080×1920 doğrulandı; tavan dışı yedek otomatik PASS, uygun canlı kaynak yok, kullanıcı kapanışı onayladı. Katalog eşleşmesi (§16) gerekirse önce koleksiyonlarda.
 - Q3 `main`'de; deneysel dal M7'yi engellemiyor. Compose Q3 UI PASS: 18/20 önizleme, varsayılan ve iptaller dahil silme, restart sonrası eski önizleme reddi, Library katalog kaydı; düğme geometrisi ve oynatma denenmedi.
-- M7-StartupProbe kapandı: 28 Kasım macOS Compose kullanıcı smoke PASS; normal açılış, salt okunur Plex'te uyarı ve sağlık 200, yazılabilir Plex'te uyarı ve kalıntı yok. Sırada S1 API/Ayarlar ve uyarı bandı.
+- M7-StartupProbe kapandı (28 Kasım macOS Compose smoke PASS). M7-S1 hedefli kontroller ve review temiz.
+- Sırada M7-S1 Fedora Compose smoke: (1) yazılabilir hedeflerde Ayarlar sayısı/App Library/Skip Existing, bant yok; (2) salt okunur Plex: sayfalar arası bant, Plex seçilemez, yalnız yapılandırılmış display path; (3) yazılabilir Plex ile yeniden başlatınca bant kalkar.
 - M7 sonrası v0.1: M6.7 yeni ses parçalarına gömülü kaynak görseli (ARCH §59); henüz başlanmadı.
 - M6.5-T2/T3 Fedora Compose PASS (Mutagen 1.48.1, MP3 etiket ve WAV); T3 hedefli 791 test/Ruff/mypy ve review PASS.
 - M6.5 metin etiketi Compose PASS: Opus/MP3 etiket 2/2, MP3 oynatma, WAV 2/2 uyarısız, Shorts 2/2 oynatma/sıra, ses iptal 1/2 → Retry 2/2 kopyasız. ARCH §14 probe başlığı notu should-fix.
@@ -24,14 +25,13 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - M6.6 güvenilir albüm grubu/ön hazırlık ve çoklu album_artists klasör değeri; M6.7 cover.jpg seçimi açık.
 - M6.9 yalnız seçim ekranından kullanıcı isterse; MB/CAA aday, hak/API/embed koşulları o işte netleşecek.
 - Mutagen lisansı kişisel kullanıma engel değil; dağıtım uyumu notu sürer. M9 kalite/boyut bekler.
-- S1 M7 hedef doğrulamasıyla onaylı; açılış yaz-sil probu/kalıcı hata bandı planlı; S2 v0.1 sonrası.
+- M7 madde 8 (Plex hedefleri): Ayarlar'daki “henüz indirme hedefi olarak seçilemez” metnini kaldır/güncelle; S2 v0.1 sonrası.
 - M6.5 platform ikonları: YouTube Music/Shorts görsel PASS, Other yalnız otomatik test. Lisans/marka doğrulaması ertelendi.
 ## Açık bulgular
-- should-fix: eski conversion durumları PRODUCT_SPEC §8–9 ve ARCHITECTURE M6
-  kapanış paragrafında bayat.
+- should-fix: eski conversion durumları PRODUCT_SPEC §8–9 ve ARCHITECTURE M6 kapanış paragrafında bayat.
 - should-fix: collection başarılı convert/caller-cancel testi sleep(0) ile deterministik değil;
   single başarılı convert+iptal ek testi eksik. Üretim hatası bulunmadı.
-- Q3 should-fix: hata zincirinde yol gizleme ve fstat hatasında fd kapanış testi. M7/S1 bekliyor; M9-L tıklanabilirlik ve popup/satır içi genişleme açık.
+- Q3 should-fix: hata zincirinde yol gizleme ve fstat hatasında fd kapanış testi. M9-L tıklanabilirlik ve popup/satır içi genişleme açık.
 - New Download adı v0.1'de kalır; K2 v0.2. M6.5-UI-History should-fix: yeniden bağlantıda taşınan panel içindeki klavye odağı kaybolabilir.
 - Kullanıcı Compose smoke PASS (28 Kasım): Preview/kalite 1080×1920; çoklu History/Activity, Retry ve üst panel kapatma. Test takibi: yalnız canlı Activity olayı ve Retry'a uygun toplu fixture.
 - network_error/Deno bağı kanıtsız. Analiz +25/hepsi v0.2. Should-fix M6.5-UI-Errors: Queue detayında çocuk hata metni için doğrudan test.
