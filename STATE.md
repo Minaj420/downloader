@@ -17,7 +17,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - M6.5-T2/T3 Fedora Compose PASS (Mutagen 1.48.1, MP3 etiket ve WAV); T3 hedefli 791 test/Ruff/mypy ve review PASS.
 - M6.5 metin etiketi kapandı: Compose Opus/MP3 etiket 2/2, MP3 oynatma, WAV 2/2 uyarısız, Shorts 2/2 oynatma/sıra, ses iptal 1/2 → Retry 2/2 kopyasız. Bu kapsamda plansız v0.1 zorunluluğu yok; M6.5 sunum UI/hata metinleri ayrı açık. ARCH §14 probe başlığı notu should-fix.
 - Accepted (M6.5-T2): düşen/yinelenen TXXX değişmeden reddedilebilir (ID3v2.4 dahil). Should-fix: seek hata ayrıntısı ve ses-önce çoklanmış Ogg testi.
-- Toplu UI Compose smoke: gezinme/F5, Load more; Media Preview platform ikonu+etiket, Other yalnız metin.
+- Toplu UI Compose smoke: gezinme/F5, Load more; Auto Select algılanan etiketi gösterir, URL değişimi/yeniden analizde temizler, sonraki platforma kilitlenmez.
 - Smoke (M6.5-UI-Retry): Details ve History'de uygun Retry, ortak pending/çift tık, hatanın başlatıldığı yerde görünmesi ve başarıda Active'e geçiş; uygun Cancel.
 - Smoke: Private playlist öğesi devre dışı, Select All ve sayaç dışında; restart/ağ hatalı çocukta Queue detayında ve New Download'da yalnız kullanıcı mesajı.
 - Kullanıcı Compose PASS: Q2 Retry kaldığı yerden tamamlandı (22 Kasım); Q3-ACT eski Activity/Library, canlı Activity ve F5 sonrası geçmiş korundu (23 Kasım).
@@ -26,7 +26,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - M6.9 yalnız seçim ekranından kullanıcı isterse; MB/CAA aday, hak/API/embed koşulları o işte netleşecek.
 - Mutagen lisansı kişisel kullanıma engel değil; dağıtım uyumu notu sürer. M9 kalite/boyut bekler.
 - S1 M7 hedef doğrulamasıyla onaylı; açılış yaz-sil probu/kalıcı hata bandı planlı; S2 v0.1 sonrası.
-- M6.5 platform ikonları: Simple Icons seçildi; lisans/marka doğrulaması ertelendi.
+- M6.5 platform ikonları: YouTube Music/Shorts görsel PASS, Other yalnız otomatik test. Lisans/marka doğrulaması ertelendi.
 ## Açık bulgular
 - should-fix: eski conversion durumları PRODUCT_SPEC §8–9 ve ARCHITECTURE M6
   kapanış paragrafında bayat; sabit profillerin yetkili belgeye aktarımı ayrı iş.

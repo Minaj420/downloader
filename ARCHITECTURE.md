@@ -1659,6 +1659,8 @@ No forced extractor hint.
 
 Let yt-dlp determine the source.
 
+Display (implemented): after a successful analysis of the current URL, the `auto` option label shows `Auto Select — <detected_platform_label>`; it is derived from the current result, not stored, and the request hint stays null.
+
 ## Manual selection
 
 Treat the platform selection as an explicit hint/constraint.
@@ -2045,7 +2047,7 @@ The architectural foundation must nevertheless allow those features to be added 
 2. Finding 3: real resolution / `(2)` / `Already exists`; the same request existing means skip, never a silent overwrite. Collection quality ceiling picker 2160/1440/1080/720/480 with per-item best fallback is approved and implemented as M6-Q20 (short-edge ceiling; §19 supersede note, PRODUCT_SPEC §9).
 3. Q3 (finding 10), a separate task: bulk Clear History; preview shows only the job count (no space/byte estimate); partial failure = `N jobs could not be deleted` summary + Activity; cancelled excluded by default, `include_cancelled` option, failed staging included, Library untouched, no per-job DELETE.
 4. M6.5 text tags.
-5. M6.5 presentation UI plus basic error texts: the analysis-failure `View Activity` requirement and example button are removed (error message + Retry stay; Queue/history Activity stays). Platform icons are explicitly v0.1 here (PRODUCT_SPEC §4); source is the user-approved set of 10 Simple Icons SVGs (https://simpleicons.org) as local frontend assets; the license/trademark review is deferred by the user and not verified.
+5. M6.5 presentation UI plus basic error texts: the analysis-failure `View Activity` requirement and example button are removed (error message + Retry stay; Queue/history Activity stays). Platform icons are explicitly v0.1 here (PRODUCT_SPEC §4); source is the user-approved set of 10 Simple Icons SVGs (https://simpleicons.org) as local frontend assets; the license/trademark review is deferred by the user and not verified. The Auto Select detected-platform display (PRODUCT_SPEC §4) is implemented.
 6. Remember last selection in `localStorage`.
 7. M7 opening: storage writability check + S1 (S1 shows no result before the probe exists; not designed here).
 8. Plex Music/Videos, Library extra copy, safe Delete modal (`Also delete files` OFF by default, M7 copy selection). Real Plex Music scan with M6.5 embedded text tags plus meaningful file names; if that is insufficient, only the smallest needed directory layout is a separate task. M6.6 is not withdrawn (v0.2).
@@ -2153,7 +2155,7 @@ Labels: **APPROVED** = user decision (planned, not implemented unless stated); *
 **APPROVED**
 - M6-Q (Queue frontend per PRODUCT_SPEC §17) is a prerequisite within the already-running M6, to be done before the M6.5 tag implementation; M6.5 tags wait. It does not turn the historical M4 backend scope into frontend-completed work.
 - Queue content, Clear History (completed+failed default selection, failed staging deleted with them, cancelled kept unless `include_cancelled`, no single job delete, Library untouched, active/queued never candidates) is recorded in PRODUCT_SPEC §17. The clear endpoints do not exist; their planned contract, including Retry/cleanup races and filesystem ownership, is the Q3 technical contract below.
-- Decisions recorded in PRODUCT_SPEC and planned, not implemented: single Audio/Video choice (§6), video ceilings and naming/collision rules (§9, §16), real conversion progress (§17), Auto Select display and platform icons (§4; icons approved for v0.1, actual set/license still open), single Delete modal (§21; §38 here). The old job card may be cleared on a new analysis only after Queue actually delivers access to cancelled single-job Retry (finding 8); Queue restores job access from the backend.
+- Decisions recorded in PRODUCT_SPEC and planned, not implemented: single Audio/Video choice (§6), video ceilings and naming/collision rules (§9, §16), real conversion progress (§17), single Delete modal (§21; §38 here). The old job card may be cleared on a new analysis only after Queue actually delivers access to cancelled single-job Retry (finding 8); Queue restores job access from the backend.
 - Lifecycle: the M5 orderly-shutdown contract (§19, §21) stays an implemented contract; container graceful stop is user-smoke verified for Q0 only (finding 18 CLOSED/PASS), which is not a milestone closure.
 - Approved user decisions of 17 Nov (planned, not implemented; product wording in PRODUCT_SPEC):
   1. Cancelled single Retry with partial staging retention, continuing from where it stopped; explicit Retry only, no automatic resume. Separate bounded Opus expert task in Q2 — implemented (§20; every cancelled single job, including queued/pre-Q2 cancels, gets Retry; from scratch without a valid partial); smoke status: STATE.md. Clear History keeps cancelled single jobs by default; with `include_cancelled` their partial staging is deleted (PRODUCT_SPEC §17).

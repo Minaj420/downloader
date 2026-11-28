@@ -7,6 +7,8 @@ interface AnalyzeFormProps {
   url: string;
   platform: string;
   isPending: boolean;
+  /** Backend label of the current successful analysis; null when not applicable. */
+  detectedPlatformLabel?: string | null;
   onUrlChange: (url: string) => void;
   onPlatformChange: (platform: string) => void;
   onSubmit: () => void;
@@ -16,6 +18,7 @@ export function AnalyzeForm({
   url,
   platform,
   isPending,
+  detectedPlatformLabel = null,
   onUrlChange,
   onPlatformChange,
   onSubmit,
@@ -49,7 +52,11 @@ export function AnalyzeForm({
             value={platform}
             onChange={(event) => onPlatformChange(event.target.value)}
           >
-            <option value={AUTO_PLATFORM_VALUE}>Auto Select</option>
+            <option value={AUTO_PLATFORM_VALUE}>
+              {platform === AUTO_PLATFORM_VALUE && detectedPlatformLabel
+                ? `Auto Select — ${detectedPlatformLabel}`
+                : "Auto Select"}
+            </option>
             {PLATFORM_OPTIONS.map((option) => (
               <option key={option.value} value={option.value}>
                 {option.label}

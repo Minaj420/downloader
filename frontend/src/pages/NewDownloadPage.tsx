@@ -197,6 +197,13 @@ export function NewDownloadPage() {
   const createJob = useCreateJob();
 
   const platformHint = platform === AUTO_PLATFORM_VALUE ? null : platform;
+  // Display only (PRODUCT_SPEC §4): the detected label of the current, successful
+  // analysis of exactly this URL. Never stored, never sent as a hint.
+  const detectedPlatformLabel =
+    analyze.isSuccess && analyze.data != null &&
+    analyze.variables?.url === url.trim()
+      ? analyze.data.detected_platform_label
+      : null;
   const videoQualityOptions =
     analyze.data == null || analyze.data.content_type === "collection"
       ? []
@@ -704,6 +711,7 @@ export function NewDownloadPage() {
         url={url}
         platform={platform}
         isPending={analyze.isPending}
+        detectedPlatformLabel={detectedPlatformLabel}
         onUrlChange={setUrl}
         onPlatformChange={setPlatform}
         onSubmit={handleSubmit}

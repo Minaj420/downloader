@@ -180,7 +180,7 @@ Detected platform: SoundCloud
 [ Use SoundCloud ]
 ```
 
-**Auto Select display (approved; planned, not implemented; unchanged by the icon work).** After analysis, the dropdown shows the detected platform while the mode stays Auto Select; displaying the backend's detected hint must never silently turn into a manual override (the platform hint sent with a later analysis stays absent unless the user explicitly picks a platform).
+**Auto Select display (approved; implemented in M6.5-UI-AutoPlatform).** While the selection stays Auto Select and the current URL has a successful matching analysis, the native select's selected `auto` option reads `Auto Select — <backend detected_platform_label>`; the option value and the manual options are unchanged. The label is derived from the current result only: it disappears on a changed input, a pending or a failed analysis. It never becomes a manual override (the platform hint sent with a later analysis stays absent unless the user explicitly picks a platform).
 
 **Platform icons (approved for v0.1, timing: ARCHITECTURE §59 plan item 5; implemented in the Media Preview badge).**
 - Source (user-approved): the 10 Simple Icons SVGs from https://simpleicons.org, copied as local frontend assets (`frontend/src/assets/platforms`; no CDN, no dependency).

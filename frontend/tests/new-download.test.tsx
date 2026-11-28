@@ -989,6 +989,131 @@ describe("NewDownloadPage", () => {
     const lastBody = JSON.parse(String(lastInit?.body)) as AnalyzeRequest;
     expect(lastBody.url).toBe("https://www.youtube.com/watch?v=abc123");
     expect(lastBody.platform_hint).toBe("youtube");
+
+    // The explicit correction is a manual choice: no Auto Select label.
+    const select = screen.getByRole("combobox", { name: "Platform" }) as HTMLSelectElement;
+    await waitFor(() => expect(select.value).toBe("youtube"));
+    expect(select).toHaveDisplayValue("YouTube");
+  });
+
+  describe("Auto Select display", () => {
+    const platformSelect = () =>
+      screen.getByRole("combobox", { name: "Platform" }) as HTMLSelectElement;
+    const analysisBodies = (fetchMock: ReturnType<typeof stubFetch>) =>
+      fetchMock.mock.calls
+        .filter(([url]) => url === "/api/v1/analysis")
+        .map(([, init]) => JSON.parse(String(init?.body)) as AnalyzeRequest);
+    const soundcloudUrl = "https://soundcloud.com/artist/sets/test-album";
+
+    it("shows the detected label for the current URL and always sends a null hint", async () => {
+      let call = 0;
+      const fetchMock = okHealthHandler(() =>
+        Promise.resolve(
+          jsonResponse(
+            call++ === 0
+              ? singleResult
+              : { ...collectionResult, original_url: soundcloudUrl },
+          ),
+        ),
+      );
+      const { user } = await renderNewDownload();
+
+      expect(platformSelect()).toHaveDisplayValue("Auto Select");
+      await fillAndSubmit(user, singleResult.original_url);
+      await screen.findByText("Test Video");
+      expect(platformSelect().value).toBe("auto");
+      expect(platformSelect()).toHaveDisplayValue("Auto Select — YouTube");
+      expect(platformSelect().selectedOptions[0].value).toBe("auto");
+      // Canonical manual options stay intact.
+      expect(Array.from(platformSelect().options).map((o) => o.text).slice(1)).toEqual([
+        "YouTube", "YouTube Music", "SoundCloud", "Bandcamp", "Vimeo", "Twitch",
+        "TikTok", "Instagram", "X / Twitter", "Reddit", "Other",
+      ]);
+
+      await user.clear(screen.getByLabelText("URL"));
+      await fillAndSubmit(user, soundcloudUrl);
+      await screen.findByText("Test Album");
+      expect(platformSelect().value).toBe("auto");
+      expect(platformSelect()).toHaveDisplayValue("Auto Select — SoundCloud");
+
+      expect(analysisBodies(fetchMock)).toEqual<AnalyzeRequest[]>([
+        { url: singleResult.original_url, platform_hint: null },
+        { url: soundcloudUrl, platform_hint: null },
+      ]);
+    });
+
+    it("drops the detected label when the input changes", async () => {
+      okHealthHandler(() => Promise.resolve(jsonResponse(singleResult)));
+      const { user } = await renderNewDownload();
+
+      await fillAndSubmit(user, singleResult.original_url);
+      await screen.findByText("Test Video");
+      expect(platformSelect()).toHaveDisplayValue("Auto Select — YouTube");
+
+      await user.type(screen.getByLabelText("URL"), "x");
+      expect(platformSelect()).toHaveDisplayValue("Auto Select");
+      expect(platformSelect().value).toBe("auto");
+
+      // Restoring the analyzed URL matches the current result again.
+      await user.type(screen.getByLabelText("URL"), "{Backspace}");
+      expect(platformSelect()).toHaveDisplayValue("Auto Select — YouTube");
+    });
+
+    it("shows no detected label while pending or after a failed analysis", async () => {
+      const pending = deferred<Response>();
+      let call = 0;
+      okHealthHandler(() => {
+        call += 1;
+        if (call === 1) return Promise.resolve(jsonResponse(singleResult));
+        if (call === 2) return pending.promise;
+        return Promise.resolve(
+          jsonResponse(
+            { error: { code: "unsupported_url", message: "Not supported.", retryable: false, analysis_id: null } },
+            422,
+          ),
+        );
+      });
+      const { user } = await renderNewDownload();
+
+      await fillAndSubmit(user, singleResult.original_url);
+      await screen.findByText("Test Video");
+      expect(platformSelect()).toHaveDisplayValue("Auto Select — YouTube");
+
+      // Resubmit the exact same URL while the detected label is shown.
+      await user.click(screen.getByRole("button", { name: "Analyze" }));
+      expect(screen.getByRole("button", { name: "Analyzing…" })).toBeDisabled();
+      expect(screen.getByLabelText("URL")).toHaveValue(singleResult.original_url);
+      expect(platformSelect()).toHaveDisplayValue("Auto Select");
+      expect(platformSelect().value).toBe("auto");
+
+      await act(async () => pending.resolve(
+        jsonResponse(
+          { error: { code: "unsupported_url", message: "Not supported.", retryable: false, analysis_id: null } },
+          422,
+        ),
+      ));
+      await screen.findByRole("alert");
+      expect(platformSelect()).toHaveDisplayValue("Auto Select");
+      expect(platformSelect().value).toBe("auto");
+    });
+
+    it("keeps an explicit manual platform manual and sends its hint", async () => {
+      const fetchMock = okHealthHandler(() =>
+        Promise.resolve(jsonResponse({ ...singleResult, platform_hint: "youtube" })),
+      );
+      const { user } = await renderNewDownload();
+
+      await user.selectOptions(platformSelect(), "youtube");
+      await fillAndSubmit(user, singleResult.original_url);
+      await screen.findByText("Test Video");
+
+      expect(platformSelect().value).toBe("youtube");
+      expect(platformSelect()).toHaveDisplayValue("YouTube");
+      expect(platformSelect().options[0].text).toBe("Auto Select");
+      expect(analysisBodies(fetchMock)).toEqual<AnalyzeRequest[]>([
+        { url: singleResult.original_url, platform_hint: "youtube" },
+      ]);
+    });
   });
 
   it("shows concise application-level video choices without stream details", async () => {
