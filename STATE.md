@@ -19,7 +19,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - M6.5 metin etiketi Compose PASS: Opus/MP3 etiket 2/2, MP3 oynatma, WAV 2/2 uyarısız, Shorts 2/2 oynatma/sıra, ses iptal 1/2 → Retry 2/2 kopyasız. ARCH §14 probe başlığı notu should-fix.
 - Accepted (M6.5-T2): düşen/yinelenen TXXX değişmeden reddedilebilir (ID3v2.4 dahil). Should-fix: seek hata ayrıntısı ve ses-önce çoklanmış Ogg testi.
 - Toplu UI Compose smoke (28 Kasım) kullanıcı PASS 4/4: gezinme/F5 ve Load more; Details/History Retry ve Cancel; Private öğe seçilemiyor, Select All ve sayaç dışında; ağ hatalı playlist öğesinde Queue detayı ve New Download'da yalnız anlaşılır hata mesajı.
-- Bekleyen toplu UI Compose smoke (M6-LastSelection): yeni analiz/F5 sonrası geçerli kalite ve çıktı tercihleri, uyumsuz kaynakta varsayılan, URL/taslak geri gelmez; should-fix: aynı sayfada tekrarlanan analiz kimliğiyle tekil MP3 geçiş testi.
+- M6-LastSelection kullanıcı Compose PASS 3/3: F5 sonrası URL/taslak boş, yeniden analizde 720p ve MP4 geri geldi, ses kaynağında varsayılan kullanıldı. Should-fix: aynı sayfada tekrarlanan analiz kimliğiyle tekil MP3 geçiş testi.
 - Kullanıcı Compose PASS: Q2 Retry kaldığı yerden tamamlandı; Q3-ACT Activity/Library ve F5 sonrası geçmiş korundu. M6.5-UI-AutoPlatform (28 Kasım) PASS: YouTube → SoundCloud → YouTube etiketleri doğru; SoundCloud parçası indirildi.
 ## Açık kararlar
 - M6.6 güvenilir albüm grubu/ön hazırlık ve çoklu album_artists klasör değeri; M6.7 cover.jpg seçimi açık.
