@@ -157,6 +157,7 @@ must-fix ile accepted-risk sınırı netleşir.
   Accepted-risk örnekleri, bulgu must-fix ölçütlerinden hiçbirine girmiyorsa geçerlidir.
 - Reviewer her must-fix için tek cümleyle "tek kullanıcılı homelab için neden gerekli"
   gerekçesi yazar.
+- Commit engeli için somut tetikleyici şartı: `AGENTS.md` → Proportionality, "Review" maddesi.
 - Lead bir accepted-risk'i gerekçe göstermeden must-fix'e yükseltemez. Reviewer ile lead
   anlaşamazsa karar kullanıcıya sade Türkçe ile sorulur.
 - Güvenlik veya veri bütünlüğünde şüphe varsa bulgu must-fix'tir; bu netleştirme o konuları

@@ -42,8 +42,10 @@ then `/devam-claude`; back with `/normal-mod`). Rules in `docs/WORKFLOW.md`.
 
 - Threat model: a single owner on a private homelab, reached over Tailscale, with occasional access by a few trusted friends. There is no public exposure and no login.
 - Match rigor to real impact. Low-likelihood, low-impact issues under this model are recorded as accepted risks (one line in `STATE.md`), not fixed with new machinery.
-- Data loss, silent corruption, path escape and destructive filesystem behaviour still get full rigor.
+- Full rigor for data loss, silent corruption, path escape and destructive filesystem behaviour means: the application must not damage user files through its own bugs, wrong paths or bad input (URLs, metadata, file names from sources).
+- Out of scope as attackers: anyone with shell access to the host or container, write access to mounted folders (staging, Library, Plex), or the ability to race the application's own filesystem operations (TOCTOU swaps, symlink planting). Such a person can already change or delete those files directly. Findings that require them are recorded as accepted risks, not fixed.
 - When a decision is needed from the user, ask in plain Turkish, list the options, and recommend the simplest one that works.
+- Review: a finding blocks a commit only if it states a concrete trigger under the threat model: who or what causes it (the owner's normal use, a source/URL, a restart, a crash, a full disk). Without a realistic trigger it is a should-fix or an accepted risk.
 
 ## Deployment intent
 

@@ -11,7 +11,8 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - Bulgu 3a kapandı: Fedora Compose ffprobe 7.1.5; tekil 720p, dikey 1080p; ağ hatalı öğe Retry ile indi (4/4), sıra korundu. Hedefli 817 PASS/1 SKIP, Ruff/mypy ve review temiz; göreli girdi testi should-fix.
 - Q3b-2 ve 3c Already exists v0.1 sonrası; güvenli numara ve çözünürlük eki kalır. Aday ve açık review bulguları `wip/already-exists` dalında.
 - M6-Q20 kapandı: Compose seçici/Ses PASS, Shorts 4/4, 1080×1920 doğrulandı; tavan dışı yedek otomatik PASS, uygun canlı kaynak yok, kullanıcı kapanışı onayladı. Katalog eşleşmesi (§16) gerekirse önce koleksiyonlarda.
-- Main'e birleştirme kullanıcı yetkisi bekliyor; ardından M7 yazılabilirlik probu. Compose Q3 UI PASS: 18/20 önizleme, varsayılan ve iptaller dahil silme, restart sonrası eski önizleme reddi, Library katalog kaydı; düğme geometrisi ve oynatma denenmedi.
+- Q3 `main`'de; deneysel dal M7'yi engellemiyor. Compose Q3 UI PASS: 18/20 önizleme, varsayılan ve iptaller dahil silme, restart sonrası eski önizleme reddi, Library katalog kaydı; düğme geometrisi ve oynatma denenmedi.
+- M7-StartupProbe: probe temizlik bulgusu Proportionality ile accepted (Bilinen riskler). Hedefli test, review ve Compose smoke bekliyor. S1 API/Ayarlar ve uyarı bandı ayrı iş.
 - M7 sonrası v0.1: M6.7 yeni ses parçalarına gömülü kaynak görseli (ARCH §59); henüz başlanmadı.
 - M6.5-T2/T3 Fedora Compose PASS (Mutagen 1.48.1, MP3 etiket ve WAV); T3 hedefli 791 test/Ruff/mypy ve review PASS.
 - M6.5 metin etiketi Compose PASS: Opus/MP3 etiket 2/2, MP3 oynatma, WAV 2/2 uyarısız, Shorts 2/2 oynatma/sıra, ses iptal 1/2 → Retry 2/2 kopyasız. ARCH §14 probe başlığı notu should-fix.
@@ -75,4 +76,5 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - Accepted: Delete File stat/unlink penceresi, bazı terminal parent retryable alanları,
   ertelenmiş cancel 404/event temizliği; Elisa M4A sorunu oynatıcıya özgü.
 - Accepted: HTTP5s iptali, Compose30s ve migration stop kurtarma sınırı. Q3 §59: sistemik SQLite COMMIT hatasında taze okuma yok, 500 dönülür ve sonraki işler korunur; kayıt kaldıysa Retry baştan başlayabilir. DB düzelince yeni Clear önizlemesi; kod işi yeniden açılmaz.
+- Accepted (M7-StartupProbe): probe stat→unlink penceresinde yabancı dosya silinebilir; attacker already has write access; random probe name, deleted immediately.
 - Starlette httpx→httpx2 deprecation uyarısı: şimdi iş değil, bağımlılık bakımında ele alınacak.
