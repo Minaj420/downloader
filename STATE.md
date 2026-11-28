@@ -14,7 +14,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - Bulgu 3a kapandı: Fedora Compose ffprobe 7.1.5; tekil 720p, dikey 1080p; ağ hatalı öğe Retry ile indi (4/4), sıra korundu. Hedefli 817 PASS/1 SKIP, Ruff/mypy ve review temiz; göreli girdi testi should-fix.
 - Q3b-2 ve 3c Already exists v0.1 sonrası; güvenli numara ve çözünürlük eki kalır. Aday ve açık review bulguları `wip/already-exists` dalında.
 - M6-Q20 kapandı: Compose seçici/Ses PASS, Shorts 4/4, 1080×1920 doğrulandı; tavan dışı yedek otomatik PASS, uygun canlı kaynak yok, kullanıcı kapanışı onayladı. Katalog eşleşmesi (§16) gerekirse önce koleksiyonlarda.
-- Toplu Compose UI smoke bekliyor: M6-Q3-UI Clear History (varsayılan iptalleri korur, sunucu sayısı ve tek onay, sonuç/hata sonrası sunucudan yenileme). Kullanıcı smoke sonucu sonrası M6 kapanış gate'leri.
+- Sıradaki: M6 tam kapanış gate'ini yeniden çalıştır; koleksiyon seçim testleri onaylı format hatırlamayla eşlendi. Kullanıcı Compose Q3 UI: 18/20 önizleme, varsayılan/iptalli silme, eski önizleme reddi ve Library kaydı PASS; düğme geometrisi ve medya oynatma denenmedi.
 - M6.5-T2/T3 Fedora Compose PASS (Mutagen 1.48.1, MP3 etiket ve WAV); T3 hedefli 791 test/Ruff/mypy ve review PASS.
 - M6.5 metin etiketi Compose PASS: Opus/MP3 etiket 2/2, MP3 oynatma, WAV 2/2 uyarısız, Shorts 2/2 oynatma/sıra, ses iptal 1/2 → Retry 2/2 kopyasız. ARCH §14 probe başlığı notu should-fix.
 - Accepted (M6.5-T2): düşen/yinelenen TXXX değişmeden reddedilebilir (ID3v2.4 dahil). Should-fix: seek hata ayrıntısı ve ses-önce çoklanmış Ogg testi.
@@ -55,7 +55,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - 2026-11-17 kullanıcı Fedora Compose Q18 PASS: single/collection5.5s, idle0.8s, Exit0/OOMfalse, exec doğrulandı.
 - Mix4 sabit seçim/completed korundu, auto-resume yok, Retry46→48; MKV VP9/Opus200s tam decode kullanıcı PASS.
 - Host RPM Fusion FFmpeg smoke 23 PASS/0 SKIP; container libx264 ayrıca görüldü. Sonraki skip'i bildir.
-- 2026-11-28 macOS M6.5 full gate PASS: backend Ruff/mypy/pytest 3132 geçti, 29 atlandı, 4 uyarı; frontend lint/typecheck/321 test/build/kontrast 20 PASS. macOS Bash 3.2 smoke betiğiyle uyumsuz.
+- 2026-11-28 macOS M6 full gate FAIL: backend Ruff/mypy PASS, pytest 3335 geçti/30 atlandı/4 uyarı (Linux mountinfo ve eksik Vorbis/Theora); frontend 368 geçti/2 başarısız, lint/typecheck/build/kontrast 20 PASS. macOS Bash 3.2 smoke betiğiyle uyumsuz.
 ## Bilinen riskler
 - Accepted: YouTube'da aynı gerçek başlık ve eksik availability yanlışlıkla elenebilir. Queue Retry hatası yüzey kaybolunca tekrar seslendirilebilir.
 - Accepted: smoke idle kontrolü atomik değil; testte başka iş başlatılmaz; kullanıcı ağ/restart kurtarma PASS.

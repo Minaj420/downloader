@@ -436,6 +436,12 @@ function createBody(request: FetchCall | undefined): Record<string, unknown> {
   return JSON.parse(String(request?.[1]?.body)) as Record<string, unknown>;
 }
 
+// Last selection lives in jsdom localStorage, shared by every test in this
+// file: start each test from an empty store so persisted choices never leak.
+beforeEach(() => {
+  window.localStorage.clear();
+});
+
 describe("CollectionSelection", () => {
   it("renders the analyzed snapshot in source order with stable ids, raw gaps and reasons", async () => {
     collectionFlowHandler();
@@ -947,9 +953,9 @@ describe("CollectionSelection", () => {
     it.each([
       ["a different", secondAnalysis],
       ["the same", analysis],
-    ])("resets mode and output on a new analysis with %s analysis id", async (_label, next) => {
+    ])("resets mode on a new analysis with %s analysis id and restores the persisted FLAC on re-selecting Audio", async (_label, next) => {
       let calls = 0;
-      collectionFlowHandler({
+      const fetchMock = collectionFlowHandler({
         analysis: () =>
           Promise.resolve(jsonResponse(++calls === 1 ? analysis : next)),
       });
@@ -961,10 +967,24 @@ describe("CollectionSelection", () => {
       await user.click(screen.getByRole("button", { name: "Analyze" }));
       // The stale Audio mode is still checked until the new analysis lands.
       await waitFor(() => expect(screen.getByRole("radio", { name: "Audio" })).not.toBeChecked());
+      // Mode and draft are reset: no mode, so no Output format until Audio is chosen again.
+      expect(screen.getByRole("radio", { name: "Video" })).not.toBeChecked();
       expect(screen.queryByRole("group", { name: "Output format" })).not.toBeInTheDocument();
+
+      // Re-selecting Audio applies the persisted last choice (FLAC), not Original.
       await user.click(screen.getByRole("radio", { name: "Audio" }));
-      expect(outputRadio("Original / Best Available")).toBeChecked();
-      expect(outputRadio("FLAC")).not.toBeChecked();
+      expect(outputRadio("FLAC")).toBeChecked();
+      expect(outputRadio("Original / Best Available")).not.toBeChecked();
+
+      // The restored choice is what actually gets posted.
+      await user.click(screen.getByRole("button", { name: "Download" }));
+      await screen.findByText("Queued");
+      expect(createRequests(fetchMock)).toHaveLength(1);
+      expect(createBody(createRequests(fetchMock)[0])).toMatchObject({
+        analysis_id: next.analysis_id,
+        collection_mode: "audio",
+        output_profile: "flac",
+      });
     });
 
     it("disables the output radios while create is pending", async () => {
