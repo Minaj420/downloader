@@ -25,6 +25,7 @@ a ``media_files`` row.
 
 import asyncio
 import errno
+import logging
 import os
 import secrets
 import shutil
@@ -33,7 +34,7 @@ from collections.abc import Callable, Sequence
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, BinaryIO
+from typing import Any, BinaryIO, NoReturn
 
 from app.domain.library import MediaStorageType
 from app.utils.filenames import (
@@ -42,6 +43,8 @@ from app.utils.filenames import (
     sanitize_path_segment,
 )
 from app.utils.paths import ensure_within_root
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -87,6 +90,18 @@ class StorageDeleteFailedError(Exception):
 
 class MediaFileTargetChangedError(Exception):
     """The final entry changed between preparation and deletion."""
+
+
+class StagingRootVerificationError(Exception):
+    """The staging root does not match its startup snapshot (Q3, fail closed).
+
+    ``reason`` is one of ``snapshot_missing``, ``replay_failed`` or
+    ``identity_changed``. The message is fixed and never carries a path.
+    """
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(f"staging root verification failed: {reason}")
+        self.reason = reason
 
 
 def _component_open_error(component: str, exc: OSError) -> Exception:
@@ -352,6 +367,9 @@ class StorageService:
         self._plex_music_root = plex_music_root
         self._plex_video_root = plex_video_root
         self._delete_roots: dict[str, _DeleteRoot] = {}
+        # Startup staging-root snapshot for the Q3 Clear History check;
+        # ``None`` until initialize_staging_root() captured it.
+        self._staging_snapshot: _DeleteRoot | None = None
 
     @property
     def library_root(self) -> Path:
@@ -1260,6 +1278,77 @@ class StorageService:
                 resolved, steps, (root_stat.st_dev, root_stat.st_ino)
             )
         self._delete_roots = roots
+
+    def initialize_staging_root(self) -> None:
+        """Capture the staging root's identity once, after ``ensure_layout``.
+
+        Same pattern as the App Library delete root: the alias-aware lexical
+        walk (``_capture_root_descriptor``) plus ``(st_dev, st_ino)``. The
+        staging root is mandatory: any capture failure raises its typed
+        storage error so startup fails closed. No descriptor is cached and
+        nothing is created, moved or removed here. Only the Q3 Clear History
+        check (``verify_staging_root_for_clear_history``) uses this snapshot;
+        existing staging producers and cleanup are unchanged.
+        """
+        self._staging_snapshot = None
+        resolved = self._staging_root.resolve()
+        fd, steps = self._capture_root_descriptor(self._staging_root, resolved)
+        try:
+            root_stat = os.fstat(fd)
+        except OSError as exc:
+            raise StorageDeleteFailedError(str(exc)) from exc
+        finally:
+            os.close(fd)
+        self._staging_snapshot = _DeleteRoot(
+            resolved, steps, (root_stat.st_dev, root_stat.st_ino)
+        )
+
+    def verify_staging_root_for_clear_history(self) -> None:
+        """Read-only Q3 check: the staging root still is the startup root.
+
+        Replays the startup snapshot from ``/`` with the existing no-follow,
+        alias-aware walker and compares the reached root's ``(st_dev,
+        st_ino)`` with the captured identity on every call; nothing is
+        re-resolved or re-captured. A missing snapshot, a failed replay
+        (vanished component, new symlink, changed startup alias) or a
+        different identity raises ``StagingRootVerificationError`` with a
+        fixed reason and logs only that reason (no path). The single root
+        descriptor exists only for this check and is always closed. This
+        method never mutates the filesystem.
+        """
+        snapshot = self._staging_snapshot
+        if snapshot is None:
+            self._reject_staging_root("snapshot_missing")
+        try:
+            fd = self._open_root_descriptor(snapshot.steps)
+        except (
+            StorageTargetError, StoragePathError, StorageDeleteFailedError, OSError,
+        ) as exc:
+            self._reject_staging_root("replay_failed", exc)
+        try:
+            root_stat = os.fstat(fd)
+        except OSError as exc:
+            self._reject_staging_root("replay_failed", exc)
+        finally:
+            os.close(fd)
+        if (root_stat.st_dev, root_stat.st_ino) != snapshot.identity:
+            self._reject_staging_root("identity_changed")
+
+    @staticmethod
+    def _reject_staging_root(
+        reason: str, cause: BaseException | None = None
+    ) -> NoReturn:
+        """Log a path-free reason (class/errno only) and raise the typed error."""
+        if cause is None:
+            logger.warning("Clear History staging root check failed: %s", reason)
+        else:
+            logger.warning(
+                "Clear History staging root check failed: %s (%s, errno=%s)",
+                reason,
+                type(cause).__name__,
+                getattr(cause, "errno", None),
+            )
+        raise StagingRootVerificationError(reason) from cause
 
     def _capture_root_descriptor(
         self, root: Path, resolved: Path

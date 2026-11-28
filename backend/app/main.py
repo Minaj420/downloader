@@ -79,6 +79,9 @@ def create_app(settings: Settings | None = None, analyzer: URLAnalyzer | None = 
         # before migrations/queue start: deletions trust only these
         # roots, fail-closed against anything captured later.
         storage.initialize_delete_roots()
+        # Mandatory staging-root snapshot for the Q3 Clear History check;
+        # a capture failure fails startup closed, before migrations/queue.
+        storage.initialize_staging_root()
         run_migrations(resolved_settings.sync_database_url)
         await queue_manager.start()
         try:
