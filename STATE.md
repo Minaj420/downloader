@@ -17,10 +17,10 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - M6.5-T2/T3 Fedora Compose PASS (Mutagen 1.48.1, MP3 etiket ve WAV); T3 hedefli 791 test/Ruff/mypy ve review PASS.
 - M6.5 metin etiketi kapandı: Compose Opus/MP3 etiket 2/2, MP3 oynatma, WAV 2/2 uyarısız, Shorts 2/2 oynatma/sıra, ses iptal 1/2 → Retry 2/2 kopyasız. Bu kapsamda plansız v0.1 zorunluluğu yok; M6.5 sunum UI/hata metinleri ayrı açık. ARCH §14 probe başlığı notu should-fix.
 - Accepted (M6.5-T2): düşen/yinelenen TXXX değişmeden reddedilebilir (ID3v2.4 dahil). Should-fix: seek hata ayrıntısı ve ses-önce çoklanmış Ogg testi.
-- Toplu UI Compose smoke: gezinme/F5, Load more. Sırada Auto Select açıkken herkese açık SoundCloud parçasıyla platformlar arası geçiş.
+- Toplu UI Compose smoke: gezinme/F5, Load more.
 - Smoke (M6.5-UI-Retry): Details ve History'de uygun Retry, ortak pending/çift tık, hatanın başlatıldığı yerde görünmesi ve başarıda Active'e geçiş; uygun Cancel.
 - Smoke: Private playlist öğesi devre dışı, Select All ve sayaç dışında; restart/ağ hatalı çocukta Queue detayında ve New Download'da yalnız kullanıcı mesajı.
-- Kullanıcı Compose PASS: Q2 Retry kaldığı yerden tamamlandı; Q3-ACT Activity/Library ve F5 sonrası geçmiş korundu. Auto Select (28 Kasım): YouTube etiketi PASS; rastgele Vimeo URL'si analiz edilemedi, etiket düz Auto Select kaldı; neden doğrulanmadı.
+- Kullanıcı Compose PASS: Q2 Retry kaldığı yerden tamamlandı; Q3-ACT Activity/Library ve F5 sonrası geçmiş korundu. M6.5-UI-AutoPlatform (28 Kasım) PASS: YouTube → SoundCloud → YouTube etiketleri doğru; SoundCloud parçası indirildi.
 ## Açık kararlar
 - M6.6 güvenilir albüm grubu/ön hazırlık ve çoklu album_artists klasör değeri; M6.7 cover.jpg seçimi açık.
 - M6.9 yalnız seçim ekranından kullanıcı isterse; MB/CAA aday, hak/API/embed koşulları o işte netleşecek.
