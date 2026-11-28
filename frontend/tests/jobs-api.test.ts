@@ -2,7 +2,10 @@ import { ApiRequestError } from "../src/api/client";
 import {
   canRetryJob,
   cancelJob,
+  CLEAR_PREVIEW_EXPIRED,
+  confirmClearHistory,
   getJob,
+  previewClearHistory,
   listActiveJobs,
   listHistoryJobs,
   retryJob,
@@ -177,6 +180,58 @@ describe("existing job calls", () => {
     await retryJob("j2");
     expect(retryFetch.mock.calls[0][0]).toBe("/api/v1/jobs/j2/retry");
     expect(retryFetch.mock.calls[0][1]?.method).toBe("POST");
+  });
+});
+
+describe("Clear History calls", () => {
+  const sent = (fetchMock: ReturnType<typeof stubFetch>) => {
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [path, init] = fetchMock.mock.calls[0];
+    return { path, method: init?.method, body: String(init?.body) };
+  };
+
+  it.each([false, true])("previews with the exact include_cancelled=%s boolean only", async (flag) => {
+    const fetchMock = stubFetch({ preview_id: "opaque-1", job_count: 4 });
+
+    const preview = await previewClearHistory(flag);
+
+    expect(sent(fetchMock)).toEqual({
+      path: "/api/v1/jobs/clear-history/preview",
+      method: "POST",
+      body: JSON.stringify({ include_cancelled: flag }),
+    });
+    expect(preview).toEqual({ preview_id: "opaque-1", job_count: 4 });
+  });
+
+  it("confirms with only the opaque preview_id, passed through unchanged", async () => {
+    const token = "ab-_=+/ &?#%é";
+    const fetchMock = stubFetch({ deleted_count: 2, failed_count: 1 });
+
+    const result = await confirmClearHistory(token);
+
+    expect(sent(fetchMock)).toEqual({
+      path: "/api/v1/jobs/clear-history/confirm",
+      method: "POST",
+      body: JSON.stringify({ preview_id: token }),
+    });
+    expect(result).toEqual({ deleted_count: 2, failed_count: 1 });
+  });
+
+  it("keeps the 409 expiry code distinct", async () => {
+    stubFetch({
+      error: {
+        code: "clear_preview_expired",
+        message: "This Clear History preview has expired. Preview again.",
+        retryable: false,
+        job_id: null,
+      },
+    }, 409);
+
+    const error = await confirmClearHistory("gone").catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ApiRequestError);
+    expect((error as ApiRequestError).status).toBe(409);
+    expect((error as ApiRequestError).code).toBe(CLEAR_PREVIEW_EXPIRED);
   });
 });
 

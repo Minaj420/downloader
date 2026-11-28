@@ -5,7 +5,10 @@ import { QueueJobRow } from "../features/queue/QueueJobRow";
 import { findJob, newestSnapshot, QUEUE_STATUS_LABELS } from "../features/queue/queueState";
 import {
   findDetail,
+  jobsLabel,
   useQueue,
+  type ClearHistoryPhase,
+  type ClearHistoryView,
   type QueueController,
   type QueueDetail,
   type QueueView,
@@ -112,6 +115,108 @@ function JobDetail({
   );
 }
 
+/**
+ * Clear History: one preview (server `job_count` only) and one inline
+ * explicit confirm. Clear phases change only through the user's own actions
+ * and their responses, so focus moves only when it is inside this group (or
+ * lost to the body): to "Keep history" when an attempt starts, back to the
+ * trigger when it ends.
+ */
+function ClearHistory({ clear, controller }: { clear: ClearHistoryView; controller: QueueController }) {
+  const groupRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const keepRef = useRef<HTMLButtonElement>(null);
+  const previous = useRef<ClearHistoryPhase>(clear.phase);
+  const { phase, jobCount, message } = clear;
+  const locked = phase !== "idle";
+
+  useEffect(() => {
+    const before = previous.current;
+    previous.current = phase;
+    if (before === phase) return;
+    const active = document.activeElement;
+    const ours = active == null || active === document.body || groupRef.current?.contains(active) === true;
+    if (!ours) return;
+    if (before === "idle") keepRef.current?.focus();
+    else if (phase === "idle") triggerRef.current?.focus();
+  }, [phase]);
+
+  // The count shown is the one bound to the current preview token.
+  const count = phase === "ready" || phase === "confirming" ? jobCount : null;
+  // One persistent live region: waiting text, then the server count, then a
+  // non-error result, updated in place (never inserted per phase).
+  const statusText = phase === "previewing"
+    ? "Counting history jobs…"
+    : count != null
+      ? `Clear History will delete ${jobsLabel(count)}. This cannot be undone.`
+      : message?.kind === "status" ? message.text : "";
+  const error = message?.kind === "error" ? message : null;
+  return (
+    <div ref={groupRef} role="group" aria-label="Clear History">
+      <label className="format-option">
+        <input
+          type="checkbox"
+          checked={clear.includeCancelled}
+          disabled={locked}
+          onChange={(event) => controller.setClearIncludeCancelled(event.target.checked)}
+        />
+        Include cancelled jobs
+      </label>
+      {/* First action row: fixed texts only, so "Keep history" (one DOM
+          button from pending to result) never moves when the response
+          arrives; variable content and Delete come below it. */}
+      <div className="form-actions">
+        <button
+          ref={triggerRef}
+          type="button"
+          className="button-secondary"
+          onClick={() => controller.startClearHistory()}
+          disabled={locked}
+        >
+          Clear History
+        </button>
+        {locked && (
+          <button
+            ref={keepRef}
+            type="button"
+            className="button-secondary"
+            onClick={() => controller.dismissClearHistory()}
+            disabled={phase === "confirming"}
+          >
+            Keep history
+          </button>
+        )}
+      </div>
+      <p className="job-result" role="status" id="queue-clear-summary">{statusText}</p>
+      {count != null && (
+        <div className="form-actions">
+          <button
+            type="button"
+            className="button-danger"
+            aria-describedby="queue-clear-summary"
+            onClick={() => controller.confirmClearHistory()}
+            disabled={phase === "confirming"}
+          >
+            {phase === "confirming" ? "Deleting…" : `Delete ${jobsLabel(count)}`}
+          </button>
+        </div>
+      )}
+      {error && <p className="job-result job-error" role="alert">{error.text}</p>}
+      {error?.refresh === true && (
+        <div className="form-actions">
+          <button
+            type="button"
+            className="button-secondary"
+            onClick={() => controller.requestReconcile("reset")}
+          >
+            Refresh queue
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Focus is only moved after the user's own Retry inside an inline panel,
 // never on background updates.
 type FocusRequest = { kind: "panel"; id: string };
@@ -208,6 +313,7 @@ export function QueuePage() {
 
       <section className="queue-section" aria-label="History">
         <h2>History</h2>
+        <ClearHistory clear={view.clear} controller={controller} />
         {lists.history.length > 0
           ? (
             <JobRows

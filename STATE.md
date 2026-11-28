@@ -14,7 +14,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - Bulgu 3a kapandı: Fedora Compose ffprobe 7.1.5; tekil 720p, dikey 1080p; ağ hatalı öğe Retry ile indi (4/4), sıra korundu. Hedefli 817 PASS/1 SKIP, Ruff/mypy ve review temiz; göreli girdi testi should-fix.
 - Q3b-2 ve 3c Already exists v0.1 sonrası; güvenli numara ve çözünürlük eki kalır. Aday ve açık review bulguları `wip/already-exists` dalında.
 - M6-Q20 kapandı: Compose seçici/Ses PASS, Shorts 4/4, 1080×1920 doğrulandı; tavan dışı yedek otomatik PASS, uygun canlı kaynak yok, kullanıcı kapanışı onayladı. Katalog eşleşmesi (§16) gerekirse önce koleksiyonlarda.
-- M6 kapanış sırası: (1) macOS Docker Desktop Linux VM + named volume ile API Compose smoke (komutlar önce gösterilir, host bind yok); (2) PASS sonrası Clear History UI önizleme sayısı/onay (koddan önce plan); (3) Compose UI smoke ve M6 kapanış gate'leri.
+- Toplu Compose UI smoke bekliyor: M6-Q3-UI Clear History (varsayılan iptalleri korur, sunucu sayısı ve tek onay, sonuç/hata sonrası sunucudan yenileme). Kullanıcı smoke sonucu sonrası M6 kapanış gate'leri.
 - M6.5-T2/T3 Fedora Compose PASS (Mutagen 1.48.1, MP3 etiket ve WAV); T3 hedefli 791 test/Ruff/mypy ve review PASS.
 - M6.5 metin etiketi Compose PASS: Opus/MP3 etiket 2/2, MP3 oynatma, WAV 2/2 uyarısız, Shorts 2/2 oynatma/sıra, ses iptal 1/2 → Retry 2/2 kopyasız. ARCH §14 probe başlığı notu should-fix.
 - Accepted (M6.5-T2): düşen/yinelenen TXXX değişmeden reddedilebilir (ID3v2.4 dahil). Should-fix: seek hata ayrıntısı ve ses-önce çoklanmış Ogg testi.
@@ -48,7 +48,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - Canlı slash yüklenmesi ve tüm ask/deny/yol dışı izin sınırları doğrulanmış değil.
 - Teknik takip: non-root UID/GID→M7/S1 ayrı Opus işi; yt-dlp sabitleme, Python3.12 CI.
 ## Son gate
-- 2026-11-28 macOS Docker Desktop/Linux VM Q3 Storage smoke 3/3 PASS (harf duyarlı test bind'leri). API smoke henüz yok; named volume sonucu homelab'ı doğrulamaz; fail-closed koruma güvenli kurulumda yanlış ret verebilir.
+- 2026-11-28 macOS Docker Desktop/Linux VM Q3 smoke: Storage 3/3 PASS (harf duyarlı test bind'leri), API 3/3 PASS (named volume, host bind yok; kullanıcı sonucu). Homelab doğrulanmadı; fail-closed koruma desteklenen kurulumda yanlış ret verebilir.
 - 2026-11-19 kullanıcı Fedora Compose runtime6 PASS: Deno2.9.8/yt-dlp2026.10.26/EJS0.8.0 algılandı; UI video PASS.
 - Network script/Q19 son tek-satır/tekrarsız/detail≤500 PASS; eski audio restart BLOCKED sonucu aşıldı.
 - 2026-11-20 kullanıcı Compose video/Original restart PASS20s: failed, Exit0/OOMyok, shutdown, retryable, recovery.

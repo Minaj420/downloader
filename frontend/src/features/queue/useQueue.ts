@@ -5,10 +5,13 @@ import { subscribeToJobUpdates, type Unsubscribe } from "../../api/events";
 import {
   cancelJob,
   canRetryJob,
+  CLEAR_PREVIEW_EXPIRED,
+  confirmClearHistory,
   getJob,
   isActiveJob,
   listActiveJobs,
   listHistoryJobs,
+  previewClearHistory,
   retryJob,
   type Job,
 } from "../../api/jobs";
@@ -53,7 +56,44 @@ export interface QueueDetail {
   activityStatus: ActivityLoadStatus;
 }
 
+/**
+ * Clear History (PRODUCT_SPEC §17, ARCHITECTURE §59 Q3): one preview, one
+ * explicit confirm. `jobCount` is the server `job_count` of the current
+ * preview (ready/confirming only); no records or byte estimates exist here.
+ */
+export type ClearHistoryPhase = "idle" | "previewing" | "ready" | "confirming";
+
+export interface ClearHistoryMessage {
+  kind: "status" | "error";
+  text: string;
+  /**
+   * Unknown confirm outcome (not a proven expiry): the page offers a manual
+   * Refresh queue that only runs the existing reset; never a preview/confirm.
+   */
+  refresh?: boolean;
+}
+
+export interface ClearHistoryView {
+  includeCancelled: boolean;
+  phase: ClearHistoryPhase;
+  jobCount: number | null;
+  message: ClearHistoryMessage | null;
+}
+
+export const INITIAL_CLEAR_HISTORY: ClearHistoryView = {
+  includeCancelled: false,
+  phase: "idle",
+  jobCount: null,
+  message: null,
+};
+
+export function jobsLabel(count: number): string {
+  return `${count} ${count === 1 ? "job" : "jobs"}`;
+}
+
 export interface QueueView {
+  /** Clear History state; reset on every controller start. */
+  clear: ClearHistoryView;
   lists: QueueLists;
   listStatus: QueueListStatus;
   listError: string | null;
@@ -74,6 +114,7 @@ export interface QueueView {
 }
 
 export const INITIAL_QUEUE_VIEW: QueueView = {
+  clear: INITIAL_CLEAR_HISTORY,
   lists: EMPTY_QUEUE_LISTS,
   listStatus: "loading",
   listError: null,
@@ -104,6 +145,24 @@ const ACTION_ERRORS: Record<QueueAction, string> = {
   cancel: "Could not cancel the download. Check your connection and try again.",
   retry: "Could not retry the download. Check your connection and try again.",
 };
+
+const CLEAR_PREVIEW_ERROR = "Could not preview Clear History. Try again.";
+const CLEAR_NOTHING = "There are no history jobs to clear.";
+const CLEAR_EXPIRED = "This preview has expired. Preview Clear History again.";
+// The outcome is unknown: never claim that nothing was deleted or that the
+// list refresh succeeded.
+const CLEAR_FAILED = "Clear History could not finish. Check the list and preview again.";
+
+/**
+ * One Clear History attempt: the displayed server count and the opaque token
+ * of the same preview live together. A continuation is current only for its
+ * own attempt object; `previewId` is consumed (nulled) before the confirm
+ * request, so it is sent at most once.
+ */
+interface ClearAttempt {
+  previewId: string | null;
+  jobCount: number | null;
+}
 
 function isNotFound(error: unknown): boolean {
   return error instanceof ApiError && error.status === 404;
@@ -150,6 +209,7 @@ export class QueueController {
   // One slot per open detail ID; replaced (new identity) on every open.
   private readonly slots = new Map<string, DetailSlot>();
   private slotSerial = 0;
+  private clearAttempt: ClearAttempt | null = null;
 
   constructor(publish: (view: QueueView) => void) {
     this.publish = publish;
@@ -164,6 +224,8 @@ export class QueueController {
     this.loadMoreRequest = null;
     this.missingReads.clear();
     this.pendingActions.clear();
+    // A previous session's preview/confirm never continues into this one.
+    this.clearAttempt = null;
     for (const slot of this.slots.values()) {
       slot.request = null;
       slot.wanted = null;
@@ -176,7 +238,7 @@ export class QueueController {
       (event) => { if (this.alive(session)) this.handleActivity(event); },
       () => { if (this.alive(session)) this.handleOpen(); },
     );
-    this.emit({ sseOpen: false, pending: {}, loadMoreStatus: "idle" });
+    this.emit({ sseOpen: false, pending: {}, loadMoreStatus: "idle", clear: INITIAL_CLEAR_HISTORY });
     this.requestReconcile("reset");
   }
 
@@ -677,6 +739,93 @@ export class QueueController {
         this.emit({ pending: without(this.view.pending, id) });
       }
     }
+  }
+
+  private emitClear(patch: Partial<ClearHistoryView>): void {
+    this.emit({ clear: { ...this.view.clear, ...patch } });
+  }
+
+  /** Only while no attempt runs: the selection is locked from preview to result. */
+  setClearIncludeCancelled(includeCancelled: boolean): void {
+    if (!this.live || this.clearAttempt != null) return;
+    this.emitClear({ includeCancelled, message: null });
+  }
+
+  /** User-started only; every attempt asks the server for a fresh preview. */
+  startClearHistory(): void {
+    if (!this.live || this.clearAttempt != null) return;
+    const attempt: ClearAttempt = { previewId: null, jobCount: null };
+    this.clearAttempt = attempt;
+    const includeCancelled = this.view.clear.includeCancelled;
+    this.emitClear({ phase: "previewing", jobCount: null, message: null });
+    void this.runClearPreview(attempt, includeCancelled);
+  }
+
+  private async runClearPreview(attempt: ClearAttempt, includeCancelled: boolean): Promise<void> {
+    const session = this.session;
+    const current = () => this.alive(session) && this.clearAttempt === attempt;
+    try {
+      const preview = await previewClearHistory(includeCancelled);
+      if (!current()) return;
+      if (!(preview.job_count > 0)) {
+        // Nothing to confirm: the token is dropped, no confirm is offered.
+        this.clearAttempt = null;
+        this.emitClear({ phase: "idle", jobCount: null, message: { kind: "status", text: CLEAR_NOTHING } });
+        return;
+      }
+      attempt.previewId = preview.preview_id;
+      attempt.jobCount = preview.job_count;
+      this.emitClear({ phase: "ready", jobCount: attempt.jobCount });
+    } catch {
+      if (!current()) return;
+      this.clearAttempt = null;
+      this.emitClear({ phase: "idle", jobCount: null, message: { kind: "error", text: CLEAR_PREVIEW_ERROR } });
+    }
+  }
+
+  /** Non-destructive: drops the preview (or its late response); a new attempt previews again. */
+  dismissClearHistory(): void {
+    const attempt = this.clearAttempt;
+    if (!this.live || attempt == null || this.view.clear.phase === "confirming") return;
+    this.clearAttempt = null;
+    this.emitClear({ phase: "idle", jobCount: null, message: null });
+  }
+
+  /** Sends the displayed preview's token exactly once; never repeated automatically. */
+  confirmClearHistory(): void {
+    const attempt = this.clearAttempt;
+    if (!this.live || attempt == null || this.view.clear.phase !== "ready") return;
+    const previewId = attempt.previewId;
+    if (previewId == null) return;
+    // Consumed synchronously, before any await: a second click finds nothing.
+    attempt.previewId = null;
+    this.emitClear({ phase: "confirming" });
+    void this.runClearConfirm(attempt, previewId);
+  }
+
+  private async runClearConfirm(attempt: ClearAttempt, previewId: string): Promise<void> {
+    const session = this.session;
+    let message: ClearHistoryMessage;
+    try {
+      const result = await confirmClearHistory(previewId);
+      const deleted = `Deleted ${jobsLabel(result.deleted_count)}.`;
+      message = result.failed_count > 0
+        ? { kind: "error", text: `${deleted} ${jobsLabel(result.failed_count)} could not be deleted.` }
+        : { kind: "status", text: deleted };
+    } catch (error) {
+      const expired = error instanceof ApiRequestError && error.code === CLEAR_PREVIEW_EXPIRED;
+      message = expired
+        ? { kind: "error", text: CLEAR_EXPIRED }
+        : { kind: "error", text: CLEAR_FAILED, refresh: true };
+    }
+    if (this.alive(session) && this.clearAttempt === attempt) {
+      this.clearAttempt = null;
+      this.emitClear({ phase: "idle", jobCount: null, message });
+    }
+    // Every settled outcome may have changed server state (partial commits
+    // included): run the existing reset, which also re-reads open details
+    // (404 closes them). No optimistic list change; no-op once unmounted.
+    this.requestReconcile("reset");
   }
 }
 

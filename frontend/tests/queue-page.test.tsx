@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ActivityEvent } from "../src/api/activity";
 import type { Job, JobItem, ScopedJobList } from "../src/api/jobs";
+import { QueueController, type QueueView } from "../src/features/queue/useQueue";
 import { QueuePage } from "../src/pages/QueuePage";
 
 function json(body: unknown, status = 200) {
@@ -1990,5 +1991,461 @@ describe("QueuePage multiple History details", () => {
       expect(screen.queryByRole("listitem", { name: "Job f" })).not.toBeInTheDocument();
       expect(screen.queryByRole("listitem", { name: "Job g" })).not.toBeInTheDocument();
     });
+  });
+});
+
+describe("QueuePage Clear History", () => {
+  const PREVIEW = "/api/v1/jobs/clear-history/preview";
+  const CONFIRM = "/api/v1/jobs/clear-history/confirm";
+  const bodies = (url: string) => server.fetch.mock.calls
+    .filter(([input, init]) => String(input) === url && init?.method === "POST")
+    .map(([, init]) => JSON.parse(String(init?.body)) as unknown);
+  const group = () => within(screen.getByRole("group", { name: "Clear History" }));
+  const trigger = () => group().getByRole("button", { name: "Clear History" });
+  const refreshButton = () => group().queryByRole("button", { name: "Refresh queue" });
+  const checkbox = () => group().getByRole("checkbox", { name: "Include cancelled jobs" });
+  const keep = () => group().getByRole("button", { name: "Keep history" });
+  const confirmButton = () => group().queryByRole("button", { name: /^(Delete \d+ jobs?|Deleting…)$/ });
+  const previewOk = (previewId: string, jobCount: number) => () =>
+    Promise.resolve(json({ preview_id: previewId, job_count: jobCount }));
+  const expired = () => json({
+    error: { code: "clear_preview_expired", message: "This Clear History preview has expired. Preview again.", retryable: false, job_id: null },
+  }, 409);
+  const clearFailed = () => json({
+    error: { code: "clear_history_failed", message: "Clear History could not finish. Refresh and preview again.", retryable: false, job_id: null },
+  }, 500);
+
+  function seed() {
+    const items = [
+      job("x", { status: "completed", created_at: at(9) }),
+      job("y", { status: "failed", error: retryable, created_at: at(8) }),
+    ];
+    server.pages.set("", { jobs: items, next_cursor: null });
+    for (const entry of items) {
+      server.jobs.set(entry.id, entry);
+      server.activity.set(entry.id, []);
+    }
+  }
+
+  /** Server-side removal: the next reset head no longer lists, and GET 404s for, these ids. */
+  function serverDeletes(...ids: string[]) {
+    const page = server.pages.get("") ?? { jobs: [], next_cursor: null };
+    server.pages.set("", { ...page, jobs: page.jobs.filter((entry) => !ids.includes(entry.id)) });
+    for (const id of ids) {
+      server.jobs.delete(id);
+      server.activity.delete(id);
+    }
+  }
+
+  it("starts unchecked, previews false by default, shows only the server count and never confirms by itself", async () => {
+    seed();
+    server.actions.set(PREVIEW, previewOk("p1", 7));
+    const { user } = await mount();
+    expect(checkbox()).not.toBeChecked();
+    expect(bodies(PREVIEW)).toEqual([]);
+
+    await user.click(trigger());
+    await settle();
+    expect(bodies(PREVIEW)).toEqual([{ include_cancelled: false }]);
+    // The server count (7), not the two visible History rows.
+    expect(group().getByText("Clear History will delete 7 jobs. This cannot be undone.")).toBeInTheDocument();
+    expect(confirmButton()).toHaveAccessibleName("Delete 7 jobs");
+    expect(confirmButton()).toHaveAccessibleDescription("Clear History will delete 7 jobs. This cannot be undone.");
+    expect(rowTitles(historyRegion())).toEqual(["Job x", "Job y"]);
+    expect(group().queryByText(/byte|MiB|GiB|Job x/)).not.toBeInTheDocument();
+    expect(checkbox()).toBeDisabled();
+    expect(trigger()).toBeDisabled();
+
+    await tick(6000);
+    expect(bodies(CONFIRM)).toEqual([]);
+    expect(bodies(PREVIEW)).toHaveLength(1);
+  });
+
+  it("opts in with include_cancelled=true, locks it while pending and dismisses without deleting; the next attempt previews fresh", async () => {
+    seed();
+    const pending = deferred();
+    server.once.push({ match: (url, method) => url === PREVIEW && method === "POST", respond: () => pending.promise });
+    server.actions.set(PREVIEW, previewOk("p2", 3));
+    server.actions.set(CONFIRM, () => Promise.resolve(json({ deleted_count: 3, failed_count: 0 })));
+    const { user } = await mount();
+
+    await user.click(checkbox());
+    expect(checkbox()).toBeChecked();
+    await user.click(trigger());
+    expect(bodies(PREVIEW)).toEqual([{ include_cancelled: true }]);
+    expect(checkbox()).toBeDisabled();
+    expect(trigger()).toBeDisabled();
+    expect(group().getByRole("status")).toHaveTextContent("Counting history jobs…");
+    pending.resolve(json({ preview_id: "p1", job_count: 5 }));
+    await settle();
+    expect(confirmButton()).toHaveAccessibleName("Delete 5 jobs");
+    fireEvent.click(checkbox());
+    expect(checkbox()).toBeChecked();
+
+    await user.click(keep());
+    expect(confirmButton()).not.toBeInTheDocument();
+    expect(group().queryByText(/will delete/)).not.toBeInTheDocument();
+    expect(checkbox()).toBeEnabled();
+    expect(bodies(CONFIRM)).toEqual([]);
+
+    await user.click(trigger());
+    await settle();
+    expect(bodies(PREVIEW)).toEqual([{ include_cancelled: true }, { include_cancelled: true }]);
+    expect(confirmButton()).toHaveAccessibleName("Delete 3 jobs");
+    await user.click(confirmButton()!);
+    await settle();
+    expect(bodies(CONFIRM)).toEqual([{ preview_id: "p2" }]);
+  });
+
+  it("offers no confirm for a zero preview", async () => {
+    seed();
+    server.actions.set(PREVIEW, previewOk("p0", 0));
+    const { user } = await mount();
+    await user.click(trigger());
+    await settle();
+    expect(confirmButton()).not.toBeInTheDocument();
+    expect(group().queryByRole("button", { name: "Keep history" })).not.toBeInTheDocument();
+    expect(group().getByRole("status")).toHaveTextContent("There are no history jobs to clear.");
+    expect(checkbox()).toBeEnabled();
+    expect(trigger()).toBeEnabled();
+    expect(bodies(CONFIRM)).toEqual([]);
+  });
+
+  it("shows a fixed message on a preview failure without repeating it", async () => {
+    seed();
+    server.actions.set(PREVIEW, () => Promise.resolve(serverError()));
+    const { user } = await mount();
+    await user.click(trigger());
+    await settle();
+    expect(group().getByRole("alert")).toHaveTextContent("Could not preview Clear History. Try again.");
+    expect(screen.queryByText("Server exploded.")).not.toBeInTheDocument();
+    await tick(6000);
+    expect(bodies(PREVIEW)).toHaveLength(1);
+    expect(confirmButton()).not.toBeInTheDocument();
+  });
+
+  it("ignores a late preview after dismissal and requires a fresh one", async () => {
+    seed();
+    const late = deferred();
+    server.once.push({ match: (url, method) => url === PREVIEW && method === "POST", respond: () => late.promise });
+    const { user } = await mount();
+    await user.click(trigger());
+    await user.click(keep());
+    late.resolve(json({ preview_id: "stale", job_count: 4 }));
+    await settle();
+    expect(confirmButton()).not.toBeInTheDocument();
+    expect(group().queryByText(/will delete/)).not.toBeInTheDocument();
+    expect(checkbox()).toBeEnabled();
+
+    server.actions.set(PREVIEW, previewOk("fresh", 2));
+    server.actions.set(CONFIRM, () => Promise.resolve(json({ deleted_count: 2, failed_count: 0 })));
+    await user.click(trigger());
+    await settle();
+    await user.click(confirmButton()!);
+    await settle();
+    expect(bodies(CONFIRM)).toEqual([{ preview_id: "fresh" }]);
+  });
+
+  it("sends a double confirm click once, consuming the token before the request settles", async () => {
+    seed();
+    server.actions.set(PREVIEW, previewOk("p1", 2));
+    const held = deferred();
+    server.actions.set(CONFIRM, () => held.promise);
+    const { user } = await mount();
+    await user.click(trigger());
+    await settle();
+    const button = confirmButton()!;
+    act(() => {
+      fireEvent.click(button);
+      fireEvent.click(button);
+    });
+    expect(bodies(CONFIRM)).toEqual([{ preview_id: "p1" }]);
+    expect(confirmButton()).toHaveAccessibleName("Deleting…");
+    expect(confirmButton()).toBeDisabled();
+    expect(keep()).toBeDisabled();
+    expect(checkbox()).toBeDisabled();
+    fireEvent.click(keep());
+    expect(confirmButton()).toBeInTheDocument();
+
+    held.resolve(json({ deleted_count: 2, failed_count: 0 }));
+    await settle();
+    fireEvent.click(trigger());
+    await settle();
+    expect(bodies(CONFIRM)).toEqual([{ preview_id: "p1" }]);
+    expect(bodies(PREVIEW)).toHaveLength(2);
+  });
+
+  it("shows the actual deleted count and removes rows only via the server reset", async () => {
+    seed();
+    server.actions.set(PREVIEW, previewOk("p1", 3));
+    const held = deferred();
+    server.actions.set(CONFIRM, () => held.promise);
+    const { user } = await mount();
+    await user.click(trigger());
+    await settle();
+    await user.click(confirmButton()!);
+    // No optimistic removal while pending.
+    expect(rowTitles(historyRegion())).toEqual(["Job x", "Job y"]);
+
+    const resetsBefore = headCalls();
+    serverDeletes("x", "y");
+    held.resolve(json({ deleted_count: 2, failed_count: 0 }));
+    await settle();
+    expect(group().getByRole("status")).toHaveTextContent("Deleted 2 jobs.");
+    expect(headCalls()).toBe(resetsBefore + 1);
+    expect(rowTitles(historyRegion())).toEqual([]);
+    expect(checkbox()).toBeEnabled();
+    expect(bodies(CONFIRM)).toHaveLength(1);
+  });
+
+  it.each([
+    [1, 2, "Deleted 1 job. 2 jobs could not be deleted."],
+    [0, 1, "Deleted 0 jobs. 1 job could not be deleted."],
+  ])("reports a partial failure (deleted %i, failed %i) and refreshes", async (deleted, failed, text) => {
+    seed();
+    server.actions.set(PREVIEW, previewOk("p1", 3));
+    server.actions.set(CONFIRM, () => Promise.resolve(json({ deleted_count: deleted, failed_count: failed })));
+    const { user } = await mount();
+    await user.click(trigger());
+    await settle();
+    if (deleted > 0) serverDeletes("x");
+    await user.click(confirmButton()!);
+    await settle();
+    expect(group().getByRole("alert")).toHaveTextContent(text);
+    expect(rowTitles(historyRegion())).toEqual(deleted > 0 ? ["Job y"] : ["Job x", "Job y"]);
+    expect(bodies(CONFIRM)).toHaveLength(1);
+  });
+
+  it.each([
+    ["expired preview (409)", () => Promise.resolve(expired()), "This preview has expired. Preview Clear History again.", false],
+    ["server failure (500)", () => Promise.resolve(clearFailed()), "Clear History could not finish. Check the list and preview again.", true],
+    ["network rejection", () => Promise.reject(new TypeError("Failed to fetch")), "Clear History could not finish. Check the list and preview again.", true],
+  ])("%s: fixed message, one reset that removes server-deleted rows and closes the open detail by 404, no repeat", async (_label, respond, text, unknown) => {
+    seed();
+    server.actions.set(PREVIEW, previewOk("p1", 2));
+    server.actions.set(CONFIRM, respond);
+    const { user } = await mount();
+    await user.click(row("Job x").getByRole("button", { name: "Details" }));
+    await settle();
+    expect(within(rowItem("Job x")).getByRole("region", { name: "Job details" })).toBeInTheDocument();
+    await user.click(trigger());
+    await settle();
+
+    // Partial commit before the error: the server already removed x.
+    serverDeletes("x");
+    const detailReads = count((url) => url === "/api/v1/jobs/x");
+    await user.click(confirmButton()!);
+    await settle();
+    expect(group().getByRole("alert")).toHaveTextContent(text);
+    // Manual refresh only where the outcome is unknown, not on a proven expiry.
+    if (unknown) expect(refreshButton()).toBeInTheDocument();
+    else expect(refreshButton()).not.toBeInTheDocument();
+    expect(screen.queryByText(/Server|Refresh and preview again|Failed to fetch/)).not.toBeInTheDocument();
+    expect(count((url) => url === "/api/v1/jobs/x")).toBe(detailReads + 1);
+    expect(screen.queryByRole("region", { name: "Job details" })).not.toBeInTheDocument();
+    expect(rowTitles(historyRegion())).toEqual(["Job y"]);
+
+    await tick(6000);
+    expect(bodies(CONFIRM)).toEqual([{ preview_id: "p1" }]);
+    expect(bodies(PREVIEW)).toHaveLength(1);
+    expect(confirmButton()).not.toBeInTheDocument();
+  });
+
+  it("keeps Retry and Cancel working beside Clear History", async () => {
+    seed();
+    server.active = [job("a", { status: "downloading", updated_at: at(5) })];
+    server.actions.set("/api/v1/jobs/a/cancel", () => Promise.resolve(json(job("a", { status: "cancelled", updated_at: at(6) }))));
+    server.actions.set("/api/v1/jobs/y/retry", () => Promise.resolve(json(job("y", { status: "queued", created_at: at(8), updated_at: at(9) }))));
+    server.actions.set(PREVIEW, previewOk("p1", 2));
+    const { user } = await mount();
+    await user.click(trigger());
+    await settle();
+    await user.click(row("Job y").getByRole("button", { name: "Retry" }));
+    await settle();
+    expect(count((url) => url === "/api/v1/jobs/y/retry")).toBe(1);
+    expect(rowTitles(activeRegion())).toContain("Job y");
+    await user.click(row("Job a").getByRole("button", { name: "Cancel" }));
+    await settle();
+    expect(count((url) => url === "/api/v1/jobs/a/cancel")).toBe(1);
+    // The preview stays as shown until the user confirms or dismisses.
+    expect(confirmButton()).toHaveAccessibleName("Delete 2 jobs");
+    expect(bodies(CONFIRM)).toEqual([]);
+  });
+
+  it("moves keyboard focus to Keep history on start and back to the trigger when the attempt ends", async () => {
+    seed();
+    server.actions.set(PREVIEW, previewOk("p1", 2));
+    server.actions.set(CONFIRM, () => Promise.resolve(json({ deleted_count: 2, failed_count: 0 })));
+    const { user } = await mount();
+    trigger().focus();
+    await user.keyboard("{Enter}");
+    expect(keep()).toHaveFocus();
+    await settle();
+    expect(keep()).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(trigger()).toHaveFocus();
+
+    await user.keyboard(" ");
+    await settle();
+    expect(keep()).toHaveFocus();
+    await user.tab();
+    expect(confirmButton()).toHaveFocus();
+    await user.keyboard("{Enter}");
+    await settle();
+    expect(trigger()).toHaveFocus();
+    expect(group().getByRole("status")).toHaveTextContent("Deleted 2 jobs.");
+  });
+
+  it("sends nothing after unmount and a remount starts with a clean, unchecked state", async () => {
+    seed();
+    server.actions.set(PREVIEW, previewOk("p1", 2));
+    const held = deferred();
+    server.actions.set(CONFIRM, () => held.promise);
+    const { user, unmount } = await mount();
+    await user.click(checkbox());
+    await user.click(trigger());
+    await settle();
+    await user.click(confirmButton()!);
+    unmount();
+    const calls = server.fetch.mock.calls.length;
+    held.resolve(json({ deleted_count: 2, failed_count: 0 }));
+    await settle();
+    expect(server.fetch.mock.calls.length).toBe(calls);
+
+    FakeEventSource.instances = [];
+    await mount();
+    expect(checkbox()).not.toBeChecked();
+    expect(confirmButton()).not.toBeInTheDocument();
+    expect(group().getByRole("status")).toHaveTextContent(/^$/);
+    expect(group().queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("keeps the same Keep history button in the first action row while a deferred preview resolves; Delete comes below and next in Tab order", async () => {
+    seed();
+    const pending = deferred();
+    server.once.push({ match: (url, method) => url === PREVIEW && method === "POST", respond: () => pending.promise });
+    const { user } = await mount();
+    trigger().focus();
+    await user.keyboard("{Enter}");
+    const keepBefore = keep();
+    const status = group().getByRole("status");
+    expect(keepBefore).toHaveFocus();
+    expect(status).toHaveTextContent("Counting history jobs…");
+    const actionRow = keepBefore.parentElement!;
+    const rowTexts = () => Array.from(actionRow.children).map((child) => child.textContent);
+    expect(rowTexts()).toEqual(["Clear History", "Keep history"]);
+
+    pending.resolve(json({ preview_id: "p1", job_count: 4 }));
+    await settle();
+    // Same DOM button, same row, same preceding controls and texts.
+    expect(keep()).toBe(keepBefore);
+    expect(keepBefore.parentElement).toBe(actionRow);
+    expect(rowTexts()).toEqual(["Clear History", "Keep history"]);
+    expect(keepBefore).toHaveFocus();
+    // The same persistent live region now carries the server count.
+    expect(group().getByRole("status")).toBe(status);
+    expect(status).toHaveTextContent("Clear History will delete 4 jobs. This cannot be undone.");
+    // Variable content after the Keep row; Delete in its own later row.
+    const deleteButton = confirmButton()!;
+    expect(actionRow).not.toContainElement(deleteButton);
+    expect(actionRow.compareDocumentPosition(status)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(status.compareDocumentPosition(deleteButton)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+
+    await user.tab();
+    expect(deleteButton).toHaveFocus();
+    await user.tab({ shift: true });
+    expect(keepBefore).toHaveFocus();
+    await user.click(keepBefore);
+    expect(bodies(CONFIRM)).toEqual([]);
+    expect(confirmButton()).not.toBeInTheDocument();
+    expect(trigger()).toHaveFocus();
+  });
+
+  it("offers a manual Refresh queue after an unknown confirm outcome that catches a delayed server deletion", async () => {
+    seed();
+    server.actions.set(PREVIEW, previewOk("p1", 2));
+    server.actions.set(CONFIRM, () => Promise.resolve(clearFailed()));
+    const { user } = await mount();
+    await user.click(row("Job x").getByRole("button", { name: "Details" }));
+    await settle();
+    await user.click(trigger());
+    await settle();
+    await user.click(confirmButton()!);
+    await settle();
+    // The automatic reset still saw the old History and detail.
+    expect(rowTitles(historyRegion())).toEqual(["Job x", "Job y"]);
+    expect(within(rowItem("Job x")).getByRole("region", { name: "Job details" })).toBeInTheDocument();
+    expect(group().getByRole("alert")).toHaveTextContent("Clear History could not finish. Check the list and preview again.");
+
+    // The deletion becomes visible on the server only later.
+    serverDeletes("x");
+    const heads = headCalls();
+    await user.click(refreshButton()!);
+    await settle();
+    expect(headCalls()).toBe(heads + 1);
+    expect(rowTitles(historyRegion())).toEqual(["Job y"]);
+    expect(screen.queryByRole("region", { name: "Job details" })).not.toBeInTheDocument();
+    expect(bodies(CONFIRM)).toEqual([{ preview_id: "p1" }]);
+    expect(bodies(PREVIEW)).toHaveLength(1);
+  });
+});
+
+describe("QueueController Clear History lifecycle", () => {
+  const PREVIEW = "/api/v1/jobs/clear-history/preview";
+  const CONFIRM = "/api/v1/jobs/clear-history/confirm";
+  async function flush() {
+    for (let index = 0; index < 8; index += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  function make() {
+    const views: QueueView[] = [];
+    const controller = new QueueController((view) => views.push(view));
+    return { controller, latest: () => views[views.length - 1] };
+  }
+
+  it("ignores a preview that settles after a stop/start and resets Clear state at start", async () => {
+    const held = deferred();
+    server.actions.set(PREVIEW, () => held.promise);
+    const { controller, latest } = make();
+    controller.start();
+    await flush();
+    controller.setClearIncludeCancelled(true);
+    controller.startClearHistory();
+    expect(latest().clear.phase).toBe("previewing");
+
+    controller.stop();
+    controller.start();
+    expect(latest().clear).toEqual({ includeCancelled: false, phase: "idle", jobCount: null, message: null });
+    held.resolve(json({ preview_id: "old", job_count: 3 }));
+    await flush();
+    expect(latest().clear.phase).toBe("idle");
+    controller.confirmClearHistory();
+    expect(count((url) => url === CONFIRM)).toBe(0);
+    controller.stop();
+  });
+
+  it("ignores a confirm result after a stop/start but still asks the live session for a reset", async () => {
+    server.actions.set(PREVIEW, () => Promise.resolve(json({ preview_id: "p1", job_count: 2 })));
+    const held = deferred();
+    server.actions.set(CONFIRM, () => held.promise);
+    const { controller, latest } = make();
+    controller.start();
+    await flush();
+    controller.startClearHistory();
+    await flush();
+    expect(latest().clear).toMatchObject({ phase: "ready", jobCount: 2 });
+    controller.confirmClearHistory();
+    controller.confirmClearHistory();
+    expect(count((url) => url === CONFIRM)).toBe(1);
+
+    controller.stop();
+    controller.start();
+    await flush();
+    const heads = headCalls();
+    held.resolve(json({ deleted_count: 2, failed_count: 0 }));
+    await flush();
+    expect(latest().clear).toEqual({ includeCancelled: false, phase: "idle", jobCount: null, message: null });
+    expect(headCalls()).toBe(heads + 1);
+    expect(count((url) => url === CONFIRM)).toBe(1);
+    controller.stop();
   });
 });

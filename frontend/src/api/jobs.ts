@@ -194,3 +194,32 @@ export async function cancelJob(jobId: string): Promise<Job> {
 export async function retryJob(jobId: string): Promise<Job> {
   return apiPost<Job, Record<string, never>>(`/api/v1/jobs/${jobId}/retry`, {});
 }
+
+/** Server-issued Clear History snapshot: an opaque token plus its job count only. */
+export interface ClearHistoryPreview {
+  preview_id: string;
+  job_count: number;
+}
+
+export interface ClearHistoryResult {
+  deleted_count: number;
+  failed_count: number;
+}
+
+/** Expired, consumed or unknown preview (409); the UI asks for a new preview. */
+export const CLEAR_PREVIEW_EXPIRED = "clear_preview_expired";
+
+export async function previewClearHistory(includeCancelled: boolean): Promise<ClearHistoryPreview> {
+  return apiPost<ClearHistoryPreview, { include_cancelled: boolean }>(
+    "/api/v1/jobs/clear-history/preview",
+    { include_cancelled: includeCancelled },
+  );
+}
+
+/** Sends only the opaque `preview_id`: no job ids, counts or paths. */
+export async function confirmClearHistory(previewId: string): Promise<ClearHistoryResult> {
+  return apiPost<ClearHistoryResult, { preview_id: string }>(
+    "/api/v1/jobs/clear-history/confirm",
+    { preview_id: previewId },
+  );
+}
