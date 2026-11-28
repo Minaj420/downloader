@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "../src/app/App";
 import type { AnalyzeRequest, NormalizedAnalysis } from "../src/api/analysis";
@@ -312,6 +312,23 @@ async function fillAndSubmit(user: ReturnType<typeof userEvent.setup>, url: stri
   await user.type(screen.getByLabelText("URL"), url);
   await user.click(screen.getByRole("button", { name: "Analyze" }));
 }
+
+// Last selection lives in jsdom localStorage: isolate every test, and make
+// the "reset on a new analysis" tests independent of persistence by refusing
+// writes (the live reset logic is then the only thing under test).
+const STORAGE_KEY = "downloader.new-download.last-selection";
+const refuseStorageWrites = () =>
+  vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    throw new DOMException("denied", "QuotaExceededError");
+  });
+
+beforeEach(() => {
+  window.localStorage.clear();
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe("NewDownloadPage", () => {
   it("only offers Retry for a retryable failed or cancelled job", async () => {
@@ -1373,7 +1390,8 @@ describe("NewDownloadPage", () => {
       expect(videoRows()).toEqual(["Best Available"]);
     });
 
-    it("resets the quality choice on a new analysis, even with a repeated analysis id", async () => {
+    it("resets the live quality choice on a new analysis, even with a repeated analysis id (storage refused)", async () => {
+      refuseStorageWrites();
       const { fetchMock, user } = await analyzeWith(singleResult);
       await user.click(quality("Up to 720p"));
       await user.click(screen.getByRole("button", { name: "Analyze" }));
@@ -1559,7 +1577,8 @@ describe("NewDownloadPage", () => {
       });
     });
 
-    it("resets to Original on every new analysis, including a repeated analysis id", async () => {
+    it("resets the live output choice on every new analysis, including a repeated analysis id (storage refused)", async () => {
+      refuseStorageWrites();
       const fetchMock = jobFlowHandler();
       const { user } = await renderNewDownload();
       await analyzeSingleResult(user);
@@ -1641,6 +1660,304 @@ describe("NewDownloadPage", () => {
       expect(outputRadio("MP4 (compatible)")).toBeChecked();
       expect(screen.getByRole("button", { name: "Download" })).toBeEnabled();
       expect(createBodies(fetchMock)).toHaveLength(1);
+    });
+  });
+
+  describe("remember last selection (single)", () => {
+    const stored = (
+      patch: Partial<{
+        version: number;
+        videoQuality: string | null;
+        collectionCeiling: number | null;
+        outputProfile: string | null;
+      }> = {},
+    ) => ({ version: 1, videoQuality: null, collectionCeiling: null, outputProfile: null, ...patch });
+    const seed = (value: unknown) =>
+      window.localStorage.setItem(STORAGE_KEY, typeof value === "string" ? value : JSON.stringify(value));
+    // Same qualities as singleResult under different extractor variant ids.
+    const renamed: NormalizedAnalysis = {
+      ...singleResult,
+      formats: singleResult.formats.map((format) => ({
+        ...format,
+        variant_id: `alt-${format.variant_id}`,
+      })),
+    };
+    const withoutVariants = (...drop: string[]): NormalizedAnalysis => ({
+      ...singleResult,
+      formats: singleResult.formats.filter((format) => !drop.includes(format.variant_id)),
+    });
+    function flow(...results: NormalizedAnalysis[]) {
+      stubEventSource();
+      let analyses = 0;
+      return stubFetch((url, init) => {
+        if (url === "/api/v1/health") return Promise.resolve(jsonResponse({ status: "ok", database: "ok" }));
+        if (url === "/api/v1/analysis") {
+          const result = results[Math.min(analyses, results.length - 1)];
+          analyses += 1;
+          return Promise.resolve(jsonResponse(result));
+        }
+        if (url === "/api/v1/jobs" && init?.method === "POST") return Promise.resolve(jsonResponse(queuedJob));
+        return Promise.reject(new Error(`Unexpected fetch: ${url} ${init?.method ?? "GET"}`));
+      });
+    }
+    const quality = (name: string) =>
+      within(screen.getByRole("group", { name: "Video formats" })).getByRole("radio", { name });
+    const output = (name: string) =>
+      within(screen.getByRole("group", { name: "Output format" })).getByRole("radio", { name });
+    const bodies = (fetchMock: ReturnType<typeof stubFetch>) =>
+      fetchMock.mock.calls
+        .filter(([url, init]) => url === "/api/v1/jobs" && init?.method === "POST")
+        .map(([, init]) => JSON.parse(String(init?.body)) as Record<string, unknown>);
+    const open = async () => {
+      const { user } = await renderNewDownload();
+      await analyzeSingleResult(user);
+      return user;
+    };
+    const download = async (user: ReturnType<typeof userEvent.setup>) => {
+      await user.click(screen.getByRole("button", { name: "Download" }));
+      await screen.findByText("Queued");
+    };
+
+    it("restores quality and output after a remount and stores no snapshot identity", async () => {
+      flow(singleResult);
+      let user = await open();
+      await user.click(quality("Up to 720p"));
+      await user.click(output("MP4 (compatible)"));
+      expect(JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? "null")).toEqual(
+        stored({ videoQuality: "ceiling-720", outputProfile: "mp4" }),
+      );
+      const raw = window.localStorage.getItem(STORAGE_KEY) ?? "";
+      for (const forbidden of [singleResult.analysis_id, "youtube", "video-720", "abc123", "Test Video", "http"]) {
+        expect(raw).not.toContain(forbidden);
+      }
+
+      cleanup();
+      const second = flow(singleResult);
+      user = await open();
+      expect(quality("Up to 720p")).toBeChecked();
+      expect(output("MP4 (compatible)")).toBeChecked();
+      await download(user);
+      expect(bodies(second)).toEqual([
+        {
+          analysis_id: singleResult.analysis_id,
+          variant_id: "video-720",
+          output_profile: "mp4",
+          destination: "app_library",
+        },
+      ]);
+    });
+
+    it("applies the remembered choice to a new analysis in the same mount, repeated id included", async () => {
+      const fetchMock = flow(singleResult);
+      const user = await open();
+      await user.click(quality("Up to 720p"));
+      await user.click(output("MP4 (compatible)"));
+      await user.click(quality("Best Available"));
+      await user.click(screen.getByRole("button", { name: "Analyze" }));
+      await waitFor(() => expect(fetchMock.mock.calls.filter(([url]) => url === "/api/v1/analysis")).toHaveLength(2));
+      await screen.findByRole("group", { name: "Output format" });
+      // The latest explicit quality (Best) and profile (MP4) come back.
+      expect(quality("Best Available")).toBeChecked();
+      expect(output("MP4 (compatible)")).toBeChecked();
+      await download(user);
+      expect(bodies(fetchMock)[0]).toMatchObject({ variant_id: "video-best", output_profile: "mp4" });
+    });
+
+    it("matches the remembered quality row to the current variant id of a different analysis", async () => {
+      flow(singleResult);
+      let user = await open();
+      await user.click(quality("Up to 720p"));
+
+      cleanup();
+      const second = flow(renamed);
+      user = await open();
+      expect(quality("Up to 720p")).toBeChecked();
+      await download(user);
+      expect(bodies(second)[0]).toMatchObject({ variant_id: "alt-video-720", output_profile: "original" });
+    });
+
+    it("falls back to Best and Original when the remembered values do not fit this source", async () => {
+      seed(stored({ videoQuality: "ceiling-720", outputProfile: "mp3" }));
+      const fetchMock = flow(withoutVariants("video-720"));
+      const user = await open();
+      expect(quality("Best Available")).toBeChecked();
+      expect(output("Original")).toBeChecked();
+      await download(user);
+      expect(bodies(fetchMock)[0]).toMatchObject({ variant_id: "video-best", output_profile: "original" });
+      // Reading and falling back never writes anything back.
+      expect(JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? "null")).toEqual(
+        stored({ videoQuality: "ceiling-720", outputProfile: "mp3" }),
+      );
+    });
+
+    it("keeps an explicit Best Available and Original from letting old values return", async () => {
+      seed(stored({ videoQuality: "ceiling-720", outputProfile: "mp4" }));
+      const fetchMock = flow(singleResult);
+      const user = await open();
+      expect(quality("Up to 720p")).toBeChecked();
+      expect(output("MP4 (compatible)")).toBeChecked();
+      await user.click(quality("Best Available"));
+      await user.click(output("Original"));
+      expect(JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? "null")).toEqual(
+        stored({ videoQuality: "best", outputProfile: "original" }),
+      );
+      await user.click(screen.getByRole("button", { name: "Analyze" }));
+      await waitFor(() => expect(fetchMock.mock.calls.filter(([url]) => url === "/api/v1/analysis")).toHaveLength(2));
+      await screen.findByRole("group", { name: "Output format" });
+      expect(quality("Best Available")).toBeChecked();
+      expect(output("Original")).toBeChecked();
+    });
+
+    const audioOpus = () =>
+      within(screen.getByRole("group", { name: "Audio formats" })).getByRole("radio", { name: /opus/i });
+
+    it("applies a remembered MP3 on the first audio selection of a video-default source, then drops it on leaving audio", async () => {
+      flow(singleResult);
+      let user = await open();
+      // The user really selects audio and MP3, which saves MP3.
+      await user.click(audioOpus());
+      await user.click(output("MP3"));
+      expect(JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? "null")).toEqual(
+        stored({ outputProfile: "mp3" }),
+      );
+
+      cleanup();
+      const fetchMock = flow(singleResult);
+      user = await open();
+      // Video default: MP3 is incompatible, so Original.
+      expect(output("Original")).toBeChecked();
+      await user.click(audioOpus());
+      expect(output("MP3")).toBeChecked();
+      await download(user);
+      expect(bodies(fetchMock)).toEqual([
+        {
+          analysis_id: singleResult.analysis_id,
+          variant_id: "audio-opus-160",
+          output_profile: "mp3",
+          destination: "app_library",
+        },
+      ]);
+    });
+
+    it("does not revive an applied remembered MP3 after leaving and re-entering audio", async () => {
+      seed(stored({ outputProfile: "mp3" }));
+      const fetchMock = flow(singleResult);
+      const user = await open();
+      await user.click(audioOpus());
+      expect(output("MP3")).toBeChecked();
+      await user.click(quality("Up to 720p"));
+      expect(output("Original")).toBeChecked();
+      await user.click(audioOpus());
+      expect(output("Original / Best Available")).toBeChecked();
+      expect(output("MP3")).not.toBeChecked();
+      await download(user);
+      expect(bodies(fetchMock)[0]).toMatchObject({ variant_id: "audio-opus-160", output_profile: "original" });
+    });
+
+    it("drops an unapplied remembered MP3 after an explicit live choice and a kind round trip", async () => {
+      seed(stored({ outputProfile: "mp3" }));
+      flow(singleResult);
+      const user = await open();
+      // Original is already checked (a click would not be a change): make a
+      // real explicit Original choice via MP4 first.
+      await user.click(output("MP4 (compatible)"));
+      await user.click(output("Original"));
+      await user.click(audioOpus());
+      expect(output("Original / Best Available")).toBeChecked();
+      expect(output("MP3")).not.toBeChecked();
+    });
+
+    it("applies a remembered MP4 on the first video selection of an audio-default source, then drops it", async () => {
+      seed(stored({ outputProfile: "mp4" }));
+      const audioFirst: NormalizedAnalysis = {
+        ...singleResult,
+        formats: [...singleResult.formats].reverse(),
+      };
+      const fetchMock = flow(audioFirst);
+      const user = await open();
+      expect(output("Original / Best Available")).toBeChecked();
+      await user.click(quality("Up to 720p"));
+      expect(output("MP4 (compatible)")).toBeChecked();
+      await user.click(audioOpus());
+      expect(output("Original / Best Available")).toBeChecked();
+      await user.click(quality("Up to 720p"));
+      expect(output("Original")).toBeChecked();
+      expect(output("MP4 (compatible)")).not.toBeChecked();
+      await download(user);
+      expect(bodies(fetchMock)[0]).toMatchObject({ variant_id: "video-720", output_profile: "original" });
+    });
+
+    it("never stores an audio variant id; the audio output profile is still remembered", async () => {
+      flow(singleResult);
+      const user = await open();
+      await user.click(within(screen.getByRole("group", { name: "Audio formats" })).getByRole("radio", { name: /opus/i }));
+      expect(window.localStorage.getItem(STORAGE_KEY)).toBeNull();
+      await user.click(output("MP3"));
+      const raw = window.localStorage.getItem(STORAGE_KEY) ?? "";
+      expect(JSON.parse(raw)).toEqual(stored({ outputProfile: "mp3" }));
+      expect(raw).not.toContain("audio-opus-160");
+    });
+
+    it("writes nothing for an analysis alone and restores nothing from an audio-first default", async () => {
+      const setItem = vi.spyOn(Storage.prototype, "setItem");
+      seed(stored({ videoQuality: "ceiling-720" }));
+      setItem.mockClear();
+      const audioFirst: NormalizedAnalysis = {
+        ...singleResult,
+        formats: [...singleResult.formats].reverse(),
+      };
+      flow(audioFirst);
+      await open();
+      expect(setItem).not.toHaveBeenCalled();
+      // Audio-first sources keep their audio default; no video row is forced.
+      expect(
+        within(screen.getByRole("group", { name: "Audio formats" })).getByRole("radio", { name: /opus/i }),
+      ).toBeChecked();
+    });
+
+    it.each([
+      ["invalid JSON", "{not json"],
+      ["a non-object", "[1,2]"],
+      ["a future version", JSON.stringify(stored({ version: 2, videoQuality: "ceiling-720" }))],
+      ["an unknown quality key", JSON.stringify(stored({ videoQuality: "ceiling-999" }))],
+      ["an unknown profile", JSON.stringify(stored({ outputProfile: "ogg" }))],
+      ["an unknown extra field", JSON.stringify({ ...stored({ videoQuality: "ceiling-720" }), variantId: "video-720" })],
+      ["a missing field", JSON.stringify({ version: 1, videoQuality: "ceiling-720" })],
+    ])("treats %s as defaults and still works", async (_name, raw) => {
+      seed(raw);
+      const fetchMock = flow(singleResult);
+      const user = await open();
+      expect(quality("Best Available")).toBeChecked();
+      expect(output("Original")).toBeChecked();
+      await download(user);
+      expect(bodies(fetchMock)[0]).toMatchObject({ variant_id: "video-best", output_profile: "original" });
+    });
+
+    it("keeps working when storage reads are blocked and when writes are refused", async () => {
+      vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+        throw new DOMException("blocked", "SecurityError");
+      });
+      refuseStorageWrites();
+      const fetchMock = flow(singleResult);
+      const user = await open();
+      expect(quality("Best Available")).toBeChecked();
+      await user.click(quality("Up to 720p"));
+      await user.click(output("MP4 (compatible)"));
+      expect(quality("Up to 720p")).toBeChecked();
+      expect(output("MP4 (compatible)")).toBeChecked();
+      await download(user);
+      expect(bodies(fetchMock)[0]).toMatchObject({ variant_id: "video-720", output_profile: "mp4" });
+    });
+
+    it("keeps working when the storage object itself throws on access", async () => {
+      vi.spyOn(window, "localStorage", "get").mockImplementation(() => {
+        throw new DOMException("blocked", "SecurityError");
+      });
+      const fetchMock = flow(singleResult);
+      const user = await open();
+      await user.click(quality("Up to 720p"));
+      await download(user);
+      expect(bodies(fetchMock)[0]).toMatchObject({ variant_id: "video-720" });
     });
   });
 
@@ -1821,7 +2138,8 @@ describe("NewDownloadPage", () => {
       expect(body?.collection_profile).toEqual({ kind: "original_best_available" });
     });
 
-    it("resets the ceiling on every new analysis, including a repeated analysis id", async () => {
+    it("resets the live ceiling on every new analysis, including a repeated analysis id (storage refused)", async () => {
+      refuseStorageWrites();
       const fetchMock = collectionHandler();
       const { user } = await renderNewDownload();
       await analyzeWindow(user);
@@ -1845,6 +2163,134 @@ describe("NewDownloadPage", () => {
 
       expect(createBodies(fetchMock)[0]?.collection_profile).toEqual({
         kind: "original_best_available",
+      });
+    });
+
+    describe("remember last selection (collection)", () => {
+      const seed = (value: unknown) => window.localStorage.setItem(STORAGE_KEY, JSON.stringify(value));
+      const stored = (collectionCeiling: number | null, outputProfile: string | null) => ({
+        version: 1,
+        videoQuality: null,
+        collectionCeiling,
+        outputProfile,
+      });
+      const outputRadio = (name: string) =>
+        within(screen.getByRole("group", { name: "Output format" })).getByRole("radio", { name });
+
+      it("starts without a mode, applies the remembered ceiling and profile on the first explicit Video, and stores no snapshot identity", async () => {
+        collectionHandler();
+        let { user } = await renderNewDownload();
+        await analyzeWindow(user);
+        await user.click(screen.getByRole("radio", { name: "Video" }));
+        await user.click(qualityRadio("Up to 1080p"));
+        await user.click(outputRadio("MP4 (compatible)"));
+        const raw = window.localStorage.getItem(STORAGE_KEY) ?? "";
+        expect(JSON.parse(raw)).toEqual(stored(1080, "mp4"));
+        for (const forbidden of [windowResult.analysis_id, "item-a", "soundcloud", "http", "video\""]) {
+          expect(raw).not.toContain(forbidden);
+        }
+
+        cleanup();
+        const fetchMock = collectionHandler();
+        ({ user } = await renderNewDownload());
+        await analyzeWindow(user);
+        // No remembered mode, ceiling group or output set before the explicit mode.
+        expect(screen.getByRole("radio", { name: "Video" })).not.toBeChecked();
+        expect(screen.getByRole("radio", { name: "Audio" })).not.toBeChecked();
+        expect(queryQualityGroup()).not.toBeInTheDocument();
+        await user.click(screen.getByRole("radio", { name: "Video" }));
+        expect(qualityRadio("Up to 1080p")).toBeChecked();
+        expect(outputRadio("MP4 (compatible)")).toBeChecked();
+        await download(user);
+        expect(createBodies(fetchMock)).toEqual([{
+          analysis_id: windowResult.analysis_id,
+          item_ids: ["item-a", "item-b"],
+          collection_mode: "video",
+          collection_profile: { kind: "original_best_available", max_height: 1080 },
+          output_profile: "mp4",
+          destination: "app_library",
+        }]);
+      });
+
+      it("never applies a video ceiling or MP4 to an audio collection", async () => {
+        seed(stored(720, "mp4"));
+        const fetchMock = collectionHandler();
+        const { user } = await renderNewDownload();
+        await analyzeWindow(user);
+        await user.click(screen.getByRole("radio", { name: "Audio" }));
+        expect(queryQualityGroup()).not.toBeInTheDocument();
+        expect(outputRadio("Original / Best Available")).toBeChecked();
+        await download(user);
+        expect(createBodies(fetchMock)[0]).toMatchObject({
+          collection_mode: "audio",
+          collection_profile: { kind: "original_best_available" },
+          output_profile: "original",
+        });
+      });
+
+      it("applies a remembered audio profile only in audio mode and keeps the mode-change reset", async () => {
+        seed(stored(null, "flac"));
+        const fetchMock = collectionHandler();
+        const { user } = await renderNewDownload();
+        await analyzeWindow(user);
+        await user.click(screen.getByRole("radio", { name: "Video" }));
+        // FLAC is not a video profile.
+        expect(outputRadio("Original")).toBeChecked();
+        await user.click(screen.getByRole("radio", { name: "Audio" }));
+        // A later mode change resets like any explicit change: no late FLAC.
+        expect(outputRadio("Original / Best Available")).toBeChecked();
+        await download(user);
+        expect(createBodies(fetchMock)[0]).toMatchObject({ collection_mode: "audio", output_profile: "original" });
+      });
+
+      it("applies a remembered audio profile on a first Audio selection", async () => {
+        seed(stored(null, "flac"));
+        const fetchMock = collectionHandler();
+        const { user } = await renderNewDownload();
+        await analyzeWindow(user);
+        await user.click(screen.getByRole("radio", { name: "Audio" }));
+        expect(outputRadio("FLAC")).toBeChecked();
+        await download(user);
+        expect(createBodies(fetchMock)[0]).toMatchObject({ collection_mode: "audio", output_profile: "flac" });
+      });
+
+      it("keeps explicit Best Available from letting the remembered ceiling return", async () => {
+        seed(stored(720, null));
+        const fetchMock = collectionHandler();
+        const { user } = await renderNewDownload();
+        await analyzeWindow(user);
+        await user.click(screen.getByRole("radio", { name: "Video" }));
+        expect(qualityRadio("Up to 720p")).toBeChecked();
+        await user.click(qualityRadio("Best Available"));
+        expect(JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? "null")).toEqual(stored(null, null));
+        await user.click(screen.getByRole("button", { name: "Analyze" }));
+        await waitFor(() =>
+          expect(fetchMock.mock.calls.filter(([url]) => url === "/api/v1/analysis")).toHaveLength(2),
+        );
+        await waitFor(() => expect(screen.getByRole("radio", { name: "Video" })).toBeEnabled());
+        await user.click(screen.getByRole("radio", { name: "Video" }));
+        expect(qualityRadio("Best Available")).toBeChecked();
+        await download(user);
+        expect(createBodies(fetchMock)[0]?.collection_profile).toEqual({ kind: "original_best_available" });
+      });
+
+      it("ignores corrupt storage and keeps working with blocked storage", async () => {
+        window.localStorage.setItem(STORAGE_KEY, "{broken");
+        vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+          throw new DOMException("denied", "SecurityError");
+        });
+        const fetchMock = collectionHandler();
+        const { user } = await renderNewDownload();
+        await analyzeWindow(user);
+        await user.click(screen.getByRole("radio", { name: "Video" }));
+        expect(qualityRadio("Best Available")).toBeChecked();
+        await user.click(qualityRadio("Up to 480p"));
+        expect(qualityRadio("Up to 480p")).toBeChecked();
+        await download(user);
+        expect(createBodies(fetchMock)[0]?.collection_profile).toEqual({
+          kind: "original_best_available",
+          max_height: 480,
+        });
       });
     });
   });

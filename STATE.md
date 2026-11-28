@@ -5,7 +5,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - Mod: Normal, lead OpenCode; bekleyen Claude-only GPT review'u yok.
 - Lead/reviewer/implementer tanımı GPT‑6.2 Sol (implementer pasif); Luna/Claude değişmedi. ARCH-A tamam: smoke/kapanış STATE'te; ARCH bayat durumları güncellenir, karar çatışmasında durulur.
 - M6 açık; Q0/18 ve runtime6 kullanıcı Compose smoke/onayıyla kapandı. M6-Q genel kapanışı yok.
-- M6.5 kapandı: metin etiketi, sunum UI ve temel hata metinleri; bu kapsamda plansız v0.1 zorunluluğu yok. Sırada New Download son seçimi hatırlama (ARCH §59 adım 6).
+- M6.5 kapandı: metin etiketi, sunum UI ve temel hata metinleri; bu kapsamda plansız v0.1 zorunluluğu yok.
 - Uzlaştırma yedek dalı korunur; push yalnız açık kullanıcı talebi ve hedefle.
 - Onaylı sabit profillerin yetkili belgeye aktarımı bekliyor: MP3 V0, M4A AAC 256k,
   Opus 160k, WAV/FLAC 16-bit; MP4 x264 CRF20 medium + AAC 192k. Yeni ürün kararı değil.
@@ -19,6 +19,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - M6.5 metin etiketi Compose PASS: Opus/MP3 etiket 2/2, MP3 oynatma, WAV 2/2 uyarısız, Shorts 2/2 oynatma/sıra, ses iptal 1/2 → Retry 2/2 kopyasız. ARCH §14 probe başlığı notu should-fix.
 - Accepted (M6.5-T2): düşen/yinelenen TXXX değişmeden reddedilebilir (ID3v2.4 dahil). Should-fix: seek hata ayrıntısı ve ses-önce çoklanmış Ogg testi.
 - Toplu UI Compose smoke (28 Kasım) kullanıcı PASS 4/4: gezinme/F5 ve Load more; Details/History Retry ve Cancel; Private öğe seçilemiyor, Select All ve sayaç dışında; ağ hatalı playlist öğesinde Queue detayı ve New Download'da yalnız anlaşılır hata mesajı.
+- Bekleyen toplu UI Compose smoke (M6-LastSelection): yeni analiz/F5 sonrası geçerli kalite ve çıktı tercihleri, uyumsuz kaynakta varsayılan, URL/taslak geri gelmez; should-fix: aynı sayfada tekrarlanan analiz kimliğiyle tekil MP3 geçiş testi.
 - Kullanıcı Compose PASS: Q2 Retry kaldığı yerden tamamlandı; Q3-ACT Activity/Library ve F5 sonrası geçmiş korundu. M6.5-UI-AutoPlatform (28 Kasım) PASS: YouTube → SoundCloud → YouTube etiketleri doğru; SoundCloud parçası indirildi.
 ## Açık kararlar
 - M6.6 güvenilir albüm grubu/ön hazırlık ve çoklu album_artists klasör değeri; M6.7 cover.jpg seçimi açık.
@@ -31,7 +32,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
   kapanış paragrafında bayat; sabit profillerin yetkili belgeye aktarımı ayrı iş.
 - should-fix: collection başarılı convert/caller-cancel testi sleep(0) ile deterministik değil;
   single başarılı convert+iptal ek testi eksik. Üretim hatası bulunmadı.
-- Audit (ARCH §59): Settings → S1/M7; son seçim localStorage v0.1. Library detay (M9-L): başlığa tıklanabilirlik belirsiz, detay sayfa sonunda; popup/satır içi genişleme kararı açık.
+- Audit (ARCH §59): sırada M7/S1 depolama yazılabilirliği ve Settings; Q3 parkta. Library detay (M9-L): başlığa tıklanabilirlik belirsiz, detay sayfa sonunda; popup/satır içi genişleme kararı açık.
 - New Download adı v0.1'de kalır; K2 v0.2. M6.5-UI-History should-fix: yeniden bağlantıda taşınan panel içindeki klavye odağı kaybolabilir.
 - Kullanıcı Compose smoke PASS (28 Kasım): Preview/kalite 1080×1920; çoklu History/Activity, Retry ve üst panel kapatma. Test takibi: yalnız canlı Activity olayı ve Retry'a uygun toplu fixture.
 - network_error/Deno bağı kanıtsız. Analiz +25/hepsi v0.2. Should-fix M6.5-UI-Errors: Queue detayında çocuk hata metni için doğrudan test.

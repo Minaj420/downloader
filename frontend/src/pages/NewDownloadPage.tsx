@@ -29,15 +29,19 @@ import {
   BEST_VIDEO_QUALITY_KEY,
   buildVideoQualityOptions,
 } from "../features/new-download/videoQuality";
+import {
+  COLLECTION_VIDEO_CEILINGS,
+  EMPTY_LAST_SELECTION,
+  readLastSelection,
+  writeLastSelection,
+  type CollectionVideoCeiling,
+  type LastSelection,
+} from "../features/new-download/lastSelection";
 
 const POLL_INTERVAL_MS = 2000;
 
-/**
- * Fixed collection video short-edge ceilings (PRODUCT_SPEC §9). Sent as the
- * backend's historical `max_height` field; Best Available omits it.
- */
-const COLLECTION_VIDEO_CEILINGS = [2160, 1440, 1080, 720, 480] as const;
-type CollectionVideoCeiling = (typeof COLLECTION_VIDEO_CEILINGS)[number];
+// Collection video ceilings are sent as the backend's historical `max_height`
+// field; Best Available omits it (PRODUCT_SPEC §9).
 
 /** Collection selection is scoped to one analysis snapshot (PRODUCT_SPEC §10). */
 interface CollectionSelectionState {
@@ -103,6 +107,13 @@ export function NewDownloadPage() {
     analysisId: string;
     ceiling: CollectionVideoCeiling;
   } | null>(null);
+  // Remembered choices read once per analysis result object (so a repeated
+  // analysis id still re-reads). Explicit resets below clear parts of it, so
+  // a cleared value can never come back within the same analysis.
+  const [remembered, setRemembered] = useState<{
+    source: NormalizedAnalysis | null;
+    value: LastSelection;
+  }>({ source: null, value: EMPTY_LAST_SELECTION });
   const [job, setJob] = useState<Job | null>(null);
   const [itemsLoadStatus, setItemsLoadStatus] = useState<ItemsLoadStatus>("loading");
   const detailRequest = useRef<{ generation: number; key: string } | null>(null);
@@ -196,6 +207,19 @@ export function NewDownloadPage() {
   const analyze = useAnalyzeUrl();
   const createJob = useCreateJob();
 
+  // Each new analysis result object starts from the stored preference (or none).
+  const analysisSource = analyze.data ?? null;
+  const rememberedValue =
+    remembered.source === analysisSource ? remembered.value : EMPTY_LAST_SELECTION;
+  if (remembered.source !== analysisSource) {
+    setRemembered({
+      source: analysisSource,
+      value: analysisSource == null ? EMPTY_LAST_SELECTION : readLastSelection(),
+    });
+  }
+  const clearRemembered = (patch: Partial<LastSelection>) =>
+    setRemembered((current) => ({ ...current, value: { ...current.value, ...patch } }));
+
   const platformHint = platform === AUTO_PLATFORM_VALUE ? null : platform;
   // Display only (PRODUCT_SPEC §4): the detected label of the current, successful
   // analysis of exactly this URL. Never stored, never sent as a hint.
@@ -214,20 +238,31 @@ export function NewDownloadPage() {
     videoQualityOptions.length > 0;
   const hasLiveVariantSelection =
     analyze.data != null && variantSelection?.analysisId === analyze.data.analysis_id;
+  // A remembered quality key only matches a row presented for this analysis
+  // and maps to that row's current variant id; otherwise Best Available. It
+  // applies only to a video-default source with no explicit live choice.
+  const rememberedQualityOption =
+    !hasLiveVariantSelection && defaultsToVideo && rememberedValue.videoQuality != null
+      ? (videoQualityOptions.find((entry) => entry.key === rememberedValue.videoQuality) ?? null)
+      : null;
   const selectedVariantId =
     analyze.data == null
       ? null
       : hasLiveVariantSelection && variantSelection != null
         ? variantSelection.variantId
-        : defaultsToVideo
-          ? videoQualityOptions[0].variantId
-          : (firstFormat?.variant_id ?? null);
+        : rememberedQualityOption != null
+          ? rememberedQualityOption.variantId
+          : defaultsToVideo
+            ? videoQualityOptions[0].variantId
+            : (firstFormat?.variant_id ?? null);
   const selectedQualityKey =
     hasLiveVariantSelection && variantSelection != null
       ? variantSelection.quality
-      : defaultsToVideo
-        ? BEST_VIDEO_QUALITY_KEY
-        : null;
+      : rememberedQualityOption != null
+        ? rememberedQualityOption.key
+        : defaultsToVideo
+          ? BEST_VIDEO_QUALITY_KEY
+          : null;
 
   // Only the selection bound to the displayed analysis snapshot is live.
   const activeCollectionSelection =
@@ -252,20 +287,26 @@ export function NewDownloadPage() {
           ? (activeCollectionSelection?.mode ?? null)
           : null
         : singleVariantKind(selectedVariantId);
+  // An explicit live choice wins (even Original); only without one, the
+  // remembered profile applies, limited to the profiles of the current kind.
+  const liveOutputSelection =
+    outputSelection?.analysisId === analyze.data?.analysis_id ? outputSelection : null;
+  const candidateProfile =
+    liveOutputSelection != null ? liveOutputSelection.profile : rememberedValue.outputProfile;
   const outputProfile: OutputProfile =
     outputKind != null &&
-    outputSelection?.analysisId === analyze.data?.analysis_id &&
-    outputSelection != null &&
-    outputProfilesFor(outputKind).includes(outputSelection.profile)
-      ? outputSelection.profile
+    candidateProfile != null &&
+    outputProfilesFor(outputKind).includes(candidateProfile)
+      ? candidateProfile
       : "original";
   // Only a collection in video mode offers (and posts) a quality ceiling.
   const offersVideoCeiling =
     analyze.data?.content_type === "collection" && outputKind === "video";
-  const videoCeiling: CollectionVideoCeiling | null =
-    offersVideoCeiling && videoCeilingSelection?.analysisId === analyze.data?.analysis_id
+  const videoCeiling: CollectionVideoCeiling | null = !offersVideoCeiling
+    ? null
+    : videoCeilingSelection?.analysisId === analyze.data?.analysis_id
       ? (videoCeilingSelection?.ceiling ?? null)
-      : null;
+      : rememberedValue.collectionCeiling;
 
   const handleSelectVideoCeiling = (ceiling: CollectionVideoCeiling | null) => {
     const result = analyze.data;
@@ -274,13 +315,32 @@ export function NewDownloadPage() {
     setVideoCeilingSelection(
       ceiling == null ? null : { analysisId: result.analysis_id, ceiling },
     );
+    // Explicit Best Available must not let the remembered ceiling come back.
+    clearRemembered({ collectionCeiling: null });
+    writeLastSelection({ collectionCeiling: ceiling });
+  };
+
+  // A kind change (audio <-> video) drops the old live output choice for good.
+  // A remembered profile that was never applied (incompatible with the current
+  // kind) survives to be applied once to the next compatible kind; one that
+  // was applied here, or any explicit live choice, is dropped on leaving.
+  const leaveKindFor = (nextKind: OutputMediaKind | null) => {
+    if (nextKind === outputKind) return;
+    setOutputSelection(null);
+    const rememberedProfile = rememberedValue.outputProfile;
+    const applied =
+      liveOutputSelection != null ||
+      (outputKind != null &&
+        rememberedProfile != null &&
+        outputProfilesFor(outputKind).includes(rememberedProfile));
+    if (applied) clearRemembered({ outputProfile: null });
   };
 
   const handleSelectVariant = (variantId: string) => {
     const result = analyze.data;
     if (result == null || analyze.isPending || createJob.isPending || createPending.current) return;
-    // A kind change (audio <-> video) drops the old output choice for good.
-    if (singleVariantKind(variantId) !== outputKind) setOutputSelection(null);
+    leaveKindFor(singleVariantKind(variantId));
+    // Extractor variant ids are never remembered, so nothing is written here.
     setVariantSelection({ analysisId: result.analysis_id, variantId, quality: null });
   };
 
@@ -289,12 +349,13 @@ export function NewDownloadPage() {
     const option = videoQualityOptions.find((entry) => entry.key === key);
     if (result == null || option == null || analyze.isPending || createJob.isPending ||
       createPending.current) return;
-    if (singleVariantKind(option.variantId) !== outputKind) setOutputSelection(null);
+    leaveKindFor(singleVariantKind(option.variantId));
     setVariantSelection({
       analysisId: result.analysis_id,
       variantId: option.variantId,
       quality: option.key,
     });
+    writeLastSelection({ videoQuality: option.key });
   };
 
   const handleSelectOutputProfile = (profile: OutputProfile) => {
@@ -302,6 +363,7 @@ export function NewDownloadPage() {
     if (result == null || outputKind == null || analyze.isPending || createJob.isPending ||
       createPending.current || !outputProfilesFor(outputKind).includes(profile)) return;
     setOutputSelection({ analysisId: result.analysis_id, profile });
+    writeLastSelection({ outputProfile: profile });
   };
 
   const handleToggleCollectionItem = (itemId: string) => {
@@ -353,10 +415,19 @@ export function NewDownloadPage() {
 
   const handleSelectCollectionMode = (mode: CollectionMode) => {
     if (!collectionSnapshotMatches) return;
+    const previousMode = activeCollectionSelection?.mode ?? null;
     // The mode decides the audio/video output set: a change clears the choice.
-    if (mode !== activeCollectionSelection?.mode) setOutputSelection(null);
+    if (mode !== previousMode) setOutputSelection(null);
+    // The first explicit mode keeps the remembered values (applied only where
+    // valid for it); a later mode change resets them like any other choice.
+    if (previousMode != null && mode !== previousMode) {
+      clearRemembered({ outputProfile: null });
+    }
     // Audio has no video ceiling: a stale choice never returns on video.
-    if (mode === "audio") setVideoCeilingSelection(null);
+    if (mode === "audio") {
+      setVideoCeilingSelection(null);
+      clearRemembered({ collectionCeiling: null });
+    }
     setCollectionSelection((current) =>
       current == null ? current : { ...current, mode },
     );
