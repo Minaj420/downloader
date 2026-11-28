@@ -160,8 +160,10 @@ must-fix ile accepted-risk sınırı netleşir.
 - Commit engeli için somut tetikleyici şartı: `AGENTS.md` → Proportionality, "Review" maddesi.
 - Lead bir accepted-risk'i gerekçe göstermeden must-fix'e yükseltemez. Reviewer ile lead
   anlaşamazsa karar kullanıcıya sade Türkçe ile sorulur.
-- Güvenlik veya veri bütünlüğünde şüphe varsa bulgu must-fix'tir; bu netleştirme o konuları
-  gevşetmek için kullanılamaz.
+- Güvenlik veya veri bütünlüğü bulgusu, `AGENTS.md` → Proportionality bölümündeki tehdit
+  modeli içinde somut bir tetikleyicisi varsa must-fix olur. Tetikleyici kapsam dışıysa
+  (kabuk erişimi, bağlı klasöre yazma yetkisi veya dosya işlemleriyle yarış) accepted-risk
+  olarak `STATE.md` dosyasına tek satır yazılır.
 
 ## Düzeltme öncesi etki analizi (KARAR)
 
