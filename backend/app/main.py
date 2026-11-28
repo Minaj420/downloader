@@ -68,6 +68,8 @@ def create_app(settings: Settings | None = None, analyzer: URLAnalyzer | None = 
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        # Fresh per lifespan: never keep a previous startup's result.
+        app.state.startup_storage_probe = None
         for directory in (
             resolved_settings.state_dir,
             resolved_settings.staging_dir,
@@ -82,6 +84,9 @@ def create_app(settings: Settings | None = None, analyzer: URLAnalyzer | None = 
         # Mandatory staging-root snapshot for the Q3 Clear History check;
         # a capture failure fails startup closed, before migrations/queue.
         storage.initialize_staging_root()
+        # Nonfatal startup write check (PRODUCT_SPEC §23): path-free results
+        # kept in memory only, after the mandatory captures above.
+        app.state.startup_storage_probe = storage.probe_startup_writability()
         run_migrations(resolved_settings.sync_database_url)
         await queue_manager.start()
         try:

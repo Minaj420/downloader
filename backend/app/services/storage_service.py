@@ -123,6 +123,29 @@ class ClearHistoryStorageError(Exception):
         self.reason = reason
 
 
+_PROBE_PREFIX = ".downloader-probe-"
+_PROBE_PAYLOAD = b"downloader startup write probe\n"
+_PROBE_NAME_ATTEMPTS = 4
+
+
+@dataclass(frozen=True, slots=True)
+class StartupProbeResult:
+    """Path-free startup write-check outcome for one storage root.
+
+    ``target`` is ``staging`` or a storage type value (``app_library``,
+    ``plex_music``, ``plex_video``). ``reason`` is ``None`` on success,
+    else one fixed token: ``root_unavailable``, ``root_changed``,
+    ``name_collision``, ``create_failed``, ``write_failed``,
+    ``cleanup_failed``, ``cleanup_unverified`` or ``probe_failed``. It never
+    carries a path or raw error text and describes only the permissions of
+    this process at startup, not a guarantee of future writes.
+    """
+
+    target: str
+    ok: bool
+    reason: str | None = None
+
+
 _MOUNTINFO_PATH = "/proc/self/mountinfo"
 _DELETED_SUFFIX = " (deleted)"
 _OCTAL_DIGITS = b"01234567"
@@ -1466,6 +1489,159 @@ class StorageService:
         self._staging_snapshot = _DeleteRoot(
             resolved, steps, (root_stat.st_dev, root_stat.st_ino)
         )
+
+    def probe_startup_writability(self) -> tuple[StartupProbeResult, ...]:
+        """Nonfatal startup write check (PRODUCT_SPEC.md §23, ARCHITECTURE.md §47).
+
+        Runs after ``initialize_delete_roots`` and ``initialize_staging_root``
+        and reuses only their captures: the staging root and the App Library
+        plus each *configured* Plex root (unconfigured ones are omitted). A
+        configured root that was not captured (missing/unsafe at startup)
+        fails as ``root_unavailable``; it is never created, re-resolved or
+        probed by path. A captured root is replayed with the existing
+        no-follow walker and must still show its startup identity; that
+        root descriptor stays pinned for the whole probe.
+
+        Under it a backend-generated, unpredictable hidden name is created
+        ``O_CREAT | O_EXCL | O_NOFOLLOW`` with mode ``0o600`` (a collision
+        retries with a fresh name a bounded number of times), one small
+        payload is written (a short write fails) and the probe descriptor is
+        kept open until cleanup. Only that name is unlinked, relative to the
+        same root descriptor and only while it is still the created regular
+        inode; a vanished or replaced entry is left untouched and reported
+        ``cleanup_unverified``, never as a confirmed deletion. Nothing else
+        is swept. POSIX offers no atomic verify-and-unlink, so the
+        stat→unlink micro-window remains (no locking or absolute race
+        guarantee).
+
+        Each failure is a path-free result plus one path-free warning;
+        success is silent. No probe failure raises: an unexpected error is
+        ``probe_failed`` and the remaining roots are still probed.
+        """
+        targets: list[tuple[str, _DeleteRoot | None]] = [
+            ("staging", self._staging_snapshot)
+        ]
+        for storage_type in (
+            MediaStorageType.APP_LIBRARY.value,
+            MediaStorageType.PLEX_MUSIC.value,
+            MediaStorageType.PLEX_VIDEO.value,
+        ):
+            try:
+                self.storage_root_for(storage_type)
+            except StorageTargetError:
+                continue  # unconfigured optional root: omitted
+            targets.append((storage_type, self._delete_roots.get(storage_type)))
+        results: list[StartupProbeResult] = []
+        for target, snapshot in targets:
+            try:
+                reason = self._probe_captured_root(snapshot)
+            except Exception:
+                reason = "probe_failed"
+            if reason is not None:
+                logger.warning("Startup storage write check failed: %s: %s", target, reason)
+            results.append(StartupProbeResult(target, reason is None, reason))
+        return tuple(results)
+
+    def _probe_captured_root(self, snapshot: _DeleteRoot | None) -> str | None:
+        """Probe one captured root; ``None`` on success, else a reason token."""
+        if snapshot is None:
+            return "root_unavailable"
+        try:
+            root_fd = self._open_root_descriptor(snapshot.steps)
+        except (OSError, ValueError, StorageDeleteFailedError):
+            return "root_unavailable"
+        try:
+            try:
+                root = os.fstat(root_fd)
+            except OSError:
+                return "root_unavailable"
+            if (root.st_dev, root.st_ino) != snapshot.identity:
+                return "root_changed"
+            return self._write_probe(root_fd)
+        finally:
+            try:
+                os.close(root_fd)
+            except OSError:
+                pass
+
+    @staticmethod
+    def _write_probe(root_fd: int) -> str | None:
+        for _ in range(_PROBE_NAME_ATTEMPTS):
+            name = f"{_PROBE_PREFIX}{secrets.token_hex(16)}"
+            try:
+                fd = os.open(
+                    name,
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+                    0o600, dir_fd=root_fd,
+                )
+            except FileExistsError:
+                continue  # never touch the existing entry; fresh name
+            except OSError:
+                return "create_failed"
+            break
+        else:
+            return "name_collision"
+        closed = False
+        try:
+            reason = StorageService._fill_and_remove_probe(root_fd, fd, name)
+        finally:
+            # Closed only after cleanup: the open probe descriptor keeps the
+            # inode (and its number) alive through the identity check.
+            try:
+                os.close(fd)
+                closed = True
+            except OSError:
+                pass
+        if reason is None and not closed:
+            return "write_failed"  # deferred write error reported on close
+        return reason
+
+    @staticmethod
+    def _fill_and_remove_probe(root_fd: int, fd: int, name: str) -> str | None:
+        try:
+            created = os.fstat(fd)
+        except OSError:
+            return "cleanup_failed"  # ownership unverifiable: name left
+        identity = (created.st_dev, created.st_ino)
+        # Ownership is verified from here on: every write outcome attempts
+        # the identity-checked cleanup, and a write failure is never masked
+        # by a cleanup failure (an unexpected error still propagates).
+        try:
+            written = os.write(fd, _PROBE_PAYLOAD)
+        except OSError:
+            StorageService._remove_own_probe(root_fd, name, identity)
+            return "write_failed"
+        except BaseException:
+            try:
+                StorageService._remove_own_probe(root_fd, name, identity)
+            except Exception:
+                pass
+            raise
+        if written != len(_PROBE_PAYLOAD):
+            StorageService._remove_own_probe(root_fd, name, identity)
+            return "write_failed"
+        return StorageService._remove_own_probe(root_fd, name, identity)
+
+    @staticmethod
+    def _remove_own_probe(
+        root_fd: int, name: str, identity: tuple[int, int]
+    ) -> str | None:
+        """Unlink our probe only while it still is ``identity``; reason token."""
+        try:
+            entry = os.stat(name, dir_fd=root_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return "cleanup_unverified"
+        except OSError:
+            return "cleanup_failed"
+        if not stat.S_ISREG(entry.st_mode) or (entry.st_dev, entry.st_ino) != identity:
+            return "cleanup_unverified"  # foreign entry: never unlinked
+        try:
+            os.unlink(name, dir_fd=root_fd)
+        except FileNotFoundError:
+            return "cleanup_unverified"
+        except OSError:
+            return "cleanup_failed"
+        return None
 
     def verify_staging_root_for_clear_history(self) -> None:
         """Read-only Q3 check: the staging root still is the startup root.
