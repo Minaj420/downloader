@@ -312,6 +312,8 @@ The preferred default should be:
 
 `Original / Best Available`
 
+Audio mode downloads a source-provided audio-only stream directly, for both single downloads and collection items. It does not download a video or a combined audio/video stream to extract its audio, even if no usable audio-only stream is available.
+
 Source selection and output choice are separate. The source selection picks which available source stream is downloaded; the output choice picks the final audio format. Required first audio output set for new downloads (approved; planned, not implemented):
 
 - `Original / Best Available` (default)
