@@ -5,6 +5,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - Mod: Normal, lead OpenCode; bekleyen Claude-only GPT review'u yok.
 - Lead/reviewer/implementer tanımı GPT‑6.2 Sol (implementer pasif); Luna/Claude değişmedi. ARCH-A tamam: smoke/kapanış STATE'te; ARCH bayat durumları güncellenir, karar çatışmasında durulur.
 - M6 açık; Q0/18 ve runtime6 kullanıcı Compose smoke/onayıyla kapandı. M6-Q genel kapanışı yok.
+- M6.5 kapandı: metin etiketi, sunum UI ve temel hata metinleri; bu kapsamda plansız v0.1 zorunluluğu yok. Sırada New Download son seçimi hatırlama (ARCH §59 adım 6).
 - Uzlaştırma yedek dalı korunur; push yalnız açık kullanıcı talebi ve hedefle.
 - Onaylı sabit profillerin yetkili belgeye aktarımı bekliyor: MP3 V0, M4A AAC 256k,
   Opus 160k, WAV/FLAC 16-bit; MP4 x264 CRF20 medium + AAC 192k. Yeni ürün kararı değil.
@@ -15,7 +16,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - M6-Q20 kapandı: Compose seçici/Ses PASS, Shorts 4/4, 1080×1920 doğrulandı; tavan dışı yedek otomatik PASS, uygun canlı kaynak yok, kullanıcı kapanışı onayladı. Katalog eşleşmesi (§16) gerekirse önce koleksiyonlarda.
 - M6-Q3 parkta (ARCHITECTURE §59 önceliği bayat); WIP dalı merge edilmez, staging silme/API yok.
 - M6.5-T2/T3 Fedora Compose PASS (Mutagen 1.48.1, MP3 etiket ve WAV); T3 hedefli 791 test/Ruff/mypy ve review PASS.
-- M6.5 metin etiketi kapandı: Compose Opus/MP3 etiket 2/2, MP3 oynatma, WAV 2/2 uyarısız, Shorts 2/2 oynatma/sıra, ses iptal 1/2 → Retry 2/2 kopyasız. Bu kapsamda plansız v0.1 zorunluluğu yok; M6.5 sunum UI/hata metinleri ayrı açık. ARCH §14 probe başlığı notu should-fix.
+- M6.5 metin etiketi Compose PASS: Opus/MP3 etiket 2/2, MP3 oynatma, WAV 2/2 uyarısız, Shorts 2/2 oynatma/sıra, ses iptal 1/2 → Retry 2/2 kopyasız. ARCH §14 probe başlığı notu should-fix.
 - Accepted (M6.5-T2): düşen/yinelenen TXXX değişmeden reddedilebilir (ID3v2.4 dahil). Should-fix: seek hata ayrıntısı ve ses-önce çoklanmış Ogg testi.
 - Toplu UI Compose smoke (28 Kasım) kullanıcı PASS 4/4: gezinme/F5 ve Load more; Details/History Retry ve Cancel; Private öğe seçilemiyor, Select All ve sayaç dışında; ağ hatalı playlist öğesinde Queue detayı ve New Download'da yalnız anlaşılır hata mesajı.
 - Kullanıcı Compose PASS: Q2 Retry kaldığı yerden tamamlandı; Q3-ACT Activity/Library ve F5 sonrası geçmiş korundu. M6.5-UI-AutoPlatform (28 Kasım) PASS: YouTube → SoundCloud → YouTube etiketleri doğru; SoundCloud parçası indirildi.
@@ -53,7 +54,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - 2026-11-17 kullanıcı Fedora Compose Q18 PASS: single/collection5.5s, idle0.8s, Exit0/OOMfalse, exec doğrulandı.
 - Mix4 sabit seçim/completed korundu, auto-resume yok, Retry46→48; MKV VP9/Opus200s tam decode kullanıcı PASS.
 - Host RPM Fusion FFmpeg smoke 23 PASS/0 SKIP; container libx264 ayrıca görüldü. Sonraki skip'i bildir.
-- 2026-11-27 macOS M6.5 full gate PASS: checker backend Ruff/mypy ve frontend lint/typecheck/234 test/build/kontrast 20; kullanıcı Homebrew Bash ile tam backend pytest 3132 geçti/29 atlandı/4 uyarı. macOS Bash 3.2 smoke betiğiyle uyumsuz.
+- 2026-11-28 macOS M6.5 full gate PASS: backend Ruff/mypy/pytest 3132 geçti, 29 atlandı, 4 uyarı; frontend lint/typecheck/321 test/build/kontrast 20 PASS. macOS Bash 3.2 smoke betiğiyle uyumsuz.
 ## Bilinen riskler
 - Accepted: YouTube'da aynı gerçek başlık ve eksik availability yanlışlıkla elenebilir. Queue Retry hatası yüzey kaybolunca tekrar seslendirilebilir.
 - Accepted: smoke idle kontrolü atomik değil; testte başka iş başlatılmaz; kullanıcı ağ/restart kurtarma PASS.
