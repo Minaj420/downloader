@@ -554,6 +554,18 @@ button:disabled {
   color: var(--color-on-status);
 }
 
+/* Decorative icon; the text label stays the semantic carrier. The plain SVGs
+   are black, so the filter renders them white to match --color-on-status
+   (#ffffff) on the info badge. */
+.badge-platform .platform-icon {
+  display: inline-block;
+  width: 0.95em;
+  height: 0.95em;
+  margin-right: 0.35em;
+  vertical-align: -0.12em;
+  filter: brightness(0) invert(1);
+}
+
 .meta-item {
   white-space: nowrap;
 }

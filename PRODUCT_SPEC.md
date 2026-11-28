@@ -180,7 +180,12 @@ Detected platform: SoundCloud
 [ Use SoundCloud ]
 ```
 
-**Auto Select display and platform icons (approved; planned, not implemented).** After analysis, the dropdown shows the detected platform while the mode stays Auto Select; displaying the backend's detected hint must never silently turn into a manual override (the platform hint sent with a later analysis stays absent unless the user explicitly picks a platform). Platform icons are approved for v0.1 (timing: ARCHITECTURE §59 plan item 5) and come from an openly licensed icon set; the actual set and license are **still open** (no candidate chosen; selection/research awaits approval, no dependency is added now). The preview platform badge keeps brand colour/logo with the existing contrast check, and an icon is never the only semantic carrier of the platform (the text label stays).
+**Auto Select display (approved; planned, not implemented; unchanged by the icon work).** After analysis, the dropdown shows the detected platform while the mode stays Auto Select; displaying the backend's detected hint must never silently turn into a manual override (the platform hint sent with a later analysis stays absent unless the user explicitly picks a platform).
+
+**Platform icons (approved for v0.1, timing: ARCHITECTURE §59 plan item 5; implemented in the Media Preview badge).**
+- Source (user-approved): the 10 Simple Icons SVGs from https://simpleicons.org, copied as local frontend assets (`frontend/src/assets/platforms`; no CDN, no dependency).
+- License/trademark verification: deferred by the user; it has not been done and no verification is claimed.
+- Display: the icon is decorative and sits beside the visible platform label, shown white on the existing blue badge. `check:contrast` does not directly cover this icon/badge pair. Shorts use YouTube; unknown/Other stay text only; an icon is never the only semantic carrier of the platform (the text label stays).
 
 ---
 

@@ -3,6 +3,16 @@ import userEvent from "@testing-library/user-event";
 import { App } from "../src/app/App";
 import type { AnalyzeRequest, NormalizedAnalysis } from "../src/api/analysis";
 import type { Job } from "../src/api/jobs";
+import bandcampIcon from "../src/assets/platforms/bandcamp.svg";
+import instagramIcon from "../src/assets/platforms/instagram.svg";
+import redditIcon from "../src/assets/platforms/reddit.svg";
+import soundcloudIcon from "../src/assets/platforms/soundcloud.svg";
+import tiktokIcon from "../src/assets/platforms/tiktok.svg";
+import twitchIcon from "../src/assets/platforms/twitch.svg";
+import vimeoIcon from "../src/assets/platforms/vimeo.svg";
+import xIcon from "../src/assets/platforms/x.svg";
+import youtubeIcon from "../src/assets/platforms/youtube.svg";
+import youtubeMusicIcon from "../src/assets/platforms/youtubemusic.svg";
 
 type FetchHandler = (url: string, init?: RequestInit) => Promise<Response>;
 
@@ -787,6 +797,58 @@ describe("NewDownloadPage", () => {
     expect(screen.getByText("Best Available")).toBeInTheDocument();
     expect(screen.getByText(/~160 kbps/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Download" })).toBeEnabled();
+  });
+
+  it.each([
+    ["youtube", "YouTube", youtubeIcon],
+    ["youtube_music", "YouTube Music", youtubeMusicIcon],
+    ["soundcloud", "SoundCloud", soundcloudIcon],
+    ["bandcamp", "Bandcamp", bandcampIcon],
+    ["vimeo", "Vimeo", vimeoIcon],
+    ["twitch", "Twitch", twitchIcon],
+    ["tiktok", "TikTok", tiktokIcon],
+    ["instagram", "Instagram", instagramIcon],
+    ["twitter", "X / Twitter", xIcon],
+    ["reddit", "Reddit", redditIcon],
+  ])("shows a decorative local icon beside the %s label", async (platform, label, expectedSrc) => {
+    okHealthHandler(() =>
+      Promise.resolve(
+        jsonResponse({ ...singleResult, detected_platform: platform, detected_platform_label: label }),
+      ),
+    );
+    const { user } = await renderNewDownload();
+
+    await fillAndSubmit(user, singleResult.original_url);
+    await screen.findByText("Test Video");
+
+    const badge = screen.getByText(label, { selector: ".badge-platform" });
+    const icon = badge.querySelector("img.platform-icon");
+    expect(icon).not.toBeNull();
+    expect(icon).toHaveAttribute("alt", "");
+    expect(icon).toHaveAttribute("aria-hidden", "true");
+    // Strict match against the exact static asset import, independent of
+    // the production platform -> icon mapping.
+    expect(icon?.getAttribute("src")).toBe(expectedSrc);
+    // The text label stays the semantic carrier.
+    expect(badge).toHaveTextContent(label);
+  });
+
+  it.each([
+    ["other", "Other"],
+    ["toString", "Unrecognized Source"],
+  ])("keeps the %s platform text only", async (platform, label) => {
+    okHealthHandler(() =>
+      Promise.resolve(
+        jsonResponse({ ...singleResult, detected_platform: platform, detected_platform_label: label }),
+      ),
+    );
+    const { user } = await renderNewDownload();
+
+    await fillAndSubmit(user, singleResult.original_url);
+    await screen.findByText("Test Video");
+
+    const badge = screen.getByText(label, { selector: ".badge-platform" });
+    expect(badge.querySelector("img")).toBeNull();
   });
 
   it("organizes the result into a Media Preview and a Format & Destination panel", async () => {

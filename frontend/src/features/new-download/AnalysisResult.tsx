@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import type { NormalizedAnalysis, NormalizedFormat } from "../../api/analysis";
 import type { CollectionMode, OutputMediaKind, OutputProfile } from "../../api/jobs";
 import { formatDuration } from "./format";
-import { platformLabel } from "./platforms";
+import { platformIconUrl, platformLabel } from "./platforms";
 import { CollectionSelection } from "./CollectionSelection";
 import { OutputProfileSelect } from "./OutputProfileSelect";
 import { fileSizeLabel, type VideoQualityOption } from "./videoQuality";
@@ -72,6 +72,7 @@ export function AnalysisResult({
   onUseDetectedPlatform,
 }: AnalysisResultProps) {
   const duration = formatDuration(result.duration_seconds);
+  const platformIcon = platformIconUrl(result.detected_platform);
   const audioFormats = result.formats.filter((format) => format.kind === "audio_only");
   const isCollection = result.content_type === "collection";
   const collection = result.collection ?? null;
@@ -130,7 +131,12 @@ export function AnalysisResult({
             <div className="result-heading">
               <h3>{result.title ?? "Unknown title"}</h3>
               <div className="result-meta">
-                <span className="badge badge-platform">{result.detected_platform_label}</span>
+                <span className="badge badge-platform">
+                  {platformIcon != null && (
+                    <img className="platform-icon" src={platformIcon} alt="" aria-hidden="true" />
+                  )}
+                  {result.detected_platform_label}
+                </span>
                 <span className="badge">
                   {result.content_type === "collection" ? "Playlist" : "Single item"}
                 </span>
