@@ -14,7 +14,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - Bulgu 3a kapandı: Fedora Compose ffprobe 7.1.5; tekil 720p, dikey 1080p; ağ hatalı öğe Retry ile indi (4/4), sıra korundu. Hedefli 817 PASS/1 SKIP, Ruff/mypy ve review temiz; göreli girdi testi should-fix.
 - Q3b-2 ve 3c Already exists v0.1 sonrası; güvenli numara ve çözünürlük eki kalır. Aday ve açık review bulguları `wip/already-exists` dalında.
 - M6-Q20 kapandı: Compose seçici/Ses PASS, Shorts 4/4, 1080×1920 doğrulandı; tavan dışı yedek otomatik PASS, uygun canlı kaynak yok, kullanıcı kapanışı onayladı. Katalog eşleşmesi (§16) gerekirse önce koleksiyonlarda.
-- M6-Q3: Storage için 28 Kasım macOS Docker Desktop/Linux Compose smoke 3/3 PASS (harf duyarlı test bind'leri; homelab değil). Backend WIP; API Compose smoke yapılmadı.
+- M6 kapanış sırası: (1) macOS Docker Desktop Linux VM + named volume ile API Compose smoke (komutlar önce gösterilir, host bind yok); (2) PASS sonrası Clear History UI önizleme sayısı/onay (koddan önce plan); (3) Compose UI smoke ve M6 kapanış gate'leri.
 - M6.5-T2/T3 Fedora Compose PASS (Mutagen 1.48.1, MP3 etiket ve WAV); T3 hedefli 791 test/Ruff/mypy ve review PASS.
 - M6.5 metin etiketi Compose PASS: Opus/MP3 etiket 2/2, MP3 oynatma, WAV 2/2 uyarısız, Shorts 2/2 oynatma/sıra, ses iptal 1/2 → Retry 2/2 kopyasız. ARCH §14 probe başlığı notu should-fix.
 - Accepted (M6.5-T2): düşen/yinelenen TXXX değişmeden reddedilebilir (ID3v2.4 dahil). Should-fix: seek hata ayrıntısı ve ses-önce çoklanmış Ogg testi.
@@ -32,7 +32,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
   kapanış paragrafında bayat; sabit profillerin yetkili belgeye aktarımı ayrı iş.
 - should-fix: collection başarılı convert/caller-cancel testi sleep(0) ile deterministik değil;
   single başarılı convert+iptal ek testi eksik. Üretim hatası bulunmadı.
-- Q3 must-fix: sistemik COMMIT hatası §59'daki taze okumayı atlıyor; ek tur onaylanmadı. Q3 should-fix: hata zincirinde yol gizleme ve fstat hatasında fd kapanış testi. M7/S1 bekliyor; M9-L tıklanabilirlik ve popup/satır içi genişleme açık.
+- Q3 should-fix: hata zincirinde yol gizleme ve fstat hatasında fd kapanış testi. M7/S1 bekliyor; M9-L tıklanabilirlik ve popup/satır içi genişleme açık.
 - New Download adı v0.1'de kalır; K2 v0.2. M6.5-UI-History should-fix: yeniden bağlantıda taşınan panel içindeki klavye odağı kaybolabilir.
 - Kullanıcı Compose smoke PASS (28 Kasım): Preview/kalite 1080×1920; çoklu History/Activity, Retry ve üst panel kapatma. Test takibi: yalnız canlı Activity olayı ve Retry'a uygun toplu fixture.
 - network_error/Deno bağı kanıtsız. Analiz +25/hepsi v0.2. Should-fix M6.5-UI-Errors: Queue detayında çocuk hata metni için doğrudan test.
@@ -48,7 +48,7 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
 - Canlı slash yüklenmesi ve tüm ask/deny/yol dışı izin sınırları doğrulanmış değil.
 - Teknik takip: non-root UID/GID→M7/S1 ayrı Opus işi; yt-dlp sabitleme, Python3.12 CI.
 ## Son gate
-- 2026-11-20 macOS Q1-fe-page: lead149 test/typecheck/lint ve kontrast20 PASS; GPT review temiz; Docker/full gate yok.
+- 2026-11-28 macOS Docker Desktop/Linux VM Q3 Storage smoke 3/3 PASS (harf duyarlı test bind'leri). API smoke henüz yok; named volume sonucu homelab'ı doğrulamaz; fail-closed koruma güvenli kurulumda yanlış ret verebilir.
 - 2026-11-19 kullanıcı Fedora Compose runtime6 PASS: Deno2.9.8/yt-dlp2026.10.26/EJS0.8.0 algılandı; UI video PASS.
 - Network script/Q19 son tek-satır/tekrarsız/detail≤500 PASS; eski audio restart BLOCKED sonucu aşıldı.
 - 2026-11-20 kullanıcı Compose video/Original restart PASS20s: failed, Exit0/OOMyok, shutdown, retryable, recovery.
@@ -76,5 +76,5 @@ Devam özeti; iş akışı `docs/WORKFLOW.md`.
   izleyiciyi kapatmak işi durdurmaz, ana çağrı açık kalmalı.
 - Accepted: Delete File stat/unlink penceresi, bazı terminal parent retryable alanları,
   ertelenmiş cancel 404/event temizliği; Elisa M4A sorunu oynatıcıya özgü.
-- Accepted: HTTP5s iptali, Compose30s ve migration stop kurtarma sınırı. Q3: I/O hatasında sonraki işler korunur; kayıt kaldıysa Retry baştan indirebilir, DB düzelince Clear yeni önizlemeyle denenir.
+- Accepted: HTTP5s iptali, Compose30s ve migration stop kurtarma sınırı. Q3 §59: sistemik SQLite COMMIT hatasında taze okuma yok, 500 dönülür ve sonraki işler korunur; kayıt kaldıysa Retry baştan başlayabilir. DB düzelince yeni Clear önizlemesi; kod işi yeniden açılmaz.
 - Starlette httpx→httpx2 deprecation uyarısı: şimdi iş değil, bağımlılık bakımında ele alınacak.
